@@ -1,4 +1,8 @@
 import { expect, test } from "@playwright/test";
+import {
+  FIXTURE_HAEMOGLOBIN_RANGE,
+  FIXTURE_LOW_HAEMOGLOBIN,
+} from "./global-setup";
 
 /**
  * The journeys a clinician actually performs, driven through the browser.
@@ -105,14 +109,24 @@ test.describe("laboratory", () => {
     await page.goto("/laboratory?status=VERIFIED");
     await expect(page.getByRole("heading", { name: "Laboratory", level: 1 })).toBeVisible();
 
-    const open = page.getByRole("link", { name: "Open" }).first();
-    if ((await open.count()) === 0) {
-      test.skip(true, "no released laboratory orders in this environment");
-    }
-    await open.click();
+    // No conditional skip. globalSetup drives one CBC order through to a released report, so an
+    // empty worklist here is a real failure and has to read as one - this test used to skip itself
+    // in CI on every run, which is indistinguishable from not having written it.
+    await page.getByRole("link", { name: "Open" }).first().click();
 
     await expect(page.getByRole("columnheader", { name: "Reference" })).toBeVisible();
     await expect(page.getByRole("columnheader", { name: "Flag" })).toBeVisible();
+
+    // A number without its interval is not interpretable, and an out-of-range number that is not
+    // marked is worse than no result at all. The fixture's haemoglobin sits below the female
+    // interval, so both must appear on its row.
+    const haemoglobin = page.getByRole("row").filter({ hasText: "Haemoglobin" });
+    await expect(haemoglobin).toContainText(FIXTURE_LOW_HAEMOGLOBIN);
+    await expect(haemoglobin).toContainText(FIXTURE_HAEMOGLOBIN_RANGE);
+    await expect(haemoglobin).toContainText("low");
+
+    // And the report says so at the top, where a clinician scanning a list of reports sees it.
+    await expect(page.getByText("abnormal results")).toBeVisible();
   });
 });
 

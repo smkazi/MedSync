@@ -284,9 +284,21 @@ jobs:
           done
           echo "web did not come up"; cat /tmp/web.log; exit 1
 
+      - name: Cache the Playwright browsers
+        # Without this the job re-downloads ~300 MB of Chromium plus the headless shell on every
+        # run - roughly half the job's wall clock, spent fetching a byte-identical archive.
+        # Keyed on the lockfile, so bumping @playwright/test misses the cache rather than quietly
+        # running a new test runner against the browser build the old one pinned.
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}
+
       - name: Browser end-to-end (Playwright)
         working-directory: web
         run: |
+          # --with-deps stays: the apt libraries it installs live outside the cached directory.
+          # The browser archives are what the cache above serves.
           npx playwright install --with-deps chromium
           npx playwright test
 
