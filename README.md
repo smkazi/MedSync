@@ -9,9 +9,11 @@ SOAP notes and vitals, coded, and have blood work ordered — with results arriv
 haematology analyzer over its own wire protocol and released by a pathologist.
 
 > **Status:** the clinical core, the laboratory (including analyzer integration), the AI service
-> and the web UI are implemented and verified end to end against a real stack. **283 tests pass**
-> (183 Java, 88 Python, 12 browser end-to-end). Containerisation, CI and the security/performance
-> testing layer are the remaining work — see [Roadmap](#roadmap).
+> and the web UI are implemented and verified end to end against a real stack, and so are the
+> containerisation, TLS, security-testing and performance-testing layers. **391 tests pass** —
+> 199 Java unit and integration, 91 Python, 17 web unit, 72 black-box API and security abuse cases,
+> and 12 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
+> [Security](#security); what is left is in the [Roadmap](#roadmap).
 
 ---
 
@@ -23,6 +25,8 @@ haematology analyzer over its own wire protocol and released by a pathologist.
 - [Design decisions worth knowing](#design-decisions-worth-knowing)
 - [Security](#security)
 - [Testing](#testing)
+- [Security and performance testing](#security-and-performance-testing)
+- [What the test suites found](#what-the-test-suites-found)
 - [Roadmap](#roadmap)
 - [Attribution](#attribution)
 
@@ -66,6 +70,36 @@ service are consumed by identity into `identity.audit_log`.
 **Data ownership.** One PostgreSQL instance, one schema per service, each with its own Flyway
 migrations. No service reads another's tables; cross-service references (a patient id on a lab
 order) are plain columns, not foreign keys, so a service survives another's outage.
+
+---
+
+## Repository layout
+
+```
+.
+├── pom.xml                      Maven aggregator; -Pquality / -Psecurity / -Pmutation / -Pautomation
+├── Makefile                     every task, one place. `make help`
+├── docker-compose.yml           postgres, kafka (KRaft), five services, ai-service, web
+├── Dockerfile.java              shared multi-stage build, ARG SERVICE, non-root
+├── config/                      SpotBugs exclusions and Dependency-Check suppressions, each with a reason
+├── platform/hms-common/         security, errors, events, audit, crypto, pagination
+├── services/
+│   ├── gateway/                 routing, CORS, rate limiting, security headers, TLS redirect
+│   ├── identity-service/        users, roles, JWT/JWKS, refresh rotation, audit sink
+│   ├── patient-service/         patients, staff, departments, allergies, PHI encryption
+│   ├── scheduling-service/      appointments, encounters, notes, vitals, diagnoses
+│   ├── laboratory-service/      orders, results, reference ranges, ASTM + K-DPS parsers
+│   └── ai-service/              FastAPI: summarisation, no-show risk, triage, ICD-10
+├── web/                         Next.js 16 app, Playwright suite in e2e/
+├── tests/
+│   ├── api/                     REST Assured journeys and security abuse cases
+│   └── perf/                    k6 smoke, load, stress, soak
+├── security/
+│   ├── zap/                     ZAP Automation Framework plans and the gated runner
+│   └── pentest/                 sqlmap, nuclei, testssl.sh
+├── scripts/                     local.sh (run natively), gen-certs.sh (dev TLS)
+└── .github/workflows/           ci.yml on every push, security.yml nightly
+```
 
 ---
 
@@ -128,7 +162,22 @@ produced it.
 
 ## Running it
 
-### What you need
+### The short way: containers
+
+```bash
+cp .env.example .env        # then edit it
+docker compose up --build -d
+```
+
+That brings up PostgreSQL, Kafka in KRaft mode, all five Java services, the AI service and the web
+app. Open http://localhost:3000. `make up` and `make down` are the same thing with less typing;
+`make help` lists every target.
+
+One honest caveat: the compose stack is **shipped but not verified here** — the container this was
+developed in has no Docker daemon, so that path is validated by review only. Everything below,
+running natively, is what has actually been exercised.
+
+### What you need to run it natively
 
 | | Version | Note |
 | --- | --- | --- |
@@ -136,6 +185,11 @@ produced it.
 | Maven | 3.9+ | |
 | PostgreSQL | 16 | one instance; the services create their own schemas |
 | Python | 3.11+ | with [`uv`](https://docs.astral.sh/uv/) for `ai-service` |
+| Node | 22+ | for the web app |
+
+Optional, for the security and performance layers: [k6](https://k6.io),
+[OWASP ZAP](https://www.zaproxy.org), `sqlmap`, `nuclei`, `testssl.sh`, `gitleaks`. Every script
+that needs one reports it as missing and skips rather than pretending to pass.
 
 ### 1. Database
 
@@ -217,6 +271,24 @@ Every service is environment-driven. The ones you are most likely to set:
 | `HMS_SEED_ENABLED` | `false` (`true` in `dev`) | Seeds the demo accounts |
 | `HMS_AI_ANTHROPIC_API_KEY` | unset | Enables model-backed note summarisation |
 | `HMS_TIMEZONE` | `UTC` | Clinic-local zone for slot generation |
+| `HMS_RATE_LIMIT_RPM` | `600` | Per-client requests a minute at the gateway |
+| `HMS_RATE_LIMIT_AUTH_RPM` | `20` | The same, for `/auth/**` |
+| `HMS_RATE_LIMIT_ENABLED` | `true` | Turn off if something in front already limits |
+
+### TLS
+
+```bash
+make certs                          # local CA + per-service PKCS#12 keystores, into certs/
+SPRING_PROFILES_ACTIVE=tls,dev scripts/local.sh start
+```
+
+The `tls` profile serves HTTPS on each service (gateway on 8443), redirects plain HTTP with a 308,
+sends HSTS, pins TLS 1.2 and 1.3 with a curated forward-secret AEAD cipher list, and switches the
+database to `sslmode=verify-full` and Kafka to `SASL_SSL`. Certificates are generated, never
+committed — `certs/` and every key extension are in `.gitignore`.
+
+Plain HTTP stays the default for local work on purpose: a dev CA that k6, curl and the JVM all
+have to be taught to trust turns every quick check into a detour.
 
 ---
 
@@ -274,25 +346,63 @@ to a patient record on its own.
 - **Audit** — every service emits audit events; identity persists them. Writes on deliberately
   failing paths (a rejected login, detected token theft) commit in their own transactions, so the
   trail survives the rollback that follows.
+- **Rate limiting** — per client at the gateway, with a far stricter bucket on `/auth/**`. Account
+  lockout stops guessing at one account; this stops one password sprayed across a thousand
+  usernames, where no single account ever reaches its threshold. Neither substitutes for the other.
+- **Security headers** — set at the gateway, the only thing every browser response passes through:
+  `nosniff`, `X-Frame-Options: DENY`, `no-referrer`, a locked-down `Permissions-Policy`, COOP/CORP,
+  and a `default-src 'none'` CSP for the JSON API. The web app has its own nonce-based policy. The
+  runtime and its version are stripped from every response.
 - **Errors** — one problem+json shape everywhere; no stack traces, SQL, or clinical text in a
-  response body.
+  response body. An unsupported method is a 405 with `Allow`, a wrong content type a 415, a lost
+  race on a versioned row a 409 — never a 500 that says "we are broken" when it is not true.
+- **Correlation ids** — an inbound `X-Correlation-Id` is honoured so a trace spans services, but
+  validated against `[A-Za-z0-9._:-]{1,64}` first. It reaches a response header and every log line
+  for the request, so it is two injection sinks at once; a malformed one is replaced rather than
+  stripped, because there is no legitimate trace to preserve in a value no real client could send.
+- **TLS** — see [TLS](#tls). TLS 1.2 and 1.3 only, forward-secret AEAD ciphers, HSTS, HTTP
+  redirected rather than served, `sslmode=verify-full` to the database, `SASL_SSL` to Kafka.
 
 **Before deploying:** supply `HMS_JWT_PRIVATE_KEY` and `HMS_PHI_KEY` from a secret manager (the
 built-in PHI dev key protects nothing and logs a warning), give each service its own least-privilege
-database role instead of the shared superuser, set `HMS_SEED_ENABLED=false`, and terminate TLS in
-front of the gateway. Hardening work still outstanding is listed in the [Roadmap](#roadmap).
+database role instead of the shared superuser, set `HMS_SEED_ENABLED=false`, generate real
+certificates rather than `make certs` output, and put Redis behind the rate limiter if you run more
+than one gateway (the counters are in-process, so N gateways enforce N times the limit — a
+deliberate trade for the single-gateway deployment here, not an oversight).
 
 ---
 
 ## Testing
 
 ```bash
-mvn -q verify                                   # 183 Java tests
-cd services/ai-service && uv run pytest -q      # 88 Python tests
-cd services/ai-service && uv run ruff check . && uv run bandit -q -r app training
-cd web && npm run lint && npm run typecheck     # web static checks
-cd web && CHROMIUM_PATH=/path/to/chromium npm run e2e   # 12 browser tests, needs the stack running
+make test          # Java + Python
+make test-web      # lint and typecheck
+make test-e2e      # Playwright, needs the stack running
+make test-api      # REST Assured journeys and abuse cases, needs the stack running
+make help          # everything else
 ```
+
+Or directly:
+
+```bash
+mvn -q verify                                     # 199 Java unit and integration tests
+cd services/ai-service && uv run pytest -q        # 91 Python tests
+cd web && npm run lint && npm run typecheck       # web static checks
+cd web && npm test                                # 17 web unit tests
+cd web && npx playwright test                     # 12 browser tests
+mvn -Pautomation -pl tests/api verify             # 72 API and security abuse cases
+```
+
+| Layer | What runs | Where |
+| --- | --- | --- |
+| Unit | JUnit 5 + AssertJ, pytest, Vitest | every module, no I/O |
+| Edge | Gateway rate limiting, security headers, correlation-id validation | `services/gateway` |
+| Integration | `@SpringBootTest` against a real PostgreSQL 16, Flyway-migrated; embedded Kafka for event paths | per service |
+| API / contract | REST Assured, black box through the gateway | `tests/api` |
+| Security abuse cases | REST Assured: JWT forgery, refresh replay, role escalation, IDOR, injection | `tests/api/.../security` |
+| Browser | Playwright against the running stack | `web/e2e` |
+| Performance | k6 smoke, load, stress, soak | `tests/perf` |
+| Mutation | PIT over domain, service and device packages | `mvn -Pmutation test` |
 
 Integration tests run against a **real PostgreSQL** (`hms_test` by default, override with
 `HMS_TEST_DB_URL`), because the behaviour that matters — an exclusion constraint, a `jsonb` column,
@@ -302,31 +412,154 @@ The analyzer parsers are tested against **byte-for-byte frames captured from a S
 for two different patients, so the decoders are proven against the real wire format rather than a
 reconstruction.
 
+The `tests/api` suites are **black box**: no Spring context, no repositories, no test slices — just
+HTTP against a deployed gateway, as a client sees it. That is the point. An integration test inside
+a service passes happily while the gateway's routing, the resource server's JWKS validation, or a
+cross-service contract is broken, because none of those are in the picture.
+
 The Playwright suite drives a **real browser against the running stack** — no mocks — and asserts
 the properties that only appear when it is wired together: that no access token reaches
 `document.cookie`, that a critical allergy is announced as an alert, that encrypted identifiers
 never render on a chart, and that AI output always carries its advisory framing.
 
+**Two suites need the rate limiter raised**, because they deliberately make more sign-in attempts
+per minute than any human would. `make dev-test-stack` starts the stack that way, and both suites
+detect a 429 and say exactly what to change rather than reporting a mysterious failure rate. The
+limiter itself is covered by `EdgeFilterTest` in the gateway module, so raising it costs no coverage.
+
+---
+
+## Security and performance testing
+
+```bash
+make security      # SAST + dependency scanning + secret scanning
+make vapt          # OWASP ZAP: unauthenticated baseline, then an authenticated full scan
+make pentest       # sqlmap, nuclei, testssl.sh against a running stack
+make perf-smoke    # k6: one pass of everything, one VU
+make perf-load     # a normal clinic day: 10:1 reads to bookings
+make perf-stress   # ramp past peak until something gives, then check it recovers
+make perf-soak     # modest load held for an hour (PERF_SOAK_DURATION=8h for overnight)
+```
+
+| Class | Tool | Wiring |
+| --- | --- | --- |
+| SAST (Java) | SpotBugs + FindSecBugs | `mvn -Pquality verify`, gates on Medium and above |
+| SAST (Python) | Bandit + Ruff `S` rules | `uv run bandit`, `uv run ruff check` |
+| SAST (multi-language) | Semgrep — OWASP Top Ten, JWT, secrets, Dockerfile | nightly workflow, SARIF |
+| Dependencies | OWASP Dependency-Check (CVSS ≥ 7 fails), `pip-audit`, `npm audit` | `mvn -Psecurity verify` |
+| Secrets | gitleaks over full history | CI, every push |
+| Containers / IaC | Trivy on a built image and the compose file | nightly workflow, SARIF |
+| DAST / VAPT | OWASP ZAP Automation Framework, two plans, risk-threshold gate | `security/zap/`, `make vapt` |
+| Targeted pen-test | sqlmap on the free-text endpoints, nuclei on the gateway, testssl.sh on 8443 | `security/pentest/run.sh` |
+
+Notes that matter more than the table:
+
+- **`/auth/**` is excluded from the authenticated ZAP scan on purpose.** Identity locks an account
+  after five failures, so letting the injection rules hammer the login body would lock the scan
+  user and turn every request after that into a false 401. Login is attacked by the unauthenticated
+  baseline and by the abuse-case suite, which *asserts* the lockout rather than tripping over it.
+- **Every ZAP requestor step is an assertion.** `/patients` must be 401 anonymously; `/admin/users`
+  must be 403 as a doctor; `/actuator/env` and `/actuator/heapdump` must be 404 through the gateway.
+  A 200 there fails the scan before any active rule runs.
+- **A skipped check is not a passed check.** `make pentest` reports each missing tool by name and
+  exits telling you so.
+- **The performance profiles isolate each run on its own clinician.** Booking is guarded by an
+  exclusion constraint over `(clinician_id, tstzrange)`, and each iteration derives its slot from
+  `(VU, iteration)`, so a conflict can only mean the constraint fired on something the test did not
+  cause. `booking_conflicts` is therefore a hard threshold rather than a reported number — which is
+  exactly how a bad slot allocation got caught (see below).
+- **`make perf-smoke` first.** If the smoke profile is red, the numbers from the others mean nothing.
+
+The load profile's last clean run on the development container — 20 reading VUs, 4 bookings a
+second, seven minutes — for whatever a shared container's numbers are worth as a baseline:
+
+| Endpoint | p95 |
+| --- | --- |
+| Patient search (trigram) | 17 ms |
+| Patient read by id | 15 ms |
+| Appointment search | 16 ms |
+| Clinician availability | 14 ms |
+| Lab worklist | 22 ms |
+| Sign-in (Argon2id) | 112 ms |
+| Booking (constraint check, event publish, AI call) | 239 ms |
+
+23,558 requests, **0 failures**, 35,317 of 35,317 checks passed, 0 booking conflicts, and 1,469
+no-show scores returned — the last of which matters because a score that vanished under load would
+mean the circuit breaker had opened.
+
+CI runs the fast set on every push; the slow set — Dependency-Check's NVD feed, PIT, both ZAP plans
+— runs nightly and uploads SARIF, so a new finding appears as a code-scanning alert rather than a
+line in a log nobody opens.
+
+---
+
+## What the test suites found
+
+Worth writing down, because it is the argument for having built them:
+
+- **Concurrent sign-ins for one account returned 500.** The login path stamped `last_login_at` by
+  mutating the optimistically locked `users` row, so two simultaneous logins collided on the version
+  column and one failed its commit — a shared front-desk account on two workstations, intermittently.
+  Found by the k6 soak profile at 8 VUs: 55 failures in 743 requests. The failure counter had the
+  same fault plus a quieter one — parallel guesses both read the same count and both wrote count+1,
+  so a burst could be counted once, which is the exact burst a lockout threshold exists to stop.
+  Both are now single SQL statements. Five concurrency tests cover it.
+- **A lab technician could read a patient's full encounter record**, including signed SOAP notes.
+  Found by the authorization abuse suite. Minimum necessary access is the rule for PHI: a blood
+  count does not need the history, assessment and plan. Encounter reads are now narrower than
+  patient lookup.
+- **The gateway sent no security headers at all** — `X-Content-Type-Options` was simply absent on
+  every API response. The web app had its own; anything a browser fetched straight from the gateway
+  had none.
+- **The note summariser reported "chest pain" as a red flag on a note reading "No chest pain".**
+  Triage already handled negation; the summariser did not. A red-flag field that cries wolf is one
+  clinicians stop reading, which costs the cases it exists to catch.
+- **Filtering users by role returned every role-less account too.** The left join leaves `r.code`
+  null for a user with no roles, and the predicate admitted nulls — so asking for pathologists
+  matched every account that had no role at all.
+- **Case conversion used the default locale in twelve identifier-normalisation sites.** On a JVM
+  started with `tr_TR`, Turkish lower-casing of "I" means a patient named IQBAL stops matching a
+  search for "iqbal". Found by SpotBugs.
+- **A client-supplied correlation id was echoed into a response header and every log line,
+  unvalidated** — response splitting on one side, forged audit entries on the other.
+- **Parsed analyzer frames were not actually immutable.** `Histogram`, `KdpsSample` and
+  `AstmRecord.Sample` handed out the live lists they were built with. This is measured patient data
+  that is persisted as JSONB and used to derive MPV, PDW and RDW.
+- **The k6 slot allocation itself was wrong**, and its own hard threshold caught it: 1,229
+  self-inflicted booking conflicts in one 20-VU run, because `(VU % 30, ITER % 12)` stops being
+  injective the moment k6 hands out VU ids above 30.
+
 ---
 
 ## Roadmap
 
-Implemented and verified: clinical core, laboratory with analyzer integration, AI service, web UI.
+**Implemented and verified against a running stack:** clinical core, laboratory with analyzer
+integration, AI service, web UI, containerisation, TLS, the full test pyramid, SAST/SCA/DAST
+tooling, and performance profiles.
 
-Not yet built:
+**Shipped but not verified here:** `docker compose up`. The container this was developed in has no
+Docker daemon, so that path is validated by review only.
 
-- **Web UI** — Next.js app: dashboard, patient search and chart, appointment calendar, encounter
-  charting with AI assistance, triage intake, lab worklist, admin.
-- **Containerisation and CI** — `docker-compose.yml` for the full stack, GitHub Actions running the
-  Java, Python and web suites.
-- **TLS** — gateway TLS termination with HSTS, dev certificate generation, `sslmode=verify-full`
-  for the database, and secure cookies.
-- **Security testing** — SAST (SpotBugs + FindSecBugs, Semgrep), dependency scanning (OWASP
-  Dependency-Check, `pip-audit`), secret scanning (gitleaks), and DAST/VAPT via the OWASP ZAP
-  automation framework with an authenticated scan.
-- **Automation and performance testing** — REST Assured API journeys, Playwright end-to-end flows,
-  and k6 smoke/load/stress/soak profiles.
-- **Further clinical modules** — billing, pharmacy and inventory, imaging.
+**Not built:**
+
+- **Further clinical modules** — billing and claims, pharmacy and inventory, imaging/PACS.
+- **Analyzer transport** — the RS-232/TCP device gateway. The ported parsers are
+  transport-agnostic, exactly as they are in the source project, and `POST /lab/device-messages`
+  is the seam a device gateway plugs into.
+- **Distributed rate limiting** — Redis-backed, for more than one gateway instance. See
+  [Security](#security) for what the in-process limiter does and does not promise.
+- **Per-service database roles** — the schema-per-service split is there; the least-privilege
+  runtime and migration roles that should own each schema are not, and one superuser is still doing
+  both jobs in dev.
+- **A real reference-range catalogue** — the seeded set covers the CBC parameters the ASTM parser
+  emits. A deployment needs its own, per instrument and per population.
+- **HL7 v2 / FHIR interfaces** — nothing here speaks either yet.
+
+Two things about the AI layer are worth stating plainly rather than leaving in a roadmap: the
+no-show model is trained on **synthetic data** (ROC AUC 0.67, Brier 0.10 on a held-out split — a
+useful nudge for a reminder call, not a clinical instrument), and every AI response carries its
+model, a confidence, and an advisory disclaimer, because nothing in this system writes to a patient
+record on the strength of a model's opinion.
 
 ---
 
