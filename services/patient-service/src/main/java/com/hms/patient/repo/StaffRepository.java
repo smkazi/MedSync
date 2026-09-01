@@ -22,17 +22,28 @@ public interface StaffRepository extends JpaRepository<Staff, UUID> {
     @EntityGraph(attributePaths = "department")
     Optional<Staff> findDetailById(UUID id);
 
+    /**
+     * Staff search, optionally narrowed to one department.
+     *
+     * <p>The department predicate is {@code :departmentCode = '%' or ...} rather than
+     * {@code ... or s.department is null}, and the shape matters. The join leaves
+     * {@code department} null for every staff member who has not been assigned to one, so an
+     * "or is null" made those rows match <em>every</em> department filter: asking for the
+     * paediatric team returned all the unassigned staff too. The same defect shipped in the user
+     * role filter in identity-service and in the room search here; comparing the pattern to
+     * {@code '%'} says "no filter was supplied", which is what was meant.
+     */
     @EntityGraph(attributePaths = "department")
     @Query(value = """
             select s from Staff s
             where lower(s.fullName) like :pattern
-              and (s.department is null or s.department.code like :departmentCode)
+              and (:departmentCode = '%' or s.department.code like :departmentCode)
               and (:includeInactive = true or s.active = true)
             """,
             countQuery = """
             select count(s) from Staff s
             where lower(s.fullName) like :pattern
-              and (s.department is null or s.department.code like :departmentCode)
+              and (:departmentCode = '%' or s.department.code like :departmentCode)
               and (:includeInactive = true or s.active = true)
             """)
     Page<Staff> search(@Param("pattern") String pattern,
