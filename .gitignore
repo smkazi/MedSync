@@ -36,3 +36,10 @@ services/ai-service/models/*.joblib
 .vscode/
 .DS_Store
 *.log
+
+# Web
+/web/.next/
+/web/test-results/
+/web/playwright-report/
+/web/blob-report/
+/web/.playwright/

@@ -8,10 +8,10 @@ A patient can be registered, booked with an AI no-show risk score, seen in an en
 SOAP notes and vitals, coded, and have blood work ordered — with results arriving straight off a
 haematology analyzer over its own wire protocol and released by a pathologist.
 
-> **Status:** the clinical core, the laboratory (including analyzer integration) and the AI service
-> are implemented and verified end to end against a real PostgreSQL. **271 tests pass** (183 Java,
-> 88 Python). The web UI and the container/CI tooling are the remaining work — see
-> [Roadmap](#roadmap).
+> **Status:** the clinical core, the laboratory (including analyzer integration), the AI service
+> and the web UI are implemented and verified end to end against a real stack. **283 tests pass**
+> (183 Java, 88 Python, 12 browser end-to-end). Containerisation, CI and the security/performance
+> testing layer are the remaining work — see [Roadmap](#roadmap).
 
 ---
 
@@ -32,7 +32,7 @@ haematology analyzer over its own wire protocol and released by a pathologist.
 
 ```
                           ┌──────────────────────┐
-        browser  ───────► │  web  (Next.js)      │   ← planned
+        browser  ───────► │  web  (Next.js 16)   │  :3000
                           └──────────┬───────────┘
                                      │  REST, bearer token
                           ┌──────────▼───────────────────────┐
@@ -103,6 +103,12 @@ numbers, results, histograms, and **analyzer integration**: the ASTM E1394 / LIS
 K-DPS parsers, ported to Java. Entry is separated from release — a technician's value is
 provisional and only a pathologist verifies.
 
+### `web` — Next.js 16, React 19
+The clinical interface: dashboard, patient search and chart, appointment book, encounter charting
+with AI assistance beside the note, triage intake and the laboratory worklist. Server components
+call the gateway; **the browser never receives an access token** — the session lives in httpOnly
+cookies and every platform call is made server-side.
+
 ### `services/ai-service` — Python, FastAPI
 Four clinical decision-support capabilities. Details in
 [`services/ai-service/README.md`](services/ai-service/README.md).
@@ -154,7 +160,17 @@ scripts/local.sh stop
 `scripts/local.sh` runs the services natively with the `dev` profile: seeded users, and events to
 the log rather than Kafka, so no broker is required.
 
-### 3. Start the AI service
+### 3. Start the web UI
+
+```bash
+cd web
+npm install
+GATEWAY_URL=http://localhost:8080 IDENTITY_URL=http://localhost:8081 npm run dev
+```
+
+Then open http://localhost:3000.
+
+### 4. Start the AI service
 
 ```bash
 cd services/ai-service
@@ -163,7 +179,7 @@ uv run python -m training.train_noshow      # optional: trains the calibrated no
 uv run uvicorn app.main:app --port 8000
 ```
 
-### 4. Sign in
+### 5. Sign in
 
 The dev profile seeds one account per role, all flagged must-change-password:
 
@@ -274,6 +290,8 @@ front of the gateway. Hardening work still outstanding is listed in the [Roadmap
 mvn -q verify                                   # 183 Java tests
 cd services/ai-service && uv run pytest -q      # 88 Python tests
 cd services/ai-service && uv run ruff check . && uv run bandit -q -r app training
+cd web && npm run lint && npm run typecheck     # web static checks
+cd web && CHROMIUM_PATH=/path/to/chromium npm run e2e   # 12 browser tests, needs the stack running
 ```
 
 Integration tests run against a **real PostgreSQL** (`hms_test` by default, override with
@@ -284,11 +302,16 @@ The analyzer parsers are tested against **byte-for-byte frames captured from a S
 for two different patients, so the decoders are proven against the real wire format rather than a
 reconstruction.
 
+The Playwright suite drives a **real browser against the running stack** — no mocks — and asserts
+the properties that only appear when it is wired together: that no access token reaches
+`document.cookie`, that a critical allergy is announced as an alert, that encrypted identifiers
+never render on a chart, and that AI output always carries its advisory framing.
+
 ---
 
 ## Roadmap
 
-Implemented and verified: clinical core, laboratory with analyzer integration, AI service.
+Implemented and verified: clinical core, laboratory with analyzer integration, AI service, web UI.
 
 Not yet built:
 
