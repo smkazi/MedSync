@@ -195,10 +195,18 @@ export type Morphology = {
   derived: boolean;
 };
 
-export type Department = { id: string; code: string; name: string; description: string | null };
+/** `active` is returned by the API and was missing from this type until the facility screens read it. */
+export type Department = {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  active: boolean;
+};
 
 export type Staff = {
   id: string;
+  /** Null when the staff record has no platform login - a visiting consultant, say. */
   userId: string | null;
   employeeNo: string;
   fullName: string;
@@ -206,6 +214,10 @@ export type Staff = {
   departmentCode: string | null;
   departmentName: string | null;
   specialty: string | null;
+  /** Registration or licence number. Returned by the API; was missing from this type. */
+  licenseNo: string | null;
+  phone: string | null;
+  email: string | null;
   active: boolean;
 };
 
@@ -242,4 +254,165 @@ export type TriageResponse = {
   red_flags: string[];
   recommended_disposition: string;
   provenance: { model: string; fallback_used: boolean; confidence: number; disclaimer: string };
+};
+
+// ---- facility ---------------------------------------------------------------
+
+export type Floor = { id: string; code: string; name: string; level: number; active: boolean };
+
+export type RoomType = {
+  code: string;
+  name: string;
+  description: string | null;
+  /** Patients are seen or treated here. Governs beds and clinical filters. */
+  clinical: boolean;
+  /** Space is handed out as a bed rather than a calendar slot. */
+  bedAllocated: boolean;
+  /** Rooms of this type may carry appointments. */
+  schedulable: boolean;
+  displayOrder: number;
+  active: boolean;
+};
+
+export type Room = {
+  id: string;
+  code: string;
+  name: string;
+  roomTypeCode: string;
+  roomTypeName: string;
+  clinical: boolean;
+  bedAllocated: boolean;
+  schedulable: boolean;
+  floorCode: string;
+  floorName: string;
+  floorLevel: number;
+  departmentCode: string | null;
+  departmentName: string | null;
+  capacity: number;
+  bedCount: number;
+  widthFt: number | null;
+  lengthFt: number | null;
+  /** Pre-formatted, e.g. 15'6" x 8'2". Null when the room was never measured. */
+  dimensions: string | null;
+  directions: string | null;
+  bookable: boolean;
+  /** bookable AND active AND the type is schedulable - what the booking screen must obey. */
+  bookableNow: boolean;
+  active: boolean;
+  notes: string | null;
+};
+
+/** One room as the directory returns it - fewer fields than the full Room. */
+export type DirectoryRoom = {
+  id: string;
+  code: string;
+  name: string;
+  roomTypeCode: string;
+  roomTypeName: string;
+  floorName: string;
+  departmentCode: string | null;
+  bookable: boolean;
+};
+
+export type FloorDirectory = { floor: Floor; rooms: DirectoryRoom[] };
+
+export type Bed = {
+  id: string;
+  code: string;
+  label: string | null;
+  active: boolean;
+  roomCode: string;
+  roomName: string;
+  floorName: string;
+};
+
+// ---- laboratory reference data ----------------------------------------------
+
+export type CatalogEntry = {
+  id: string;
+  code: string;
+  name: string;
+  department: string;
+  specimenType: string;
+  parameters: string[];
+};
+
+export type ReferenceRange = {
+  id: string;
+  parameter: string;
+  /** M or F. The platform uses one field for administrative gender and the clinical variable. */
+  sex: string;
+  normalLow: number | null;
+  normalHigh: number | null;
+  unit: string;
+  displayName: string;
+  /** Pre-formatted, e.g. "11.5 - 14.5". */
+  referenceRange: string;
+};
+
+export type Analyzer = {
+  id: string;
+  name: string;
+  model: string;
+  protocol: string;
+  transport: string;
+  active: boolean;
+  lastSeen: string | null;
+};
+
+export type MorphologyThreshold = { code: string; threshold: number; note: string };
+
+export type RuleCondition = {
+  id: string;
+  parameters: string[];
+  operator: string;
+  threshold: number;
+};
+
+export type InterpretiveRule = {
+  id: string;
+  code: string;
+  label: string;
+  message: string;
+  displayOrder: number;
+  active: boolean;
+  conditions: RuleCondition[];
+};
+
+export type DeviceMessage = {
+  id: string;
+  protocol: string;
+  sampleId: string | null;
+  matchedOrderId: string | null;
+  parsedOk: boolean;
+  resultCount: number | null;
+  error: string | null;
+  receivedAt?: string;
+};
+
+// ---- administration ---------------------------------------------------------
+
+export type AdminUser = {
+  id: string;
+  username: string;
+  email: string;
+  fullName: string;
+  active: boolean;
+  mustChangePassword: boolean;
+  roles: string[];
+  lastLoginAt: string | null;
+};
+
+export type RoleSummary = { code: string; description: string };
+
+export type AuditEntry = {
+  id: string;
+  service: string;
+  action: string;
+  entity: string;
+  entityId: string | null;
+  detail: string | null;
+  username: string | null;
+  correlationId: string | null;
+  occurredAt: string;
 };

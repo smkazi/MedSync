@@ -100,6 +100,7 @@ cannot act on.
 | `OrderStatus`, `ResultStatus` | Encode separation of duties: a lab technician enters, a pathologist releases. The permitted transitions are the control. |
 | `Protocol` (`ASTM`, `KDPS`) | Each value maps to a parser class. A configured value with no parser behind it is a runtime failure at the worst moment — an analyzer transmitting a real sample. |
 | Roles | Named in `@PreAuthorize` expressions, which are compiled. The `identity.roles` table is data, but granting a role a capability is a code change. |
+| The navigation menu (`web/src/lib/menu.ts`) | A menu item needs a route, a page and a role gate that matches what the API enforces. All three are code, so a configurable menu would let somebody add an item that leads nowhere — or, worse, one whose role list is more generous than the `@PreAuthorize` behind it, which reads as a permission and is not one. It is *data* in the sense that it is one list rather than markup scattered through a layout; it is not configuration. |
 
 ### Two of these are open questions, not settled answers
 

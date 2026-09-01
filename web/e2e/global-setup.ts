@@ -32,6 +32,14 @@ const PASSWORD = process.env.SEED_PASSWORD ?? "ChangeMe!Dev2026";
 export const FIXTURE_SURNAME = "Nair";
 
 /**
+ * The fixture patient's date of birth.
+ *
+ * Exported because the duplicate-registration test needs it: the service flags a repeat on surname
+ * *and* date of birth together, so a spec that guesses one of the two would prove nothing.
+ */
+export const FIXTURE_DATE_OF_BIRTH = "1982-03-14";
+
+/**
  * A national id that must never be rendered on a chart.
  *
  * The test asserting its absence is only meaningful if the value actually exists on the record —
@@ -100,7 +108,7 @@ async function ensurePatient(frontDesk: string, clinician: string): Promise<Fixt
     body: JSON.stringify({
       firstName: "Meera",
       lastName: FIXTURE_SURNAME,
-      dateOfBirth: "1982-03-14",
+      dateOfBirth: FIXTURE_DATE_OF_BIRTH,
       sex: "FEMALE",
       bloodGroup: "O+",
       phone: "+971500000001",

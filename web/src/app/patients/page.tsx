@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { api } from "@/lib/api";
+import { currentUser, hasRole } from "@/lib/session";
 import type { Page, PatientSummary } from "@/lib/types";
-import { Badge, Card, Empty, ErrorNote, Table } from "@/components/ui";
+import { Badge, ButtonLink, Card, Empty, ErrorNote, Table } from "@/components/ui";
 
 /** Patient search. The query lives in the URL, so a result list is shareable and bookmarkable. */
 export default async function PatientsPage({
@@ -10,6 +11,8 @@ export default async function PatientsPage({
   searchParams: Promise<{ q?: string; includeInactive?: string }>;
 }) {
   const { q = "", includeInactive } = await searchParams;
+  const user = await currentUser();
+  const mayRegister = hasRole(user, "ADMIN", "RECEPTIONIST", "DOCTOR", "NURSE");
   const params = new URLSearchParams({ size: "50" });
   if (q) params.set("q", q);
   if (includeInactive === "on") params.set("includeInactive", "true");
@@ -29,6 +32,7 @@ export default async function PatientsPage({
           <h1 className="text-xl font-semibold tracking-tight">Patients</h1>
           <p className="text-sm text-ink-muted">Search by name, MRN or phone number.</p>
         </div>
+        {mayRegister && <ButtonLink href="/patients/new">Register a patient</ButtonLink>}
       </div>
 
       <form className="flex flex-wrap items-end gap-3">

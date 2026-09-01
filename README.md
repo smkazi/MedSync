@@ -10,9 +10,9 @@ haematology analyzer over its own wire protocol and released by a pathologist.
 
 > **Status:** the clinical core, the laboratory (including analyzer integration), the AI service
 > and the web UI are implemented and verified end to end against a real stack, and so are the
-> containerisation, TLS, security-testing and performance-testing layers. **391 tests pass** —
-> 199 Java unit and integration, 91 Python, 17 web unit, 72 black-box API and security abuse cases,
-> and 12 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
+> containerisation, TLS, security-testing and performance-testing layers. **529 tests pass** —
+> 296 Java unit and integration, 91 Python, 34 web unit, 72 black-box API and security abuse cases,
+> and 36 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
 > [Security](#security); what is left is in the [Roadmap](#roadmap).
 
 ---
@@ -138,10 +138,43 @@ K-DPS parsers, ported to Java. Entry is separated from release — a technician'
 provisional and only a pathologist verifies.
 
 ### `web` — Next.js 16, React 19
-The clinical interface: dashboard, patient search and chart, appointment book, encounter charting
-with AI assistance beside the note, triage intake and the laboratory worklist. Server components
-call the gateway; **the browser never receives an access token** — the session lives in httpOnly
-cookies and every platform call is made server-side.
+The clinical interface. Server components call the gateway; **the browser never receives an access
+token** — the session lives in httpOnly cookies and every platform call is made server-side.
+
+Nine top-level menus, defined once as data in `src/lib/menu.ts`:
+
+| Menu | Screens |
+| --- | --- |
+| Dashboard | today's board |
+| Patients | register (search), register a patient |
+| Scheduling | appointment book, clinician availability, lapsed appointments, clinician schedules |
+| Clinical | triage intake, encounter charting with AI assistance beside the note |
+| Laboratory | worklist, scan a tube, test catalogue, reference ranges, interpretation rules, analyzers, device messages |
+| Facility | room directory, rooms, floors, room types, beds, departments |
+| Pharmacy, Billing | *not built* — see below |
+| Administration | staff directory, users, roles, audit trail |
+
+Three rules hold in the navigation, and each is asserted in `web/e2e/navigation.spec.ts` against a
+real browser for all six seeded roles:
+
+- **Roles filter, they do not disable.** Filtering happens on the server, so an item a user may not
+  reach is never serialised into the page. A greyed-out item would disclose both what exists and
+  that somebody else can reach it.
+- **Dropdowns are disclosure widgets, never hover menus.** Click or Enter/Space opens, Escape closes
+  and returns focus to the trigger, arrows move and wrap, `aria-expanded` and `aria-controls` are
+  wired, and there is no hover-only path — this runs on tablets and wall-mounted terminals.
+- **A module with no backend says so.** Pharmacy and Billing appear in the menu marked "not built"
+  and lead to a page naming the service and endpoints they need. No mock table, no empty state
+  implying data could arrive, no disabled buttons hinting at a workflow: a clinical screen that
+  looks functional but is not is worse than an absent one, because somebody will read a number off
+  it.
+
+Writes go through **server actions**, not route handlers: `api()` already runs server-side with the
+session cookie, so an action can call the gateway directly and then `revalidatePath()`, and the form
+still works with JavaScript disabled. `src/app/patients/new` is the reference implementation —
+field errors come back from the service's own Bean Validation messages rather than being
+reimplemented in TypeScript, and the duplicate-patient 409 renders as a question ("these look like
+the same person") with the candidate charts as links, not as a failure.
 
 ### `services/ai-service` — Python, FastAPI
 Four clinical decision-support capabilities. Details in
@@ -247,6 +280,13 @@ The dev profile seeds one account per role, all flagged must-change-password:
 | `dr.pathan` | PATHOLOGIST |
 
 The seed password comes from `HMS_SEED_PASSWORD` and defaults to `ChangeMe!Dev2026`.
+
+> **A gap, stated rather than hidden.** The seeder sets `mustChangePassword` and `/auth/me` returns
+> it, so the UI shows a banner — but **nothing enforces it**. `POST /auth/change-password` exists and
+> works; no screen calls it and no gate requires it, so every sign-in goes straight through. Closing
+> it properly is two pieces of work: a change-password screen, and a login flow that refuses to
+> proceed while the flag is set. The second is a backend change, which is why it is named here
+> instead of being papered over with a UI-only redirect that an API client would walk past.
 
 ```bash
 TOKEN=$(curl -s -X POST localhost:8081/auth/login \
@@ -385,11 +425,11 @@ make help          # everything else
 Or directly:
 
 ```bash
-mvn -q verify                                     # 199 Java unit and integration tests
+mvn -q verify                                     # 296 Java unit and integration tests
 cd services/ai-service && uv run pytest -q        # 91 Python tests
 cd web && npm run lint && npm run typecheck       # web static checks
-cd web && npm test                                # 17 web unit tests
-cd web && npx playwright test                     # 12 browser tests
+cd web && npm test                                # 34 web unit tests
+cd web && npx playwright test                     # 36 browser tests, no skips
 mvn -Pautomation -pl tests/api verify             # 72 API and security abuse cases
 ```
 

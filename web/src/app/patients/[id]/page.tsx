@@ -18,8 +18,15 @@ import {
  * danger. Encrypted identifiers are deliberately absent: they are served by a separate,
  * individually audited endpoint, not rendered on every chart view.
  */
-export default async function PatientChart({ params }: { params: Promise<{ id: string }> }) {
+export default async function PatientChart({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ registered?: string }>;
+}) {
   const { id } = await params;
+  const { registered } = await searchParams;
 
   let patient: Patient;
   try {
@@ -38,6 +45,18 @@ export default async function PatientChart({ params }: { params: Promise<{ id: s
 
   return (
     <div className="space-y-6">
+      {registered === "1" && (
+        // `role="status"`, not `alert`: this is a confirmation. The allergy banner below is the
+        // only thing on this page that interrupts a screen reader, and it stays that way.
+        <p
+          role="status"
+          className="rounded-md border border-good/40 bg-good-soft px-3 py-2 text-sm text-good"
+        >
+          Registered. MRN <span className="numeric font-medium">{patient.mrn}</span> was issued by
+          the platform.
+        </p>
+      )}
+
       {criticalAllergies.length > 0 && (
         <div
           role="alert"

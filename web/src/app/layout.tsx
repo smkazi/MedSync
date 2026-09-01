@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import "./globals.css";
-import { currentUser, hasRole } from "@/lib/session";
+import { currentUser } from "@/lib/session";
+import { menusFor } from "@/lib/menu";
+import { MenuBar } from "@/components/MenuBar";
 import { Badge } from "@/components/ui";
 
 export const metadata: Metadata = {
@@ -9,26 +11,21 @@ export const metadata: Metadata = {
   description: "Hospital management platform",
 };
 
-/** Navigation is role-aware: a receptionist is not shown a lab worklist they cannot act on. */
+/**
+ * Navigation is role-aware, and it filters rather than disables.
+ *
+ * <p>The menu is trimmed here, on the server, by {@link menusFor} — so an item the signed-in user
+ * may not reach is never serialised into the page. A greyed-out item would disclose both what exists
+ * and who else can get at it, which is not the front desk's business.
+ *
+ * <p>The structure itself lives in `src/lib/menu.ts`, one place that says what the application
+ * contains. The five links this replaced had drifted a long way behind the platform.
+ */
 async function Nav() {
   const user = await currentUser();
   if (!user) return null;
 
-  const links: { href: string; label: string; visible: boolean }[] = [
-    { href: "/", label: "Dashboard", visible: true },
-    { href: "/patients", label: "Patients", visible: true },
-    { href: "/appointments", label: "Appointments", visible: true },
-    {
-      href: "/triage",
-      label: "Triage",
-      visible: hasRole(user, "ADMIN", "DOCTOR", "NURSE", "RECEPTIONIST"),
-    },
-    {
-      href: "/laboratory",
-      label: "Laboratory",
-      visible: hasRole(user, "ADMIN", "DOCTOR", "NURSE", "LAB_TECH", "PATHOLOGIST"),
-    },
-  ];
+  const menus = menusFor(user);
 
   return (
     <header className="border-b border-line bg-surface-raised">
@@ -36,19 +33,7 @@ async function Nav() {
         <Link href="/" className="text-base font-semibold tracking-tight">
           Med<span className="text-accent">Sync</span>
         </Link>
-        <nav className="flex flex-1 gap-1">
-          {links
-            .filter((link) => link.visible)
-            .map((link) => (
-              <Link
-                key={link.href}
-                href={link.href}
-                className="rounded-md px-3 py-1.5 text-sm text-ink-muted hover:bg-surface hover:text-ink"
-              >
-                {link.label}
-              </Link>
-            ))}
-        </nav>
+        <MenuBar menus={menus} />
         <div className="flex items-center gap-3 text-sm">
           <span className="text-ink-muted">{user.fullName}</span>
           {user.roles.map((role) => (

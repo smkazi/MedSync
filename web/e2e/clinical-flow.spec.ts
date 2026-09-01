@@ -4,21 +4,14 @@ import {
   FIXTURE_LOW_HAEMOGLOBIN,
   FIXTURE_SURNAME,
 } from "./global-setup";
+import { openMenu, signIn } from "./sign-in";
 
 /**
  * The journeys a clinician actually performs, driven through the browser.
  *
- * Credentials come from the environment so the suite never hard-codes a password.
+ * Sign-in and menu navigation live in `sign-in.ts`, shared with the navigation spec; credentials
+ * come from the environment there so nothing here hard-codes a password.
  */
-const PASSWORD = process.env.SEED_PASSWORD ?? "ChangeMe!Dev2026";
-
-async function signIn(page: import("@playwright/test").Page, username: string) {
-  await page.goto("/login");
-  await page.getByLabel("Username").fill(username);
-  await page.getByLabel("Password").fill(PASSWORD);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByRole("heading", { name: "Today" })).toBeVisible();
-}
 
 test.describe("authentication", () => {
   test("an unauthenticated visitor is sent to sign-in", async ({ page }) => {
@@ -53,26 +46,10 @@ test.describe("authentication", () => {
   });
 });
 
-test.describe("navigation is role-aware", () => {
-  test("a doctor sees the laboratory and triage sections", async ({ page }) => {
-    await signIn(page, "dr.rao");
-    const nav = page.getByRole("navigation");
-    await expect(nav.getByRole("link", { name: "Laboratory" })).toBeVisible();
-    await expect(nav.getByRole("link", { name: "Triage" })).toBeVisible();
-  });
-
-  test("a lab technician does not see triage", async ({ page }) => {
-    await signIn(page, "lab.tech");
-    const nav = page.getByRole("navigation");
-    await expect(nav.getByRole("link", { name: "Laboratory" })).toBeVisible();
-    await expect(nav.getByRole("link", { name: "Triage" })).toHaveCount(0);
-  });
-});
-
 test.describe("patients", () => {
   test("search finds a patient and opens their chart", async ({ page }) => {
     await signIn(page, "reception");
-    await page.getByRole("navigation").getByRole("link", { name: "Patients" }).click();
+    await (await openMenu(page, "Patients")).getByRole("link", { name: "Patient register" }).click();
 
     await page.getByLabel("Search").fill("nair");
     await page.getByRole("button", { name: "Search" }).click();
@@ -216,7 +193,7 @@ test.describe("laboratory", () => {
 test.describe("triage", () => {
   test("an assessment states what set the acuity", async ({ page }) => {
     await signIn(page, "nurse.iqbal");
-    await page.getByRole("navigation").getByRole("link", { name: "Triage" }).click();
+    await (await openMenu(page, "Clinical")).getByRole("link", { name: "Triage" }).click();
 
     await page
       .getByLabel("Presenting complaint")

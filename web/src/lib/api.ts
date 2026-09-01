@@ -15,6 +15,15 @@ export class ApiError extends Error {
     readonly status: number,
     readonly detail: string,
     readonly fieldErrors?: Record<string, string>,
+    /**
+     * The parsed error body, verbatim.
+     *
+     * Kept because not every failure fits the platform's `ApiError` problem shape. The duplicate
+     * patient 409 answers with `{message, candidates}` — the candidate charts are the entire point
+     * of that response, and folding it to a `detail` string would throw them away and leave the
+     * front desk with "this looks like a duplicate" and no way to look.
+     */
+    readonly body?: unknown,
   ) {
     super(detail);
     this.name = "ApiError";
@@ -55,6 +64,7 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
       response.status,
       problem?.detail ?? problem?.message ?? problem?.title ?? `Request failed (${response.status})`,
       problem?.errors,
+      payload,
     );
   }
   return payload as T;

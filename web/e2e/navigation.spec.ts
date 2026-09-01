@@ -1,0 +1,283 @@
+import { expect, test } from "@playwright/test";
+import { openMenu, signIn } from "./sign-in";
+
+/**
+ * The navigation shell, exercised against a real browser.
+ *
+ * <p>Three things here are worth more than the rest. **Role filtering is asserted per role**, for
+ * all six seeded users, against a hand-written list of what each should see — not against the menu
+ * constant, which would just be the implementation agreeing with itself. **Keyboard operation is
+ * asserted**, because dropdowns were the chosen pattern and a dropdown that cannot be driven from a
+ * keyboard is the failure mode this app cannot afford on a wall-mounted terminal. And **every link
+ * in the menu is opened**, which is the check that stops the menu drifting behind the routes the
+ * way the five-link bar it replaced did.
+ */
+
+/**
+ * What each seeded user must find in the top bar. Deliberately literal.
+ *
+ * A receptionist sees no Laboratory; only the administrator sees Administration. Pharmacy and
+ * Billing appear for everyone because they contain nothing but not-built items, which carry no role
+ * gate — there is no capability there to authorise.
+ */
+const EXPECTED: Record<string, string[]> = {
+  admin: [
+    "Dashboard",
+    "Patients",
+    "Scheduling",
+    "Clinical",
+    "Laboratory",
+    "Facility",
+    "Pharmacy",
+    "Billing",
+    "Administration",
+  ],
+  "dr.rao": [
+    "Dashboard",
+    "Patients",
+    "Scheduling",
+    "Clinical",
+    "Laboratory",
+    "Facility",
+    "Pharmacy",
+    "Billing",
+  ],
+  "nurse.iqbal": [
+    "Dashboard",
+    "Patients",
+    "Scheduling",
+    "Clinical",
+    "Laboratory",
+    "Facility",
+    "Pharmacy",
+    "Billing",
+  ],
+  reception: [
+    "Dashboard",
+    "Patients",
+    "Scheduling",
+    "Clinical",
+    "Facility",
+    "Pharmacy",
+    "Billing",
+  ],
+  "lab.tech": [
+    "Dashboard",
+    "Patients",
+    "Scheduling",
+    "Clinical",
+    "Laboratory",
+    "Facility",
+    "Pharmacy",
+    "Billing",
+  ],
+  "dr.pathan": [
+    "Dashboard",
+    "Patients",
+    "Scheduling",
+    "Clinical",
+    "Laboratory",
+    "Facility",
+    "Pharmacy",
+    "Billing",
+  ],
+};
+
+test.describe("the menu is role-aware", () => {
+  for (const [username, expected] of Object.entries(EXPECTED)) {
+    test(`${username} sees exactly the expected top-level menus`, async ({ page }) => {
+      await signIn(page, username);
+      const nav = page.getByRole("navigation", { name: "Main" });
+
+      // Triggers are buttons, the one plain link is Dashboard; read them in document order.
+      const labels = await nav
+        .locator(":scope > a, :scope > div > button")
+        .evaluateAll((nodes) => nodes.map((node) => node.textContent?.replace("▾", "").trim()));
+
+      expect(labels).toEqual(expected);
+    });
+  }
+
+  test("a lab technician is not offered triage", async ({ page }) => {
+    await signIn(page, "lab.tech");
+    const clinical = await openMenu(page, "Clinical");
+    await expect(clinical.getByRole("link", { name: "Triage" })).toHaveCount(0);
+    // The menu survives on its not-built items, so this is filtering, not a missing menu.
+    await expect(clinical.getByRole("link", { name: "Casualty board" })).toBeVisible();
+  });
+
+  test("a receptionist is offered triage", async ({ page }) => {
+    // The other half of the pair, in its own test: a second signIn() in one test lands on the
+    // dashboard rather than the sign-in form, because the session is still valid.
+    await signIn(page, "reception");
+    const clinical = await openMenu(page, "Clinical");
+    await expect(clinical.getByRole("link", { name: "Triage" })).toBeVisible();
+  });
+
+  test("an item the role cannot reach is absent, not disabled", async ({ page }) => {
+    await signIn(page, "reception");
+    // Nothing anywhere in the shell may render as disabled or aria-disabled: that would disclose
+    // both what exists and that somebody else can reach it.
+    await expect(page.getByRole("banner").locator("[aria-disabled='true'], button[disabled]")).toHaveCount(
+      0,
+    );
+    // And the route itself still refuses, which is the actual control.
+    await page.goto("/admin/users");
+    await expect(page.getByRole("main")).toContainText(/does not have access|Forbidden/i);
+  });
+});
+
+test.describe("the menu works from a keyboard alone", () => {
+  test("Enter opens, arrows move and wrap, Escape closes and restores focus", async ({ page }) => {
+    await signIn(page, "admin");
+    const trigger = page.getByRole("button", { name: "Facility", exact: true });
+
+    await trigger.focus();
+    await expect(trigger).toHaveAttribute("aria-expanded", "false");
+
+    await page.keyboard.press("Enter");
+    await expect(trigger).toHaveAttribute("aria-expanded", "true");
+    // Opening lands on the first item, so the next key press is already useful.
+    await expect(page.locator("a:focus")).toHaveText(/Room directory/);
+
+    await page.keyboard.press("ArrowDown");
+    await expect(page.locator("a:focus")).toHaveText(/^Rooms/);
+
+    await page.keyboard.press("ArrowUp");
+    await expect(page.locator("a:focus")).toHaveText(/Room directory/);
+
+    // Wraps backwards off the top rather than trapping the cursor there.
+    await page.keyboard.press("ArrowUp");
+    await expect(page.locator("a:focus")).toHaveText(/Departments/);
+
+    await page.keyboard.press("Escape");
+    await expect(trigger).toHaveAttribute("aria-expanded", "false");
+    // Focus returns to where the user was, not to the top of the document.
+    await expect(page.locator("button:focus")).toHaveText(/^Facility/);
+  });
+
+  test("Space opens a menu and ArrowDown on a closed trigger opens it too", async ({ page }) => {
+    await signIn(page, "admin");
+    const facility = page.getByRole("button", { name: "Facility", exact: true });
+
+    await facility.focus();
+    await page.keyboard.press(" ");
+    await expect(facility).toHaveAttribute("aria-expanded", "true");
+    await page.keyboard.press("Escape");
+
+    await facility.focus();
+    await page.keyboard.press("ArrowDown");
+    await expect(facility).toHaveAttribute("aria-expanded", "true");
+    await expect(page.locator("a:focus")).toHaveText(/Room directory/);
+  });
+
+  test("a keyboard user can reach a screen without ever using a pointer", async ({ page }) => {
+    await signIn(page, "admin");
+    await page.getByRole("button", { name: "Administration", exact: true }).focus();
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText(/Audit trail/);
+  });
+
+  test("hovering alone does not open a menu", async ({ page }) => {
+    // The whole reason this is a disclosure widget: a hover-only path is unusable on the tablets
+    // and wall terminals this runs on, and opens by accident when a pointer crosses the bar.
+    await signIn(page, "admin");
+    const trigger = page.getByRole("button", { name: "Laboratory", exact: true });
+    await trigger.hover();
+    await expect(trigger).toHaveAttribute("aria-expanded", "false");
+  });
+
+  test("clicking outside closes an open menu", async ({ page }) => {
+    await signIn(page, "admin");
+    const trigger = page.getByRole("button", { name: "Laboratory", exact: true });
+    await trigger.click();
+    await expect(trigger).toHaveAttribute("aria-expanded", "true");
+
+    await page.getByRole("main").click({ position: { x: 5, y: 5 } });
+    await expect(trigger).toHaveAttribute("aria-expanded", "false");
+  });
+});
+
+test.describe("every menu link resolves", () => {
+  test("an administrator can open all of them without a 404 or a server error", async ({ page }) => {
+    // Thirty-odd server-rendered pages, each hitting the gateway. The default per-test budget is
+    // for one interaction, not a sweep of the whole application.
+    test.setTimeout(240_000);
+    await signIn(page, "admin");
+    const nav = page.getByRole("navigation", { name: "Main" });
+
+    // Collect the hrefs from the rendered menu, not from the source constant. A test that reads
+    // menu.ts would agree with a typo; this one opens what a person would actually click.
+    const hrefs: string[] = [];
+    for (const link of await nav.locator(":scope > a[href]").all()) {
+      hrefs.push((await link.getAttribute("href")) as string);
+    }
+    for (const trigger of await nav.locator("button[aria-controls]").all()) {
+      await trigger.click();
+      const panel = page.locator(`#${await trigger.getAttribute("aria-controls")}`);
+      for (const link of await panel.locator("a[href]").all()) {
+        hrefs.push((await link.getAttribute("href")) as string);
+      }
+      await page.keyboard.press("Escape");
+    }
+
+    expect(hrefs.length).toBeGreaterThan(25);
+
+    const broken: string[] = [];
+    for (const href of hrefs) {
+      const response = await page.goto(href);
+      const status = response?.status() ?? 0;
+      // A page whose server render threw has no <main> at all - it is replaced wholesale by the
+      // browser's own error screen. That is the check that caught /patients/new returning
+      // `undefined` for a constant exported from a "use server" module: status 200, no page.
+      const rendered = await page.getByRole("main").count();
+      const body = rendered ? ((await page.getByRole("main").textContent()) ?? "") : "";
+      if (
+        status >= 400 ||
+        rendered === 0 ||
+        // Matched against the framework's own wording only. A bare /404/ was tried first and
+        // flagged /admin/users, because "404" appears inside a correlation id on that page.
+        /This page could not be found|Application error|Internal Server Error/i.test(body)
+      ) {
+        broken.push(`${href} (${status}${rendered === 0 ? ", did not render" : ""})`);
+      }
+    }
+    expect(broken, "menu links that do not resolve").toEqual([]);
+  });
+});
+
+test.describe("a not-built module is honest about it", () => {
+  test("it says so, offers nothing that looks functional, and names what it needs", async ({
+    page,
+  }) => {
+    await signIn(page, "admin");
+    const billing = await openMenu(page, "Billing");
+    // The menu itself marks it, so a person scanning for the feature knows before clicking.
+    await expect(billing.getByRole("link", { name: /Invoices/ })).toContainText(/not built/i);
+    await billing.getByRole("link", { name: /Invoices/ }).click();
+
+    const main = page.getByRole("main");
+    await expect(main).toContainText(/Not built yet/i);
+    await expect(main).toContainText(/billing-service \(not created\)/);
+
+    // Nothing that could be mistaken for a working screen: no table to read a number off, no
+    // form to fill in, and no disabled control implying the workflow is nearly there.
+    await expect(main.locator("table")).toHaveCount(0);
+    await expect(main.locator("form")).toHaveCount(0);
+    await expect(main.locator("input, select, textarea")).toHaveCount(0);
+    await expect(main.locator("button[disabled], [aria-disabled='true']")).toHaveCount(0);
+  });
+
+  test("an unknown module slug is a 404, not a generic not-built page", async ({ page }) => {
+    await signIn(page, "admin");
+    // Otherwise a typo in the menu would render as a feature that merely has not shipped, and the
+    // broken link would never be noticed.
+    const response = await page.goto("/not-built/nonexistent-module");
+    expect(response?.status()).toBe(404);
+  });
+});
