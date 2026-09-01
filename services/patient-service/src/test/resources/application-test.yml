@@ -13,8 +13,13 @@ hms:
   events:
     transport: log
   crypto:
-    # Test-only key; production supplies HMS_PHI_KEY from a secret manager.
-    phi-key: Zm9yLXRlc3RzLW9ubHktMzItYnl0ZS1rZXktMDAwMDA=
+    # A valid AES-256 key (32 bytes) that is unmistakably not a secret: it is 32 copies of
+    # one byte, so its base64 has almost no entropy and no scanner mistakes it for a real
+    # key. The previous value was a plausible-looking base64 blob, and gitleaks flagged it -
+    # correctly, since a scanner cannot tell a fake key from a real one by reading a comment
+    # next to it. Configured rather than left blank so tests exercise the supplied-key path
+    # rather than the built-in fallback. Deployments supply HMS_PHI_KEY from a secret manager.
+    phi-key: ERERERERERERERERERERERERERERERERERERERERERE=
 logging:
   level:
     org.flywaydb: WARN

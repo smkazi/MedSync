@@ -20,14 +20,20 @@ x-service-defaults: &service-defaults
   environment: &platform-env
     HMS_DB_URL: jdbc:postgresql://postgres:5432/hms
     HMS_DB_USER: hms
-    HMS_DB_PASSWORD: hms-dev-password
+    # Required, no default. See .env.example.
+    HMS_DB_PASSWORD: "${HMS_DB_PASSWORD:?set HMS_DB_PASSWORD in .env, see .env.example}"
     HMS_KAFKA: kafka:9092
-    HMS_EVENTS_TRANSPORT: kafka
+    HMS_EVENTS_TRANSPORT: ${HMS_EVENTS_TRANSPORT:-kafka}
     HMS_JWKS_URI: http://identity-service:8081/.well-known/jwks.json
     HMS_JWT_ISSUER: http://identity-service:8081
     HMS_JWT_AUDIENCE: hms
-    # Development key only. It protects nothing; the services log a warning about it.
-    HMS_PHI_KEY: ZGV2LW9ubHkta2V5LW5vdC1mb3ItcHJvZHVjdGlvbjEyMw==
+    # The AES-256 key for encrypted patient identifiers. Required, and deliberately not
+    # defaulted: this file used to carry a literal "development only" key, which gitleaks
+    # flagged and was right to. A committed key is one every clone shares, and the comment
+    # beside it does not stop it reaching a box that holds real records. Better to refuse
+    # to start.
+    HMS_PHI_KEY: "${HMS_PHI_KEY:?set HMS_PHI_KEY in .env, see .env.example}"
+    HMS_TIMEZONE: ${HMS_TIMEZONE:-UTC}
     SPRING_PROFILES_ACTIVE: docker
 
 services:
@@ -36,7 +42,7 @@ services:
     environment:
       POSTGRES_DB: hms
       POSTGRES_USER: hms
-      POSTGRES_PASSWORD: hms-dev-password
+      POSTGRES_PASSWORD: "${HMS_DB_PASSWORD:?set HMS_DB_PASSWORD in .env, see .env.example}"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     # Not published by default: nothing outside the compose network needs the database.

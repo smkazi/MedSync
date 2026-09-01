@@ -107,7 +107,10 @@ jobs:
           enable-cache: true
 
       - name: Install
-        run: uv sync --frozen
+        # --all-extras, not a bare sync: ruff, bandit and pytest are in the `dev` optional
+        # group, and without it the next step fails with "Failed to spawn: ruff" - which is
+        # how this workflow first went red.
+        run: uv sync --frozen --all-extras
 
       - name: Lint (ruff, security rules included)
         run: uv run ruff check .
