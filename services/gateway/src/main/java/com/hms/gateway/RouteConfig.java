@@ -24,9 +24,15 @@ public class RouteConfig {
                 .route("identity", r -> r
                         .path("/auth/**", "/admin/**", "/.well-known/**")
                         .uri(services.identity()))
-                // Patients, clinical staff and departments.
+                // Patients, clinical staff, departments, and the facility directory.
+                //
+                // The facility paths sit with patient-service because rooms and beds are master
+                // data of the same kind as departments and staff. `/room-types` is the configurable
+                // taxonomy, not a resource under `/rooms`, so it needs its own prefix - routing it
+                // by accident would have made every new room type a 404.
                 .route("patient", r -> r
-                        .path("/patients/**", "/staff/**", "/departments/**")
+                        .path("/patients/**", "/staff/**", "/departments/**",
+                              "/floors/**", "/rooms/**", "/room-types/**", "/beds/**")
                         .uri(services.patient()))
                 // Appointments, encounters, clinical notes, vitals and clinician availability.
                 .route("scheduling", r -> r
