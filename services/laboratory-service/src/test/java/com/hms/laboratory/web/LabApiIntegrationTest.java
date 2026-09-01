@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -227,6 +228,160 @@ class LabApiIntegrationTest {
 
         mockMvc.perform(get("/lab/specimens/{a}/label", accession).with(as("RECEPTIONIST")))
                 .andExpect(status().isForbidden());
+    }
+
+    // ---- report interpretation -------------------------------------------------
+
+    /** Enters results as the bench, then releases them, returning the released order. */
+    private JsonNode releasedOrderWith(String sex, Map<String, String> parameterValues) throws Exception {
+        String orderId = createOrder(sex, "CBC").get("id").asString();
+        collectSpecimen(orderId);
+
+        List<Map<String, Object>> entries = new java.util.ArrayList<>();
+        parameterValues.forEach((parameter, value) ->
+                entries.add(Map.of("parameter", parameter, "value", value, "unit", "")));
+        mockMvc.perform(post("/lab/orders/" + orderId + "/results").with(as("LAB_TECH"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("results", entries))))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/lab/orders/" + orderId + "/verify").with(as("PATHOLOGIST")))
+                .andExpect(status().isOk());
+
+        String body = mockMvc.perform(get("/lab/orders/" + orderId).with(as("DOCTOR")))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        return objectMapper.readTree(body);
+    }
+
+    @Test
+    @DisplayName("a profoundly low haemoglobin earns a narrative comment, not just an L flag")
+    void interpretiveCommentAppears() throws Exception {
+        // 7.2 g/dL is below both the reference interval (11.5) and the comment threshold (9.0).
+        JsonNode order = releasedOrderWith("F", Map.of("HGB", "7.2"));
+
+        JsonNode notes = order.get("interpretation").get("notes");
+        assertThat(notes.toString()).contains("Anaemia");
+        assertThat(notes.toString()).contains("peripheral smear");
+    }
+
+    @Test
+    @DisplayName("an out-of-range value that is not alarming gets a flag but no paragraph")
+    void twoTiersAreDistinct() throws Exception {
+        // 10.8 g/dL is below the 11.5 reference interval, so it flags L - but above the 9.0 comment
+        // threshold, so it must NOT produce a narrative. This is the whole reason there are two
+        // tiers: a report that printed a paragraph for every out-of-range number is unreadable.
+        JsonNode order = releasedOrderWith("F", Map.of("HGB", "10.8"));
+
+        assertThat(order.get("hasAbnormalResults").asBoolean()).isTrue();
+        assertThat(order.get("interpretation").get("notes").toString()).doesNotContain("Anaemia");
+    }
+
+    @Test
+    @DisplayName("morphology is derived from the indices when nobody entered a smear comment")
+    void morphologyIsDerived() throws Exception {
+        JsonNode order = releasedOrderWith("F", Map.of(
+                "MCV", "68", "MCH", "24", "MCHC", "28", "RDW-CV", "16.0",
+                "WBC", "13.5", "NEUT%", "80", "PLT", "120"));
+
+        JsonNode morphology = order.get("interpretation").get("morphology");
+        // Derived rather than entered, and the response says so - a reader is entitled to know which
+        // sentences on a report came from a person.
+        assertThat(morphology.get("derived").asBoolean()).isTrue();
+        assertThat(morphology.get("redCells").asString())
+                .isEqualTo("Microcytic hypochromic with anisocytosis");
+        assertThat(morphology.get("whiteCells").asString())
+                .isEqualTo("Leucocytosis with neutrophilia");
+        assertThat(morphology.get("platelets").asString())
+                .isEqualTo("Decreased on smear (Thrombocytopenia)");
+    }
+
+    @Test
+    @DisplayName("normal indices produce a normal narrative rather than silence")
+    void morphologyForNormalIndices() throws Exception {
+        JsonNode order = releasedOrderWith("F", Map.of(
+                "MCV", "88", "MCH", "30", "MCHC", "33", "RDW-CV", "13.0",
+                "WBC", "7.0", "NEUT%", "60", "LYM%", "32", "PLT", "250"));
+
+        JsonNode morphology = order.get("interpretation").get("morphology");
+        assertThat(morphology.get("redCells").asString()).isEqualTo("Normocytic normochromic");
+        assertThat(morphology.get("whiteCells").asString())
+                .isEqualTo("Total & differential leucocyte count within normal limits");
+        assertThat(morphology.get("platelets").asString()).isEqualTo("Adequate on smear");
+    }
+
+    @Test
+    @DisplayName("a WBC transmitted on the absolute scale is normalised before rules are applied")
+    void absoluteScaleIsNormalised() throws Exception {
+        // 1200 /uL is 1.2 x10^3/uL - profound leucopenia, below the 2.50 comment threshold. Without
+        // the scale normalisation this reads as 1200 and fires the leucocytosis rule instead, which
+        // is the exact inversion the ported _FLAG_SCALE_PARAMS table exists to prevent.
+        JsonNode order = releasedOrderWith("F", Map.of("WBC", "1200"));
+
+        String notes = order.get("interpretation").get("notes").toString();
+        assertThat(notes).contains("Leucopenia");
+        assertThat(notes).doesNotContain("Leucocytosis");
+    }
+
+    @Test
+    @DisplayName("anisocytosis needs both RDW measures raised, not either one")
+    void andedConditionsRequireAll() throws Exception {
+        // RDW-CV alone above 22 is not enough: the rule also needs RDW-SD above 64, because either
+        // measure alone is unreliable. This is why a rule owns a set of conditions.
+        JsonNode onlyCv = releasedOrderWith("F", Map.of("RDW-CV", "25.0"));
+        assertThat(onlyCv.get("interpretation").get("notes").toString())
+                .doesNotContain("increased red cell size variation");
+
+        JsonNode both = releasedOrderWith("F", Map.of("RDW-CV", "25.0", "RDW-SD", "70.0"));
+        assertThat(both.get("interpretation").get("notes").toString())
+                .contains("increased red cell size variation");
+    }
+
+    @Test
+    @DisplayName("a retuned threshold changes what today's reports say, with no code change")
+    void aRuleIsConfiguration() throws Exception {
+        // The point of moving these out of Python literals. Switch the anaemia rule off and the
+        // comment stops appearing on a report rendered a moment later - same code, same data.
+        JsonNode before = releasedOrderWith("F", Map.of("HGB", "7.2"));
+        assertThat(before.get("interpretation").get("notes").toString()).contains("Anaemia");
+
+        mockMvc.perform(patch("/lab/interpretive-rules/{code}", "ANAEMIA").with(as("PATHOLOGIST"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("active", false))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.active").value(false));
+        try {
+            JsonNode after = releasedOrderWith("F", Map.of("HGB", "7.2"));
+            assertThat(after.get("interpretation").get("notes").toString()).doesNotContain("Anaemia");
+        } finally {
+            // Restored, because the rule set is shared state and the next test reads it.
+            mockMvc.perform(patch("/lab/interpretive-rules/{code}", "ANAEMIA").with(as("PATHOLOGIST"))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(Map.of("active", true))));
+        }
+    }
+
+    @Test
+    @DisplayName("retuning what a signed report says is not a bench-level edit")
+    void ruleEditingIsRestricted() throws Exception {
+        mockMvc.perform(patch("/lab/interpretive-rules/{code}", "ANAEMIA").with(as("LAB_TECH"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("active", false))))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("the seeded rule set and morphology cut-offs are readable")
+    void configurationIsVisible() throws Exception {
+        mockMvc.perform(get("/lab/interpretive-rules").with(as("DOCTOR")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(15))
+                // Anisocytosis is the one rule with two ANDed conditions.
+                .andExpect(jsonPath("$[?(@.code == 'ANISOCYTOSIS')].conditions.length()")
+                        .value(org.hamcrest.Matchers.hasItem(2)));
+
+        mockMvc.perform(get("/lab/morphology-thresholds").with(as("DOCTOR")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(14));
     }
 
     // ---- the host-query direction ----------------------------------------------

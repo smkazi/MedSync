@@ -176,6 +176,23 @@ export type LabOrder = LabOrderSummary & {
   specimens: { id: string; accessionNo: string; specimenType: string; status: string }[];
   results: LabResult[];
   histograms: Histogram[];
+  interpretation: Interpretation | null;
+};
+
+/** The narrative on a report: comments, plus the peripheral-smear morphology. */
+export type Interpretation = {
+  notes: string[];
+  morphology: Morphology | null;
+};
+
+export type Morphology = {
+  /** A pathologist's own comment. Present only when one was entered by hand. */
+  comment: string | null;
+  redCells: string | null;
+  whiteCells: string | null;
+  platelets: string | null;
+  /** False when a human wrote it. Shown to the reader, not hidden. */
+  derived: boolean;
 };
 
 export type Department = { id: string; code: string; name: string; description: string | null };

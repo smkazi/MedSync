@@ -25,9 +25,40 @@ Change these through the API or a migration. No recompile, no deployment.
 | Staff, designations, specialties | `patient.staff` | `POST /staff` |
 | Laboratory test catalogue | `laboratory.lab_test_catalog` | migration or admin |
 | Reference ranges | `laboratory.reference_ranges` | `PATCH /lab/reference-ranges/{id}` |
+| **Interpretive rules** and their ANDed conditions | `laboratory.interpretive_rules`, `.interpretive_rule_conditions` | `PATCH /lab/interpretive-rules/{code}` |
+| Histogram flag explanations | `laboratory.histogram_flag_notes` | migration or admin |
+| Parameter unit scales | `laboratory.parameter_scales` | migration or admin |
+| Morphology cut-offs | `laboratory.morphology_thresholds` | `GET /lab/morphology-thresholds` |
 | Analyzers | `laboratory.analyzers` | migration or admin |
 | Clinician schedules and blackouts | `scheduling.clinician_schedules`, `.schedule_blackouts` | `POST /schedules` |
 | ICD-10 subset | `services/ai-service/data/icd10_subset.json` | replace the file |
+
+### Three tiers of threshold, and why none of them collapses into another
+
+The laboratory now holds three separate sets of numbers about the same parameter, and the temptation
+to merge them should be resisted every time it comes up:
+
+| Tier | Table | Question it answers | Haemoglobin, female |
+| --- | --- | --- | --- |
+| Reference interval | `reference_ranges` | Is this value outside normal? | flags `L` below 11.5 g/dL |
+| Interpretive threshold | `interpretive_rule_conditions` | Does it need saying out loud on the report? | comments below 9.0 g/dL |
+| Morphology cut-off | `morphology_thresholds` | What do the cells get called? | MCV < 76 reads "microcytic" |
+
+A report that printed a paragraph for every out-of-range number is a report nobody reads, so the
+middle tier is deliberately wider than the first. And a red cell is called microcytic below MCV 76
+while the microcytosis *comment* fires below 70 and the reference interval starts at 80 — three
+numbers, three purposes.
+
+`LabApiIntegrationTest.twoTiersAreDistinct` pins the first two apart: a haemoglobin of 10.8 g/dL
+must flag `L` and must **not** produce a narrative.
+
+### `parameter_scales` is the one that fails silently
+
+An analyzer may transmit WBC as `7.36` (×10³/µL) or `7360` (absolute /µL) depending on model and
+configuration. A threshold written against one scale never fires against the other, and it fails
+with no error at all — just a comment that stops appearing. Verified live: a WBC of `1200 /µL`
+normalises to 1.2 and reports **Leucopenia**; without the scale row it reads as 1200 and reports
+Leucocytosis, which is the exact clinical inversion the table exists to prevent.
 
 ### Room types are the worked example
 

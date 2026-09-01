@@ -110,6 +110,62 @@ export default async function LabOrderPage({ params }: { params: Promise<{ id: s
         )}
       </Card>
 
+      {order.interpretation && (order.interpretation.notes.length > 0 || order.interpretation.morphology) && (
+        <Card title="Interpretation">
+          {order.interpretation.morphology && (
+            <dl className="mb-3 space-y-1 text-sm">
+              {order.interpretation.morphology.comment ? (
+                <div className="flex gap-2">
+                  <dt className="w-28 shrink-0 text-ink-muted">Smear</dt>
+                  <dd>{order.interpretation.morphology.comment}</dd>
+                </div>
+              ) : (
+                <>
+                  {order.interpretation.morphology.redCells && (
+                    <div className="flex gap-2">
+                      <dt className="w-28 shrink-0 text-ink-muted">Red cells</dt>
+                      <dd>{order.interpretation.morphology.redCells}</dd>
+                    </div>
+                  )}
+                  {order.interpretation.morphology.whiteCells && (
+                    <div className="flex gap-2">
+                      <dt className="w-28 shrink-0 text-ink-muted">White cells</dt>
+                      <dd>{order.interpretation.morphology.whiteCells}</dd>
+                    </div>
+                  )}
+                  {order.interpretation.morphology.platelets && (
+                    <div className="flex gap-2">
+                      <dt className="w-28 shrink-0 text-ink-muted">Platelets</dt>
+                      <dd>{order.interpretation.morphology.platelets}</dd>
+                    </div>
+                  )}
+                </>
+              )}
+            </dl>
+          )}
+
+          {order.interpretation.notes.length > 0 && (
+            <ul className="list-disc space-y-1 pl-5 text-sm">
+              {order.interpretation.notes.map((note) => (
+                <li key={note}>{note}</li>
+              ))}
+            </ul>
+          )}
+
+          {/*
+            Said plainly rather than buried. A reader is entitled to know which sentences on a
+            report a person wrote and which the platform worked out from the numbers - and a
+            pathologist who enters a smear comment overrides the derived one entirely.
+          */}
+          {order.interpretation.morphology?.derived !== false && (
+            <p className="mt-3 border-t border-line pt-2 text-xs text-ink-muted">
+              Derived from the measured indices and the laboratory&apos;s configured rules. Decision
+              support for the reporting pathologist, not a diagnosis.
+            </p>
+          )}
+        </Card>
+      )}
+
       {order.histograms.length > 0 && (
         <Card title="Analyzer distributions">
           <div className="grid gap-6 md:grid-cols-3">

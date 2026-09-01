@@ -10,6 +10,7 @@ import com.hms.laboratory.service.DeviceIngestService;
 import com.hms.laboratory.service.LabMapper;
 import com.hms.laboratory.service.LabOrderService;
 import com.hms.laboratory.service.LabResultService;
+import com.hms.laboratory.service.InterpretationService;
 import com.hms.laboratory.service.ReferenceRangeService;
 import com.hms.laboratory.service.WorklistService;
 import com.hms.laboratory.web.dto.LabDtos;
@@ -53,6 +54,7 @@ public class LabController {
     private final LabMapper mapper;
     private final SpecimenLabelRenderer labels;
     private final WorklistService worklists;
+    private final InterpretationService interpretations;
 
     public LabController(LabOrderService orderService, LabResultService resultService,
                          DeviceIngestService ingestService, ReferenceRangeService rangeService,
@@ -60,7 +62,8 @@ public class LabController {
                          AnalyzerRepository analyzers,
                          DeviceMessageRepository messages,
                          ReferenceRangeRepository ranges, LabMapper mapper,
-                         SpecimenLabelRenderer labels, WorklistService worklists) {
+                         SpecimenLabelRenderer labels, WorklistService worklists,
+                         InterpretationService interpretations) {
         this.orderService = orderService;
         this.resultService = resultService;
         this.ingestService = ingestService;
@@ -72,6 +75,7 @@ public class LabController {
         this.mapper = mapper;
         this.labels = labels;
         this.worklists = worklists;
+        this.interpretations = interpretations;
     }
 
     // ---- orders ----------------------------------------------------------------
@@ -120,6 +124,37 @@ public class LabController {
     public LabDtos.MessageResponse cancelOrder(@PathVariable UUID id) {
         orderService.cancel(id);
         return new LabDtos.MessageResponse("Order cancelled");
+    }
+
+    // ---- interpretation configuration ------------------------------------------
+
+    /** Every interpretive rule, active or not, so an administrator can see what is switched off. */
+    @GetMapping("/interpretive-rules")
+    @PreAuthorize(Roles.CLINICAL_READ)
+    public List<LabDtos.InterpretiveRuleResponse> interpretiveRules() {
+        return interpretations.allRules();
+    }
+
+    /**
+     * Retunes a rule's wording, or switches it off.
+     *
+     * <p>Restricted to an administrator or a pathologist, matching the reference-range endpoint. This
+     * changes what appears on signed reports, so it is not a bench-level edit - and every change is
+     * audited.
+     */
+    @PatchMapping("/interpretive-rules/{code}")
+    @PreAuthorize("hasAnyRole('ADMIN','PATHOLOGIST')")
+    public LabDtos.InterpretiveRuleResponse updateInterpretiveRule(
+            @PathVariable String code,
+            @Valid @RequestBody LabDtos.UpdateInterpretiveRuleRequest request) {
+        return interpretations.updateRule(code, request);
+    }
+
+    /** The named cut-offs the derived smear morphology uses. */
+    @GetMapping("/morphology-thresholds")
+    @PreAuthorize(Roles.CLINICAL_READ)
+    public List<LabDtos.MorphologyThresholdResponse> morphologyThresholds() {
+        return interpretations.allThresholds();
     }
 
     // ---- analyzer worklist: the host-query direction ---------------------------

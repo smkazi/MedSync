@@ -48,6 +48,7 @@ public class LabOrderService {
     private final LabMapper mapper;
     private final EventPublisher events;
     private final AuditService audit;
+    private final InterpretationService interpretations;
 
     public LabOrderService(LabOrderRepository orders,
                            LabResultRepository results,
@@ -55,7 +56,8 @@ public class LabOrderService {
                            LabTestCatalogRepository catalog,
                            HistogramRepository histograms,
                            AccessionGenerator accessions, ReferenceRangeService ranges, LabMapper mapper,
-                           EventPublisher events, AuditService audit) {
+                           EventPublisher events, AuditService audit,
+                           InterpretationService interpretations) {
         this.orders = orders;
         this.results = results;
         this.specimens = specimens;
@@ -66,6 +68,7 @@ public class LabOrderService {
         this.mapper = mapper;
         this.events = events;
         this.audit = audit;
+        this.interpretations = interpretations;
     }
 
     @Transactional
@@ -234,7 +237,11 @@ public class LabOrderService {
                 order.getSpecimens().stream().map(mapper::toResponse).toList(),
                 resultResponses,
                 histograms.findByOrderId(order.getId()).stream().map(mapper::toResponse).toList(),
-                found.stream().anyMatch(LabResult::isAbnormal));
+                found.stream().anyMatch(LabResult::isAbnormal),
+                // The narrative the report prints. Computed on read rather than stored, so retuning
+                // a threshold changes what today's reports say without a migration over history -
+                // the same reasoning that keeps a room's directions off the appointment row.
+                interpretations.interpret(found, null));
     }
 
     private String defaultSpecimenType(LabOrder order) {

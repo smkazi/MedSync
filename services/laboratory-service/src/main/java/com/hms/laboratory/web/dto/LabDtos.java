@@ -76,7 +76,8 @@ public final class LabDtos {
                                 String department, LabEnums.Priority priority, LabEnums.OrderStatus status,
                                 String clinicalNotes, Instant orderedAt, List<OrderItemResponse> items,
                                 List<SpecimenResponse> specimens, List<ResultResponse> results,
-                                List<HistogramResponse> histograms, boolean hasAbnormalResults) {
+                                List<HistogramResponse> histograms, boolean hasAbnormalResults,
+                                InterpretationView interpretation) {
     }
 
     public record OrderSummary(UUID id, UUID patientId, String patientMrn, LabEnums.Priority priority,
@@ -126,6 +127,70 @@ public final class LabDtos {
 
         public WorklistResponse {
             testCodes = testCodes == null ? List.of() : List.copyOf(testCodes);
+        }
+    }
+
+    /** One interpretive rule as configured, with its ANDed conditions. */
+    public record InterpretiveRuleResponse(UUID id, String code, String label, String message,
+                                           short displayOrder, boolean active,
+                                           List<RuleConditionResponse> conditions) {
+
+        public InterpretiveRuleResponse {
+            conditions = conditions == null ? List.of() : List.copyOf(conditions);
+        }
+    }
+
+    public record RuleConditionResponse(UUID id, List<String> parameters, String operator,
+                                        BigDecimal threshold) {
+
+        public RuleConditionResponse {
+            parameters = parameters == null ? List.of() : List.copyOf(parameters);
+        }
+    }
+
+    /** Retunes a rule. Only the wording and whether it fires - the conditions are their own rows. */
+    public record UpdateInterpretiveRuleRequest(@Size(max = 500) String message, Boolean active) {
+    }
+
+    public record MorphologyThresholdResponse(String code, BigDecimal threshold, String note) {
+    }
+
+    public record UpdateThresholdRequest(@NotNull BigDecimal threshold) {
+    }
+
+    /**
+     * The narrative attached to a report: comments plus the smear morphology.
+     *
+     * <p>Decision support, deterministic and auditable - no model and no inference. It annotates a
+     * report a pathologist signs; nothing here writes to a patient record on its own.
+     */
+    public record InterpretationView(List<String> notes, MorphologyView morphology) {
+
+        public InterpretationView {
+            notes = notes == null ? List.of() : List.copyOf(notes);
+        }
+
+        public boolean isEmpty() {
+            return notes.isEmpty() && morphology == null;
+        }
+    }
+
+    /**
+     * Peripheral-smear morphology.
+     *
+     * @param comment  a pathologist's own comment, when one was entered. Present only for a manual
+     *                 entry, and then the derived fields are null - somebody who looked down a
+     *                 microscope outranks an inference from indices.
+     * @param derived  true when the platform worked this out from the numeric indices rather than a
+     *                 human entering it. Surfaced rather than hidden: a reader is entitled to know
+     *                 which sentences on a report came from a person.
+     */
+    public record MorphologyView(String comment, String redCells, String whiteCells,
+                                 boolean derived, String platelets) {
+
+        /** Manual comment, or a derived pair without a platelet line. */
+        public MorphologyView(String comment, String redCells, String whiteCells, boolean derived) {
+            this(comment, redCells, whiteCells, derived, null);
         }
     }
 
