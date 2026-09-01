@@ -1,0 +1,21 @@
+{
+  "roc_auc": 0.6714,
+  "brier_score": 0.103,
+  "base_rate": 0.1244,
+  "n_train": 9000,
+  "n_test": 3000,
+  "features": [
+    "lead_time_days",
+    "patient_age",
+    "previous_appointments",
+    "previous_no_shows",
+    "prior_no_show_rate",
+    "hour_of_day",
+    "day_of_week",
+    "is_first_visit",
+    "has_reminder_contact",
+    "distance_km",
+    "is_urgent"
+  ],
+  "data": "synthetic - see training/generate_noshow_data.py"
+}

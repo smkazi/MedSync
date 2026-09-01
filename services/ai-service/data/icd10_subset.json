@@ -1,0 +1,873 @@
+{
+ "source": "Curated ICD-10 subset authored for this repository. Covers common presentations; not the complete classification. Replace with your licensed release for production coding.",
+ "version": "2026-09-subset-1",
+ "codes": [
+  {
+   "code": "A09",
+   "description": "Infectious gastroenteritis and colitis, unspecified",
+   "terms": [
+    "diarrhoea",
+    "diarrhea",
+    "gastroenteritis",
+    "loose motions",
+    "food poisoning",
+    "vomiting and diarrhoea"
+   ]
+  },
+  {
+   "code": "A15.0",
+   "description": "Tuberculosis of lung",
+   "terms": [
+    "pulmonary tuberculosis",
+    "tb lung",
+    "koch's",
+    "cough with weight loss",
+    "haemoptysis tb"
+   ]
+  },
+  {
+   "code": "A90",
+   "description": "Dengue fever",
+   "terms": [
+    "dengue",
+    "break bone fever",
+    "fever with thrombocytopenia",
+    "fever with rash and myalgia"
+   ]
+  },
+  {
+   "code": "B34.9",
+   "description": "Viral infection, unspecified",
+   "terms": [
+    "viral fever",
+    "viral illness",
+    "viral infection"
+   ]
+  },
+  {
+   "code": "B54",
+   "description": "Unspecified malaria",
+   "terms": [
+    "malaria",
+    "fever with chills and rigors",
+    "plasmodium"
+   ]
+  },
+  {
+   "code": "D50.9",
+   "description": "Iron deficiency anaemia, unspecified",
+   "terms": [
+    "iron deficiency anaemia",
+    "iron deficiency anemia",
+    "microcytic anaemia",
+    "low haemoglobin",
+    "low hemoglobin",
+    "pallor and fatigue",
+    "hypochromic anaemia"
+   ]
+  },
+  {
+   "code": "D64.9",
+   "description": "Anaemia, unspecified",
+   "terms": [
+    "anaemia",
+    "anemia",
+    "low hb"
+   ]
+  },
+  {
+   "code": "D69.6",
+   "description": "Thrombocytopenia, unspecified",
+   "terms": [
+    "thrombocytopenia",
+    "low platelets",
+    "low platelet count"
+   ]
+  },
+  {
+   "code": "E03.9",
+   "description": "Hypothyroidism, unspecified",
+   "terms": [
+    "hypothyroidism",
+    "underactive thyroid",
+    "raised tsh",
+    "low thyroid"
+   ]
+  },
+  {
+   "code": "E05.9",
+   "description": "Thyrotoxicosis, unspecified",
+   "terms": [
+    "hyperthyroidism",
+    "thyrotoxicosis",
+    "overactive thyroid"
+   ]
+  },
+  {
+   "code": "E10.9",
+   "description": "Type 1 diabetes mellitus without complications",
+   "terms": [
+    "type 1 diabetes",
+    "insulin dependent diabetes",
+    "t1dm"
+   ]
+  },
+  {
+   "code": "E11.9",
+   "description": "Type 2 diabetes mellitus without complications",
+   "terms": [
+    "type 2 diabetes",
+    "diabetes mellitus",
+    "t2dm",
+    "raised blood sugar",
+    "high hba1c",
+    "diabetic"
+   ]
+  },
+  {
+   "code": "E11.65",
+   "description": "Type 2 diabetes mellitus with hyperglycaemia",
+   "terms": [
+    "uncontrolled diabetes",
+    "hyperglycaemia",
+    "hyperglycemia",
+    "high glucose diabetes"
+   ]
+  },
+  {
+   "code": "E66.9",
+   "description": "Obesity, unspecified",
+   "terms": [
+    "obesity",
+    "overweight",
+    "raised bmi"
+   ]
+  },
+  {
+   "code": "E78.5",
+   "description": "Hyperlipidaemia, unspecified",
+   "terms": [
+    "hyperlipidaemia",
+    "hyperlipidemia",
+    "dyslipidaemia",
+    "high cholesterol",
+    "raised ldl",
+    "high triglycerides"
+   ]
+  },
+  {
+   "code": "E86.0",
+   "description": "Dehydration",
+   "terms": [
+    "dehydration",
+    "dehydrated",
+    "poor oral intake"
+   ]
+  },
+  {
+   "code": "E87.6",
+   "description": "Hypokalaemia",
+   "terms": [
+    "hypokalaemia",
+    "hypokalemia",
+    "low potassium"
+   ]
+  },
+  {
+   "code": "F32.9",
+   "description": "Depressive episode, unspecified",
+   "terms": [
+    "depression",
+    "low mood",
+    "depressive episode",
+    "anhedonia"
+   ]
+  },
+  {
+   "code": "F41.1",
+   "description": "Generalised anxiety disorder",
+   "terms": [
+    "anxiety",
+    "generalised anxiety",
+    "panic",
+    "worry"
+   ]
+  },
+  {
+   "code": "F51.0",
+   "description": "Insomnia, nonorganic",
+   "terms": [
+    "insomnia",
+    "cannot sleep",
+    "sleeplessness",
+    "poor sleep"
+   ]
+  },
+  {
+   "code": "G40.9",
+   "description": "Epilepsy, unspecified",
+   "terms": [
+    "epilepsy",
+    "seizures",
+    "fits",
+    "convulsions"
+   ]
+  },
+  {
+   "code": "G43.9",
+   "description": "Migraine, unspecified",
+   "terms": [
+    "migraine",
+    "throbbing headache with photophobia",
+    "unilateral headache"
+   ]
+  },
+  {
+   "code": "G44.2",
+   "description": "Tension-type headache",
+   "terms": [
+    "tension headache",
+    "band like headache",
+    "stress headache"
+   ]
+  },
+  {
+   "code": "G47.3",
+   "description": "Sleep apnoea",
+   "terms": [
+    "sleep apnoea",
+    "sleep apnea",
+    "snoring with daytime sleepiness",
+    "osa"
+   ]
+  },
+  {
+   "code": "G62.9",
+   "description": "Polyneuropathy, unspecified",
+   "terms": [
+    "neuropathy",
+    "peripheral neuropathy",
+    "tingling feet",
+    "numbness hands and feet"
+   ]
+  },
+  {
+   "code": "H10.9",
+   "description": "Conjunctivitis, unspecified",
+   "terms": [
+    "conjunctivitis",
+    "red eye",
+    "pink eye",
+    "eye discharge"
+   ]
+  },
+  {
+   "code": "H66.9",
+   "description": "Otitis media, unspecified",
+   "terms": [
+    "otitis media",
+    "ear infection",
+    "ear pain",
+    "earache"
+   ]
+  },
+  {
+   "code": "H81.1",
+   "description": "Benign paroxysmal vertigo",
+   "terms": [
+    "bppv",
+    "positional vertigo",
+    "vertigo on turning head"
+   ]
+  },
+  {
+   "code": "I10",
+   "description": "Essential (primary) hypertension",
+   "terms": [
+    "hypertension",
+    "high blood pressure",
+    "raised bp",
+    "htn",
+    "elevated blood pressure"
+   ]
+  },
+  {
+   "code": "I20.9",
+   "description": "Angina pectoris, unspecified",
+   "terms": [
+    "angina",
+    "exertional chest pain",
+    "chest tightness on exertion"
+   ]
+  },
+  {
+   "code": "I21.9",
+   "description": "Acute myocardial infarction, unspecified",
+   "terms": [
+    "myocardial infarction",
+    "heart attack",
+    "mi",
+    "stemi",
+    "nstemi",
+    "crushing chest pain",
+    "acute coronary syndrome"
+   ]
+  },
+  {
+   "code": "I48.0",
+   "description": "Paroxysmal atrial fibrillation",
+   "terms": [
+    "atrial fibrillation",
+    "af",
+    "irregular pulse",
+    "palpitations irregular"
+   ]
+  },
+  {
+   "code": "I50.9",
+   "description": "Heart failure, unspecified",
+   "terms": [
+    "heart failure",
+    "ccf",
+    "cardiac failure",
+    "breathlessness with oedema",
+    "pedal oedema orthopnoea"
+   ]
+  },
+  {
+   "code": "I63.9",
+   "description": "Cerebral infarction, unspecified",
+   "terms": [
+    "stroke",
+    "cerebral infarction",
+    "cva",
+    "facial droop",
+    "slurred speech weakness"
+   ]
+  },
+  {
+   "code": "I80.2",
+   "description": "Phlebitis and thrombophlebitis of deep vessels of lower extremities",
+   "terms": [
+    "dvt",
+    "deep vein thrombosis",
+    "calf swelling and pain",
+    "unilateral leg swelling"
+   ]
+  },
+  {
+   "code": "J00",
+   "description": "Acute nasopharyngitis (common cold)",
+   "terms": [
+    "common cold",
+    "runny nose",
+    "coryza",
+    "sore throat and runny nose"
+   ]
+  },
+  {
+   "code": "J02.9",
+   "description": "Acute pharyngitis, unspecified",
+   "terms": [
+    "sore throat",
+    "pharyngitis",
+    "throat pain"
+   ]
+  },
+  {
+   "code": "J06.9",
+   "description": "Acute upper respiratory infection, unspecified",
+   "terms": [
+    "upper respiratory tract infection",
+    "urti",
+    "cough and cold"
+   ]
+  },
+  {
+   "code": "J11.1",
+   "description": "Influenza with respiratory manifestations",
+   "terms": [
+    "influenza",
+    "flu",
+    "fever with body ache and cough"
+   ]
+  },
+  {
+   "code": "J18.9",
+   "description": "Pneumonia, unspecified organism",
+   "terms": [
+    "pneumonia",
+    "chest infection",
+    "consolidation",
+    "productive cough with fever",
+    "lower respiratory tract infection"
+   ]
+  },
+  {
+   "code": "J20.9",
+   "description": "Acute bronchitis, unspecified",
+   "terms": [
+    "bronchitis",
+    "acute bronchitis",
+    "chesty cough"
+   ]
+  },
+  {
+   "code": "J44.9",
+   "description": "Chronic obstructive pulmonary disease, unspecified",
+   "terms": [
+    "copd",
+    "chronic obstructive pulmonary disease",
+    "emphysema",
+    "chronic bronchitis smoker"
+   ]
+  },
+  {
+   "code": "J45.9",
+   "description": "Asthma, unspecified",
+   "terms": [
+    "asthma",
+    "wheeze",
+    "wheezing",
+    "bronchospasm",
+    "reversible airway obstruction"
+   ]
+  },
+  {
+   "code": "J45.901",
+   "description": "Unspecified asthma with acute exacerbation",
+   "terms": [
+    "asthma attack",
+    "acute asthma",
+    "asthma exacerbation"
+   ]
+  },
+  {
+   "code": "K21.9",
+   "description": "Gastro-oesophageal reflux disease without oesophagitis",
+   "terms": [
+    "gerd",
+    "gord",
+    "acid reflux",
+    "heartburn",
+    "retrosternal burning"
+   ]
+  },
+  {
+   "code": "K29.7",
+   "description": "Gastritis, unspecified",
+   "terms": [
+    "gastritis",
+    "epigastric pain",
+    "stomach inflammation"
+   ]
+  },
+  {
+   "code": "K30",
+   "description": "Functional dyspepsia",
+   "terms": [
+    "dyspepsia",
+    "indigestion",
+    "bloating after meals"
+   ]
+  },
+  {
+   "code": "K35.80",
+   "description": "Acute appendicitis, unspecified",
+   "terms": [
+    "appendicitis",
+    "right iliac fossa pain",
+    "rif pain with fever",
+    "rebound tenderness"
+   ]
+  },
+  {
+   "code": "K52.9",
+   "description": "Noninfective gastroenteritis and colitis, unspecified",
+   "terms": [
+    "colitis",
+    "non infective gastroenteritis"
+   ]
+  },
+  {
+   "code": "K57.30",
+   "description": "Diverticulosis of large intestine without perforation or abscess",
+   "terms": [
+    "diverticulosis",
+    "diverticular disease"
+   ]
+  },
+  {
+   "code": "K59.00",
+   "description": "Constipation, unspecified",
+   "terms": [
+    "constipation",
+    "hard stools",
+    "infrequent bowel motions"
+   ]
+  },
+  {
+   "code": "K80.20",
+   "description": "Calculus of gallbladder without cholecystitis",
+   "terms": [
+    "gallstones",
+    "cholelithiasis",
+    "biliary colic",
+    "right upper quadrant pain after fatty meal"
+   ]
+  },
+  {
+   "code": "K92.2",
+   "description": "Gastrointestinal haemorrhage, unspecified",
+   "terms": [
+    "gi bleed",
+    "melaena",
+    "melena",
+    "haematemesis",
+    "hematemesis",
+    "blood in stool"
+   ]
+  },
+  {
+   "code": "L20.9",
+   "description": "Atopic dermatitis, unspecified",
+   "terms": [
+    "eczema",
+    "atopic dermatitis",
+    "itchy dry rash"
+   ]
+  },
+  {
+   "code": "L23.9",
+   "description": "Allergic contact dermatitis",
+   "terms": [
+    "contact dermatitis",
+    "allergic rash",
+    "rash after contact"
+   ]
+  },
+  {
+   "code": "L50.9",
+   "description": "Urticaria, unspecified",
+   "terms": [
+    "urticaria",
+    "hives",
+    "wheals",
+    "itchy raised rash"
+   ]
+  },
+  {
+   "code": "M17.9",
+   "description": "Osteoarthritis of knee, unspecified",
+   "terms": [
+    "knee osteoarthritis",
+    "knee oa",
+    "knee pain on walking",
+    "degenerative knee"
+   ]
+  },
+  {
+   "code": "M25.50",
+   "description": "Pain in unspecified joint",
+   "terms": [
+    "joint pain",
+    "arthralgia"
+   ]
+  },
+  {
+   "code": "M54.5",
+   "description": "Low back pain",
+   "terms": [
+    "low back pain",
+    "lumbago",
+    "backache",
+    "lumbar pain"
+   ]
+  },
+  {
+   "code": "M54.16",
+   "description": "Radiculopathy, lumbar region",
+   "terms": [
+    "sciatica",
+    "lumbar radiculopathy",
+    "shooting leg pain from back"
+   ]
+  },
+  {
+   "code": "M79.1",
+   "description": "Myalgia",
+   "terms": [
+    "muscle pain",
+    "myalgia",
+    "body ache"
+   ]
+  },
+  {
+   "code": "N39.0",
+   "description": "Urinary tract infection, site not specified",
+   "terms": [
+    "uti",
+    "urinary tract infection",
+    "burning micturition",
+    "dysuria",
+    "frequency and urgency"
+   ]
+  },
+  {
+   "code": "N20.0",
+   "description": "Calculus of kidney",
+   "terms": [
+    "kidney stone",
+    "renal calculus",
+    "loin to groin pain",
+    "ureteric colic"
+   ]
+  },
+  {
+   "code": "N18.9",
+   "description": "Chronic kidney disease, unspecified",
+   "terms": [
+    "chronic kidney disease",
+    "ckd",
+    "raised creatinine",
+    "renal impairment"
+   ]
+  },
+  {
+   "code": "O21.0",
+   "description": "Mild hyperemesis gravidarum",
+   "terms": [
+    "morning sickness",
+    "vomiting in pregnancy",
+    "hyperemesis"
+   ]
+  },
+  {
+   "code": "O20.9",
+   "description": "Haemorrhage in early pregnancy, unspecified",
+   "terms": [
+    "bleeding in early pregnancy",
+    "threatened miscarriage",
+    "pv bleeding pregnancy"
+   ]
+  },
+  {
+   "code": "R05",
+   "description": "Cough",
+   "terms": [
+    "cough",
+    "dry cough",
+    "persistent cough"
+   ]
+  },
+  {
+   "code": "R06.02",
+   "description": "Shortness of breath",
+   "terms": [
+    "shortness of breath",
+    "dyspnoea",
+    "dyspnea",
+    "breathlessness",
+    "sob"
+   ]
+  },
+  {
+   "code": "R07.9",
+   "description": "Chest pain, unspecified",
+   "terms": [
+    "chest pain",
+    "chest discomfort"
+   ]
+  },
+  {
+   "code": "R10.9",
+   "description": "Unspecified abdominal pain",
+   "terms": [
+    "abdominal pain",
+    "tummy pain",
+    "abdo pain",
+    "stomach ache"
+   ]
+  },
+  {
+   "code": "R11.2",
+   "description": "Nausea with vomiting, unspecified",
+   "terms": [
+    "nausea and vomiting",
+    "vomiting",
+    "emesis"
+   ]
+  },
+  {
+   "code": "R42",
+   "description": "Dizziness and giddiness",
+   "terms": [
+    "dizziness",
+    "giddiness",
+    "light headed",
+    "lightheadedness"
+   ]
+  },
+  {
+   "code": "R50.9",
+   "description": "Fever, unspecified",
+   "terms": [
+    "fever",
+    "pyrexia",
+    "raised temperature",
+    "febrile"
+   ]
+  },
+  {
+   "code": "R51.9",
+   "description": "Headache, unspecified",
+   "terms": [
+    "headache",
+    "head pain",
+    "cephalalgia"
+   ]
+  },
+  {
+   "code": "R53.83",
+   "description": "Other fatigue",
+   "terms": [
+    "fatigue",
+    "tiredness",
+    "lethargy",
+    "generalised weakness",
+    "exhaustion"
+   ]
+  },
+  {
+   "code": "R55",
+   "description": "Syncope and collapse",
+   "terms": [
+    "syncope",
+    "fainting",
+    "collapse",
+    "blackout",
+    "passed out"
+   ]
+  },
+  {
+   "code": "R60.0",
+   "description": "Localised oedema",
+   "terms": [
+    "ankle swelling",
+    "pedal oedema",
+    "leg swelling",
+    "localised oedema"
+   ]
+  },
+  {
+   "code": "R63.4",
+   "description": "Abnormal weight loss",
+   "terms": [
+    "weight loss",
+    "losing weight",
+    "unintentional weight loss"
+   ]
+  },
+  {
+   "code": "R73.09",
+   "description": "Other abnormal glucose",
+   "terms": [
+    "impaired glucose tolerance",
+    "prediabetes",
+    "borderline sugar"
+   ]
+  },
+  {
+   "code": "S06.0",
+   "description": "Concussion",
+   "terms": [
+    "concussion",
+    "head injury with brief loss of consciousness",
+    "minor head injury"
+   ]
+  },
+  {
+   "code": "S52.5",
+   "description": "Fracture of lower end of radius",
+   "terms": [
+    "distal radius fracture",
+    "colles fracture",
+    "wrist fracture after fall"
+   ]
+  },
+  {
+   "code": "S72.0",
+   "description": "Fracture of neck of femur",
+   "terms": [
+    "hip fracture",
+    "neck of femur fracture",
+    "nof fracture",
+    "fall unable to weight bear elderly"
+   ]
+  },
+  {
+   "code": "S93.4",
+   "description": "Sprain of ankle",
+   "terms": [
+    "ankle sprain",
+    "twisted ankle",
+    "inversion injury ankle"
+   ]
+  },
+  {
+   "code": "T14.90",
+   "description": "Injury, unspecified",
+   "terms": [
+    "injury",
+    "trauma",
+    "hurt"
+   ]
+  },
+  {
+   "code": "T78.2",
+   "description": "Anaphylactic shock, unspecified",
+   "terms": [
+    "anaphylaxis",
+    "anaphylactic shock",
+    "airway swelling with rash and hypotension"
+   ]
+  },
+  {
+   "code": "T78.40",
+   "description": "Allergy, unspecified",
+   "terms": [
+    "allergy",
+    "allergic reaction"
+   ]
+  },
+  {
+   "code": "Z00.00",
+   "description": "General adult medical examination without abnormal findings",
+   "terms": [
+    "health check",
+    "routine examination",
+    "annual check up",
+    "medical fitness"
+   ]
+  },
+  {
+   "code": "Z34.90",
+   "description": "Supervision of normal pregnancy, unspecified",
+   "terms": [
+    "antenatal visit",
+    "routine pregnancy check",
+    "anc visit"
+   ]
+  },
+  {
+   "code": "Z23",
+   "description": "Encounter for immunization",
+   "terms": [
+    "vaccination",
+    "immunisation",
+    "immunization",
+    "vaccine"
+   ]
+  }
+ ]
+}
