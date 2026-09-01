@@ -23,6 +23,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -89,7 +90,7 @@ public class AppointmentService {
         }
 
         Appointment appointment = new Appointment(request.patientId(), request.patientMrn().trim(),
-                request.clinicianId(), request.departmentCode().trim().toUpperCase(), startsAt, endsAt,
+                request.clinicianId(), request.departmentCode().trim().toUpperCase(Locale.ROOT), startsAt, endsAt,
                 CurrentUser.usernameOrSystem());
         appointment.setClinicianName(request.clinicianName());
         appointment.setPriority(request.priorityOrDefault());
@@ -223,7 +224,7 @@ public class AppointmentService {
             default -> throw new BadRequestException("Unsupported transition to " + target);
         }
         audit.record("APPOINTMENT_" + target, "Appointment", id, "status now " + target);
-        publish("appointment." + target.name().toLowerCase(), appointment);
+        publish("appointment." + target.name().toLowerCase(Locale.ROOT), appointment);
         return SchedulingMapper.toResponse(appointment, encounterIdFor(id));
     }
 

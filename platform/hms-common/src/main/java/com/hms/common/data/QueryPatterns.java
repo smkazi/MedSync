@@ -1,5 +1,7 @@
 package com.hms.common.data;
 
+import java.util.Locale;
+
 /**
  * Builds the LIKE patterns used by the platform's search queries.
  *
@@ -9,6 +11,7 @@ package com.hms.common.data;
  * {@code %} for "no filter" keeps every parameter a String and the query planner happy.
  */
 public final class QueryPatterns {
+
 
     /** Matches anything. */
     public static final String ANY = "%";
@@ -21,7 +24,10 @@ public final class QueryPatterns {
         if (term == null || term.isBlank()) {
             return ANY;
         }
-        return ANY + escape(term.trim().toLowerCase()) + ANY;
+        // Locale.ROOT, not the default locale. Turkish lower-cases "I" to a dotless letter, so a
+        // patient named IQBAL would stop matching a search for "iqbal" on a JVM started with
+        // tr_TR - a bug that only ever appears on someone else's machine.
+        return ANY + escape(term.trim().toLowerCase(Locale.ROOT)) + ANY;
     }
 
     /** The exact value to match, or {@code %} when no filter was supplied. */

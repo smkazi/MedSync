@@ -11,6 +11,7 @@ import com.hms.scheduling.service.SchedulingMapper;
 import com.hms.scheduling.web.dto.SchedulingDtos;
 import jakarta.validation.Valid;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -46,7 +47,7 @@ public class ScheduleController {
             throw new BadRequestException("The end of a working window must be after its start");
         }
         ClinicianSchedule schedule = new ClinicianSchedule(request.clinicianId(),
-                request.departmentCode().trim().toUpperCase(), request.dayOfWeek(),
+                request.departmentCode().trim().toUpperCase(Locale.ROOT), request.dayOfWeek(),
                 request.startTime(), request.endTime(), request.slotMinutesOrDefault());
         schedules.save(schedule);
         audit.record("SCHEDULE_CREATED", "ClinicianSchedule", schedule.getId(),

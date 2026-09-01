@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SpotBugs and FindSecBugs exclusions.
+
+  Every entry says why. An exclusion with no reason is indistinguishable from a bug someone got
+  tired of, and the next person cannot tell them apart.
+
+  Two findings from the first run are NOT excluded here, because they were real and are fixed:
+  a locale-sensitive toLowerCase() that would have broken patient search on a Turkish-locale JVM
+  (QueryPatterns, and eleven other identifier-normalisation sites), and a client-supplied
+  correlation id echoed into a response header and every log line without validation
+  (CorrelationIdFilter, and the gateway's equivalent).
+-->
+<FindBugsFilter xmlns="https://github.com/spotbugs/filter/3.0.0">
+
+  <!-- JPA entities expose and store mutable collections and dates by design: Hibernate manages
+       identity and lifecycle, and defensive copying would break dirty checking. -->
+  <Match>
+    <Class name="~com\.hms\..*\.domain\..*"/>
+    <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+  </Match>
+
+  <!-- Transport records. The collections they carry arrive from List.copyOf or Stream.toList and
+       are already unmodifiable; a record accessor handing one back exposes nothing a caller can
+       change. Covers the shared api and events packages and each service's dto package. -->
+  <Match>
+    <Or>
+      <Class name="~com\.hms\.common\.api\..*"/>
+      <Class name="~com\.hms\.common\.events\..*"/>
+      <Class name="~com\.hms\..*\.dto\..*"/>
+    </Or>
+    <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+  </Match>
+
+  <!-- Spring injects configuration and collaborators; holding the reference is the whole point of
+       constructor injection. -->
+  <Match>
+    <Bug pattern="EI_EXPOSE_REP2"/>
+    <Method name="&lt;init&gt;"/>
+  </Match>
+
+  <!-- CSRF has nothing to defend here. These are stateless resource servers: no cookie, no
+       session, so a browser cannot be made to authenticate a cross-site request on the user's
+       behalf. The bearer token has to be attached deliberately by script, which the same-origin
+       policy already governs. The one place a cookie DOES exist is the Next.js session cookie,
+       which is SameSite=Strict and never reaches these services. -->
+  <Match>
+    <Class name="~com\.hms\..*Security.*Config"/>
+    <Bug pattern="SPRING_CSRF_PROTECTION_DISABLED"/>
+  </Match>
+
+  <!-- Spring's SecurityFilterChain builder declares `throws Exception`; an override cannot narrow
+       it. -->
+  <Match>
+    <Bug pattern="THROWS_METHOD_THROWS_CLAUSE_BASIC_EXCEPTION"/>
+  </Match>
+
+  <!-- Reading a request header is what a filter does. The values that matter are validated where
+       they are used - the correlation id against a strict pattern, the Authorization header by the
+       resource server's signature check. -->
+  <Match>
+    <Bug pattern="SERVLET_HEADER"/>
+  </Match>
+
+  <!-- Log-injection detector, on SLF4J parameterised calls. What reaches these placeholders is a
+       username or entity id that has already been through bean validation, a UUID, or the
+       correlation id that is now validated against [A-Za-z0-9._:-]{1,64}. The detector cannot see
+       that and flags every logger call in the module.
+
+       Module-wide rather than per-line, deliberately: a per-line list rots into suppressions
+       nobody re-reads. Revisit if raw request bodies or free-text clinical fields ever start being
+       logged - they must not be, both for injection and because they carry PHI. -->
+  <Match>
+    <Bug pattern="CRLF_INJECTION_LOGS"/>
+  </Match>
+
+  <!-- Generated proxies. -->
+  <Match>
+    <Class name="~.*\$\$SpringCGLIB\$\$.*"/>
+  </Match>
+
+</FindBugsFilter>

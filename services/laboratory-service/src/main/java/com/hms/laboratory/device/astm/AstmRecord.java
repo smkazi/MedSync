@@ -62,6 +62,12 @@ public final class AstmRecord {
      */
     public record Sample(Patient patient, Order order, List<Result> results, List<Comment> comments) {
 
+        /** Copied on the way in: a parsed transmission is measured patient data, not a buffer. */
+        public Sample {
+            results = List.copyOf(results);
+            comments = List.copyOf(comments);
+        }
+
         /**
          * The identifier to file this sample under: the P record's id, else the O record's sample
          * number. Blank when the analyzer sent neither — the caller then allocates an accession

@@ -40,16 +40,30 @@ public class WebConfig {
     }
 
     /**
+     * What an acceptable inbound correlation id looks like. The same rule as
+     * {@code CorrelationIdFilter} in hms-common, applied here because the gateway is the first
+     * thing to touch the header and the only place a client's value gets in.
+     *
+     * <p>A caller-supplied id is echoed to the client and written to the logs of every service the
+     * request reaches, so a CR or LF in it is response splitting on one side and forged audit lines
+     * on the other. A malformed id is replaced rather than stripped: there is no legitimate trace
+     * to preserve in a value that could not have come from a real client.
+     */
+    private static final java.util.regex.Pattern SAFE_CORRELATION_ID =
+            java.util.regex.Pattern.compile("[A-Za-z0-9._:-]{1,64}");
+
+    /**
      * Gives every request a correlation id before it is proxied, so a downstream service always
      * receives one rather than inventing its own per hop.
      */
     @Bean
     public WebFilter correlationIdFilter() {
         return (exchange, chain) -> {
-            String existing = exchange.getRequest().getHeaders().getFirst(CORRELATION_HEADER);
-            String correlationId = (existing == null || existing.isBlank())
+            String inbound = exchange.getRequest().getHeaders().getFirst(CORRELATION_HEADER);
+            String correlationId = (inbound == null || inbound.isBlank()
+                    || !SAFE_CORRELATION_ID.matcher(inbound).matches())
                     ? java.util.UUID.randomUUID().toString()
-                    : existing;
+                    : inbound;
             exchange.getResponse().getHeaders().set(CORRELATION_HEADER, correlationId);
             return chain.filter(exchange.mutate()
                     .request(builder -> builder.header(CORRELATION_HEADER, correlationId))

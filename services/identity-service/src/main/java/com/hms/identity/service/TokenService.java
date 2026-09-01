@@ -18,6 +18,7 @@ import java.util.Base64;
 import java.util.Date;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import org.slf4j.Logger;
@@ -141,9 +142,14 @@ public class TokenService {
 
     /** Builds and signs the access token. Claims here are what every other service authorises on. */
     private String signAccessToken(User user) {
+        // Stated rather than assumed: every caller passes a persisted user, and an id is null only
+        // before the insert. Without this, an unpersisted user would produce a token with the
+        // string "null" as its subject or an NPE five frames from the cause - and a token whose
+        // subject is not a real user id is the worst of the two.
+        UUID subject = Objects.requireNonNull(user.getId(), "cannot sign a token for an unsaved user");
         Instant now = Instant.now();
         JWTClaimsSet claims = new JWTClaimsSet.Builder()
-                .subject(user.getId().toString())
+                .subject(subject.toString())
                 .issuer(issuer)
                 .audience(audience)
                 .issueTime(Date.from(now))

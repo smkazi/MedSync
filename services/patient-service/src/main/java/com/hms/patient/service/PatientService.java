@@ -165,7 +165,9 @@ public class PatientService {
     public void removeAllergy(UUID patientId, UUID allergyId) {
         Patient patient = require(patientId);
         PatientAllergy allergy = patient.getAllergies().stream()
-                .filter(candidate -> candidate.getId().equals(allergyId))
+                // allergyId on the left: an entity's id is nullable until it is persisted, and
+                // this way a transient row in the collection cannot NPE the lookup.
+                .filter(candidate -> allergyId.equals(candidate.getId()))
                 .findFirst()
                 .orElseThrow(() -> NotFoundException.of("Allergy", allergyId));
         patient.removeAllergy(allergy);
@@ -271,7 +273,9 @@ public class PatientService {
 
         public DuplicatePatientException(List<PatientDtos.PatientSummary> candidates) {
             super("A patient with the same surname and date of birth is already registered");
-            this.candidates = candidates;
+            // Copied: an exception travels up through code that has no idea it is holding a
+            // reference into someone else's list, and this one is rendered into a 409 body.
+            this.candidates = List.copyOf(candidates);
         }
 
         public List<PatientDtos.PatientSummary> candidates() {

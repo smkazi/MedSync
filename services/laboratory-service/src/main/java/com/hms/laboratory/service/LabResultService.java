@@ -15,6 +15,7 @@ import com.hms.laboratory.domain.Specimen;
 import com.hms.laboratory.web.dto.LabDtos;
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -94,7 +95,7 @@ public class LabResultService {
                 : order.getSpecimens().get(order.getSpecimens().size() - 1);
 
         List<LabResult> recorded = request.results().stream()
-                .map(entry -> record(order, entry.parameter().trim().toUpperCase(), entry.value(), entry.unit(),
+                .map(entry -> record(order, entry.parameter().trim().toUpperCase(Locale.ROOT), entry.value(), entry.unit(),
                         LabEnums.ResultSource.MANUAL, null, null, null, specimen, null))
                 .toList();
 

@@ -122,17 +122,18 @@ class AuthFlowIntegrationTest {
         String replacement = rotated.get("refreshToken").asString();
         assertThat(replacement).isNotEqualTo(original);
 
-        // Replaying the consumed token is treated as theft.
+        // Replaying the consumed token is treated as theft. 401, not 400: the token is a
+        // credential, and a client that gets a 400 has no reason to send the user back to sign in.
         mockMvc.perform(post("/auth/refresh")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of("refreshToken", original))))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isUnauthorized());
 
         // ...which must also invalidate the token issued by the rotation.
         mockMvc.perform(post("/auth/refresh")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of("refreshToken", replacement))))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isUnauthorized());
     }
 
     @Test
@@ -177,6 +178,11 @@ class AuthFlowIntegrationTest {
                 .andExpect(jsonPath("$.content[0].username").value("dr.rao"))
                 .andExpect(jsonPath("$.totalElements").value(1));
 
+        // The regression this guards: the role predicate used to admit every user with NO roles,
+        // because the left join leaves r.code null for them and the filter said "or r.code is
+        // null". Asking for pathologists returned every role-less account too. Asserted with a
+        // count rather than a first row, so a disposable account left behind by another test
+        // cannot make it pass or fail for the wrong reason.
         mockMvc.perform(get("/admin/users").param("role", "PATHOLOGIST").header("Authorization", adminToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.content[0].username").value("dr.pathan"))

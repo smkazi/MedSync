@@ -11,6 +11,7 @@ import com.hms.identity.repo.RoleRepository;
 import com.hms.identity.repo.UserRepository;
 import com.hms.identity.web.dto.AuthDtos;
 import java.util.LinkedHashSet;
+import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
@@ -46,7 +47,7 @@ public class UserAdminService {
         if (users.existsByEmailIgnoreCase(request.email())) {
             throw new ConflictException("Email '" + request.email() + "' is already registered");
         }
-        User user = new User(request.username().toLowerCase(), request.email().toLowerCase(),
+        User user = new User(request.username().toLowerCase(Locale.ROOT), request.email().toLowerCase(Locale.ROOT),
                 passwordEncoder.encode(request.password()), request.fullName());
         user.replaceRoles(resolveRoles(request.roles()));
         users.save(user);
@@ -71,7 +72,7 @@ public class UserAdminService {
             if (users.existsByEmailIgnoreCase(request.email())) {
                 throw new ConflictException("Email '" + request.email() + "' is already registered");
             }
-            user.setEmail(request.email().toLowerCase());
+            user.setEmail(request.email().toLowerCase(Locale.ROOT));
         }
         if (request.fullName() != null) {
             user.setFullName(request.fullName());

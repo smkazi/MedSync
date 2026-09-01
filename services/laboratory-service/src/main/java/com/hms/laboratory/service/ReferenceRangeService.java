@@ -3,6 +3,7 @@ package com.hms.laboratory.service;
 import com.hms.laboratory.domain.ReferenceRange;
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -53,7 +54,7 @@ public class ReferenceRangeService {
      * @return {@code H}, {@code L}, or blank for in-range, unknown or non-numeric
      */
     public String deriveFlag(String value, BigDecimal low, BigDecimal high, String analyzerFlag) {
-        String instrument = analyzerFlag == null ? "" : analyzerFlag.trim().toUpperCase();
+        String instrument = analyzerFlag == null ? "" : analyzerFlag.trim().toUpperCase(Locale.ROOT);
         if (FLAG_HIGH.equals(instrument) || FLAG_LOW.equals(instrument)) {
             return instrument;
         }
@@ -120,7 +121,7 @@ public class ReferenceRangeService {
         if (sex == null || sex.isBlank()) {
             return "M";
         }
-        String first = sex.trim().substring(0, 1).toUpperCase();
+        String first = sex.trim().substring(0, 1).toUpperCase(Locale.ROOT);
         return "F".equals(first) ? "F" : "M";
     }
 

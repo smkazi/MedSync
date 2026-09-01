@@ -11,6 +11,7 @@ import com.hms.patient.repo.DepartmentRepository;
 import com.hms.patient.repo.StaffRepository;
 import com.hms.patient.web.dto.PatientDtos;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -80,7 +81,8 @@ public class StaffService {
         }
         if (request.userId() != null) {
             staff.findByUserId(request.userId())
-                    .filter(existing -> !existing.getId().equals(id))
+                    // id on the left: an entity id is nullable until persisted.
+                    .filter(existing -> !id.equals(existing.getId()))
                     .ifPresent(existing -> {
                         throw new ConflictException("That login is already linked to another staff record");
                     });
@@ -116,7 +118,7 @@ public class StaffService {
 
     @Transactional
     public PatientDtos.DepartmentResponse createDepartment(PatientDtos.CreateDepartmentRequest request) {
-        String code = request.code().trim().toUpperCase();
+        String code = request.code().trim().toUpperCase(Locale.ROOT);
         if (departments.existsByCode(code)) {
             throw new ConflictException("Department code '" + code + "' already exists");
         }
@@ -130,7 +132,7 @@ public class StaffService {
         if (code == null || code.isBlank()) {
             return null;
         }
-        return departments.findByCode(code.trim().toUpperCase())
+        return departments.findByCode(code.trim().toUpperCase(Locale.ROOT))
                 .orElseThrow(() -> new BadRequestException("Unknown department code '" + code + "'"));
     }
 }

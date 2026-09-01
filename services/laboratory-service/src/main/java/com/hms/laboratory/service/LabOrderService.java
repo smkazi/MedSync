@@ -19,6 +19,7 @@ import com.hms.laboratory.domain.Specimen;
 import com.hms.laboratory.web.dto.LabDtos;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -69,7 +70,7 @@ public class LabOrderService {
     @Transactional
     public LabDtos.OrderResponse create(LabDtos.CreateOrderRequest request) {
         Set<String> codes = new LinkedHashSet<>(request.testCodes().stream()
-                .map(code -> code.trim().toUpperCase())
+                .map(code -> code.trim().toUpperCase(Locale.ROOT))
                 .filter(code -> !code.isEmpty())
                 .toList());
         if (codes.isEmpty()) {

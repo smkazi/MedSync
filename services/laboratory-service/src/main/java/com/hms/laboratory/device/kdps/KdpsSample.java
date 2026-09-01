@@ -19,6 +19,12 @@ import java.util.Map;
 public record KdpsSample(String identifier, String measuredAt, String dateKey, List<KdpsResult> results,
                          Map<String, Histogram> histograms) {
 
+    /** Copied on the way in: a decoded sample is measured patient data and must not be mutable. */
+    public KdpsSample {
+        results = List.copyOf(results);
+        histograms = Map.copyOf(histograms);
+    }
+
     /** One fixed-width numeric field from the header frame's CBC row. */
     public record KdpsResult(String parameter, String value, String unit) {
     }

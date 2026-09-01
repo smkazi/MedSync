@@ -22,6 +22,7 @@ import com.hms.scheduling.repo.EncounterRepository;
 import com.hms.scheduling.repo.VitalsRepository;
 import com.hms.scheduling.web.dto.SchedulingDtos;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
@@ -88,7 +89,7 @@ public class EncounterService {
                         "A standalone encounter needs patientId, patientMrn, clinicianId and departmentCode");
             }
             encounter = new Encounter(request.patientId(), request.patientMrn().trim(),
-                    request.clinicianId(), request.departmentCode().trim().toUpperCase(),
+                    request.clinicianId(), request.departmentCode().trim().toUpperCase(Locale.ROOT),
                     request.typeOrDefault());
         }
         encounters.save(encounter);
@@ -202,7 +203,7 @@ public class EncounterService {
     public SchedulingDtos.DiagnosisResponse addDiagnosis(UUID encounterId,
                                                          SchedulingDtos.DiagnosisRequest request) {
         Encounter encounter = requireEncounter(encounterId);
-        String code = request.icd10Code().trim().toUpperCase();
+        String code = request.icd10Code().trim().toUpperCase(Locale.ROOT);
         if (diagnoses.existsByEncounterIdAndIcd10Code(encounterId, code)) {
             throw new ConflictException(code + " is already recorded on this encounter");
         }

@@ -25,6 +25,13 @@ public interface UserRepository extends JpaRepository<User, UUID> {
      * nullable values: a bare {@code :param is null} check sends an untyped null that PostgreSQL
      * infers as {@code bytea}, and {@code lower(bytea)} does not exist.
      *
+     * <p>The role predicate is {@code :rolePattern = '%' or r.code like :rolePattern}, and the
+     * shape matters. It used to read {@code r.code like :rolePattern or r.code is null}, so that
+     * an unfiltered search would still return users with no roles - but the left join makes
+     * {@code r.code} null for exactly those users, which meant they matched <em>every</em> role
+     * filter. Asking for pathologists returned every role-less account as well. Comparing the
+     * pattern to {@code '%'} says "no filter was supplied" explicitly, which is what was meant.
+     *
      * @param pattern     lower-cased {@code %term%} pattern, or {@code %} for everything
      * @param rolePattern exact role code, or {@code %} for any role
      */
@@ -33,14 +40,14 @@ public interface UserRepository extends JpaRepository<User, UUID> {
             where (lower(u.username) like :pattern
                    or lower(u.fullName) like :pattern
                    or lower(u.email) like :pattern)
-              and (r.code like :rolePattern or r.code is null)
+              and (:rolePattern = '%' or r.code like :rolePattern)
             """,
             countQuery = """
             select count(distinct u) from User u left join u.roles r
             where (lower(u.username) like :pattern
                    or lower(u.fullName) like :pattern
                    or lower(u.email) like :pattern)
-              and (r.code like :rolePattern or r.code is null)
+              and (:rolePattern = '%' or r.code like :rolePattern)
             """)
     Page<User> search(@Param("pattern") String pattern, @Param("rolePattern") String rolePattern, Pageable pageable);
 

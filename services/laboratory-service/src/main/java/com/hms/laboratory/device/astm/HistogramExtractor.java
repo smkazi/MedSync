@@ -3,6 +3,7 @@ package com.hms.laboratory.device.astm;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -136,7 +137,7 @@ public final class HistogramExtractor {
         }
         for (AstmRecord.Comment comment : comments) {
             String text = comment.text() == null ? "" : comment.text();
-            String upper = text.toUpperCase();
+            String upper = text.toUpperCase(Locale.ROOT);
             for (String group : HISTOGRAM_GROUPS) {
                 if (upper.contains(group) && !histograms.containsKey(group)) {
                     Histogram histogram = parseArray(text, group);
@@ -187,7 +188,7 @@ public final class HistogramExtractor {
 
     /** Places a frequency array on the group's volume axis, or on a plain channel axis if unknown. */
     static Histogram onVolumeAxis(List<Double> y, String group) {
-        double[] window = group == null ? null : VOLUME_WINDOW.get(group.toUpperCase());
+        double[] window = group == null ? null : VOLUME_WINDOW.get(group.toUpperCase(Locale.ROOT));
         if (window != null && y.size() > 1) {
             double step = (window[1] - window[0]) / (y.size() - 1);
             List<Double> x = new ArrayList<>(y.size());
@@ -225,14 +226,14 @@ public final class HistogramExtractor {
         }
         if (x.size() != y.size() || !histogram.isOnVolumeAxis()) {
             // Rebuild the axis from the group's window when the curve arrived on channel numbers.
-            double[] window = VOLUME_WINDOW.get(group.toUpperCase());
+            double[] window = VOLUME_WINDOW.get(group.toUpperCase(Locale.ROOT));
             if (window == null) {
                 return Map.of();
             }
             x = onVolumeAxis(y, group).x();
         }
 
-        double[] bounds = INDEX_BOUNDS.get(group.toUpperCase());
+        double[] bounds = INDEX_BOUNDS.get(group.toUpperCase(Locale.ROOT));
         double lower = bounds == null ? x.get(0) : bounds[0];
         double upper = bounds == null ? x.get(x.size() - 1) : bounds[1];
         double largeCellThreshold = bounds == null ? Double.NaN : bounds[2];

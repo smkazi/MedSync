@@ -3,6 +3,7 @@ package com.hms.laboratory.device.astm;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -106,7 +107,7 @@ final class AstmRecordParser {
             rawSex = "";
         }
         if (rawSex.isEmpty() && !dateOfBirthRaw.isEmpty()) {
-            String last = dateOfBirthRaw.substring(dateOfBirthRaw.length() - 1).toUpperCase();
+            String last = dateOfBirthRaw.substring(dateOfBirthRaw.length() - 1).toUpperCase(Locale.ROOT);
             if (last.equals("M") || last.equals("F")) {
                 rawSex = last;
             }
@@ -155,7 +156,7 @@ final class AstmRecordParser {
         if (raw == null || raw.isEmpty()) {
             return "M";
         }
-        String sex = raw.substring(0, 1).toUpperCase();
+        String sex = raw.substring(0, 1).toUpperCase(Locale.ROOT);
         return (sex.equals("M") || sex.equals("F")) ? sex : "M";
     }
 
@@ -176,7 +177,7 @@ final class AstmRecordParser {
             for (String component : packed.split("\\^")) {
                 String trimmed = component.trim();
                 if (trimmed.length() == 1 && (trimmed.equalsIgnoreCase("M") || trimmed.equalsIgnoreCase("F"))) {
-                    sex = trimmed.toUpperCase();
+                    sex = trimmed.toUpperCase(Locale.ROOT);
                 } else if (trimmed.length() > 1) {
                     name = trimmed;
                 }
@@ -216,7 +217,7 @@ final class AstmRecordParser {
         if (testName.isEmpty()) {
             testName = testField.replace("^", "").trim();
         }
-        testName = XP_PARAMETER_ALIASES.getOrDefault(testName.toUpperCase(), testName);
+        testName = XP_PARAMETER_ALIASES.getOrDefault(testName.toUpperCase(Locale.ROOT), testName);
 
         String value = parts.size() > 3 ? parts.get(3).trim() : "";
         if (!value.isEmpty() && !CONTAINS_DIGIT.matcher(value).find()) {
