@@ -36,6 +36,25 @@ public class Appointment extends BaseEntity {
     @Column(name = "department_code", nullable = false, length = 16)
     private String departmentCode;
 
+    /**
+     * The room this appointment happens in.
+     *
+     * <p>Both the id and the code are cached because rooms live in patient-service and a service
+     * must not read another's tables: the id is the durable reference, the code is what a human
+     * reads. The room's name, floor and wayfinding text are deliberately not cached — they are read
+     * live when an appointment is rendered, so renaming a room does not leave stale directions on
+     * tomorrow's appointments.
+     *
+     * <p>Nullable: a booking may be taken before a room is assigned, and a teleconsultation has no
+     * room at all. The room exclusion constraint has a matching partial WHERE so a null is not
+     * treated as a room that every such appointment shares.
+     */
+    @Column(name = "room_id")
+    private UUID roomId;
+
+    @Column(name = "room_code", length = 16)
+    private String roomCode;
+
     @Column(name = "starts_at", nullable = false)
     private Instant startsAt;
 
@@ -105,6 +124,26 @@ public class Appointment extends BaseEntity {
 
     public String getDepartmentCode() {
         return departmentCode;
+    }
+
+    public UUID getRoomId() {
+        return roomId;
+    }
+
+    public String getRoomCode() {
+        return roomCode;
+    }
+
+    /** Both together, always: a code without an id cannot be resolved, an id without a code
+     *  cannot be read by a person. */
+    public void assignRoom(UUID roomId, String roomCode) {
+        this.roomId = roomId;
+        this.roomCode = roomCode;
+    }
+
+    public void clearRoom() {
+        this.roomId = null;
+        this.roomCode = null;
     }
 
     public Instant getStartsAt() {

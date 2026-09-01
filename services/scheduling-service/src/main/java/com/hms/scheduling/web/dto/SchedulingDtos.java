@@ -26,6 +26,13 @@ public final class SchedulingDtos {
             @NotNull UUID clinicianId,
             @Size(max = 160) String clinicianName,
             @NotBlank @Size(max = 16) String departmentCode,
+            /**
+             * Where the appointment happens. Optional: a booking may be taken before a room is
+             * assigned, and a teleconsultation has none. When supplied it is validated against the
+             * facility directory and the booking fails if the room does not exist or cannot be
+             * booked — unlike the no-show score, a room is not something to degrade gracefully on.
+             */
+            @Size(max = 16) String roomCode,
             @NotNull Instant startsAt,
             @Min(5) @Max(240) Integer durationMinutes,
             SchedulingEnums.Priority priority,
@@ -47,6 +54,7 @@ public final class SchedulingDtos {
         }
     }
 
+    /** Moving an appointment may also move it to a different room. */
     public record RescheduleRequest(@NotNull Instant startsAt,
                                     @Min(5) @Max(240) Integer durationMinutes) {
 
@@ -66,7 +74,25 @@ public final class SchedulingDtos {
                                       Instant endsAt, SchedulingEnums.AppointmentStatus status,
                                       SchedulingEnums.Priority priority, String reason, String bookedBy,
                                       Instant checkedInAt, String cancelledReason,
-                                      NoShowRiskView noShowRisk, UUID encounterId) {
+                                      NoShowRiskView noShowRisk, UUID encounterId,
+                                      /**
+                                       * Where to go. The code is cached on the appointment; the
+                                       * name, floor and directions are resolved live, so a renamed
+                                       * room does not leave stale text on an existing appointment.
+                                       */
+                                      RoomView room) {
+    }
+
+    /**
+     * Wayfinding, as a patient reads it: "General OPD · Ground Floor · From reception, follow the
+     * signs for General".
+     *
+     * <p>{@code resolved} is false when the appointment has a room code the directory could not
+     * answer for — a decommissioned room, or the directory being briefly unreachable. The UI shows
+     * the code alone in that case rather than pretending there is no room.
+     */
+    public record RoomView(String code, String name, String floorName, String directions,
+                           boolean resolved) {
     }
 
     /** One bookable slot in a clinician's day. */

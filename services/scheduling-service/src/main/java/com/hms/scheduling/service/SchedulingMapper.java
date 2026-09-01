@@ -1,5 +1,6 @@
 package com.hms.scheduling.service;
 
+import com.hms.scheduling.client.RoomDirectoryClient;
 import com.hms.scheduling.domain.Appointment;
 import com.hms.scheduling.domain.ClinicalNote;
 import com.hms.scheduling.domain.ClinicianSchedule;
@@ -18,6 +19,17 @@ public final class SchedulingMapper {
 
     public static SchedulingDtos.AppointmentResponse toResponse(Appointment appointment,
                                                                UUID encounterId) {
+        return toResponse(appointment, encounterId, null);
+    }
+
+    /**
+     * @param room the resolved location, or null when the appointment has no room or the directory
+     *             could not answer for it. A code with no resolution still renders — the patient is
+     *             better served by "GF-GEN" than by no room at all.
+     */
+    public static SchedulingDtos.AppointmentResponse toResponse(Appointment appointment,
+                                                               UUID encounterId,
+                                                               RoomDirectoryClient.RoomLocation room) {
         SchedulingDtos.NoShowRiskView risk = appointment.getNoShowRisk() == null
                 ? null
                 : new SchedulingDtos.NoShowRiskView(appointment.getNoShowRisk(),
@@ -28,7 +40,23 @@ public final class SchedulingMapper {
                 appointment.getDepartmentCode(), appointment.getStartsAt(), appointment.getEndsAt(),
                 appointment.getStatus(), appointment.getPriority(), appointment.getReason(),
                 appointment.getBookedBy(), appointment.getCheckedInAt(),
-                appointment.getCancelledReason(), risk, encounterId);
+                appointment.getCancelledReason(), risk, encounterId,
+                roomView(appointment, room));
+    }
+
+    private static SchedulingDtos.RoomView roomView(Appointment appointment,
+                                                    RoomDirectoryClient.RoomLocation room) {
+        if (appointment.getRoomCode() == null) {
+            return null;
+        }
+        if (room == null) {
+            // A code the directory could not answer for: a decommissioned room, or the directory
+            // briefly unreachable. Say so rather than dropping the room silently, which would tell
+            // a patient there is nowhere to go.
+            return new SchedulingDtos.RoomView(appointment.getRoomCode(), null, null, null, false);
+        }
+        return new SchedulingDtos.RoomView(room.code(), room.name(), room.floorName(),
+                room.directions(), true);
     }
 
     public static SchedulingDtos.NoteResponse toResponse(ClinicalNote note) {

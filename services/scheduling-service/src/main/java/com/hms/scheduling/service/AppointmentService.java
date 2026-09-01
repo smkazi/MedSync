@@ -11,6 +11,7 @@ import com.hms.common.events.Topics;
 import com.hms.common.security.CurrentUser;
 import com.hms.common.web.CorrelationId;
 import com.hms.scheduling.client.NoShowRiskClient;
+import com.hms.scheduling.client.RoomDirectoryClient;
 import com.hms.scheduling.domain.Appointment;
 import com.hms.scheduling.domain.SchedulingEnums;
 import com.hms.scheduling.repo.AppointmentRepository;
@@ -44,26 +45,30 @@ public class AppointmentService {
     private static final Logger log = LoggerFactory.getLogger(AppointmentService.class);
 
     /** The exclusion constraint's name, so a violation can be told apart from any other. */
-    private static final String OVERLAP_CONSTRAINT = "no_overlapping_appointments";
+    private static final String CLINICIAN_OVERLAP_CONSTRAINT = "no_overlapping_appointments";
+    private static final String ROOM_OVERLAP_CONSTRAINT = "no_overlapping_room_bookings";
 
     private final AppointmentRepository appointments;
     private final ClinicianScheduleRepository schedules;
     private final ScheduleBlackoutRepository blackouts;
     private final EncounterRepository encounters;
     private final NoShowRiskClient riskClient;
+    private final RoomDirectoryClient roomDirectory;
     private final EventPublisher events;
     private final AuditService audit;
     private final ZoneId zone;
 
     public AppointmentService(AppointmentRepository appointments, ClinicianScheduleRepository schedules,
                              ScheduleBlackoutRepository blackouts, EncounterRepository encounters,
-                             NoShowRiskClient riskClient, EventPublisher events, AuditService audit,
+                             NoShowRiskClient riskClient, RoomDirectoryClient roomDirectory,
+                             EventPublisher events, AuditService audit,
                              @Value("${hms.scheduling.zone:UTC}") String zone) {
         this.appointments = appointments;
         this.schedules = schedules;
         this.blackouts = blackouts;
         this.encounters = encounters;
         this.riskClient = riskClient;
+        this.roomDirectory = roomDirectory;
         this.events = events;
         this.audit = audit;
         this.zone = ZoneId.of(zone);
@@ -96,22 +101,29 @@ public class AppointmentService {
         appointment.setPriority(request.priorityOrDefault());
         appointment.setReason(request.reason());
 
+        // Validated before the insert, and fatal if it fails: writing an unverified room code onto
+        // an appointment would mean sending a patient to a room that may not exist or may be a
+        // resuscitation bay. Unlike the no-show score below, this does not degrade.
+        RoomDirectoryClient.RoomLocation room = null;
+        if (request.roomCode() != null && !request.roomCode().isBlank()) {
+            room = roomDirectory.require(request.roomCode(), bearerToken);
+            appointment.assignRoom(room.id(), room.code());
+        }
+
         applyNoShowRisk(appointment, request, bearerToken);
 
         try {
             appointments.saveAndFlush(appointment);
         } catch (DataIntegrityViolationException ex) {
-            if (isOverlapViolation(ex)) {
-                throw new ConflictException("That slot has just been taken; please pick another");
-            }
-            throw ex;
+            throw overlapConflict(ex, appointment);
         }
 
         audit.record("APPOINTMENT_BOOKED", "Appointment", appointment.getId(),
-                "%s with clinician %s at %s".formatted(appointment.getPatientMrn(),
-                        appointment.getClinicianId(), startsAt));
+                "%s with clinician %s at %s%s".formatted(appointment.getPatientMrn(),
+                        appointment.getClinicianId(), startsAt,
+                        appointment.getRoomCode() == null ? "" : " in " + appointment.getRoomCode()));
         publish("appointment.booked", appointment);
-        return SchedulingMapper.toResponse(appointment, null);
+        return SchedulingMapper.toResponse(appointment, null, room);
     }
 
     /**
@@ -155,9 +167,32 @@ public class AppointmentService {
         }
     }
 
-    private static boolean isOverlapViolation(DataIntegrityViolationException ex) {
+    /**
+     * Turns an exclusion-constraint violation into the 409 the front desk can act on.
+     *
+     * <p>The two constraints get different messages, and the difference is not cosmetic: "that
+     * clinician is already booked" and "that room is already in use" call for different fixes —
+     * move the appointment, or move the room. A single message would send whoever is standing at
+     * the desk looking in the wrong place.
+     *
+     * <p>Anything that is not one of the two overlap constraints is rethrown: it is a real
+     * integrity failure, and disguising it as a booking clash would hide it.
+     */
+    private static RuntimeException overlapConflict(DataIntegrityViolationException ex,
+                                                    Appointment appointment) {
         String message = ex.getMostSpecificCause().getMessage();
-        return message != null && message.contains(OVERLAP_CONSTRAINT);
+        if (message == null) {
+            return ex;
+        }
+        if (message.contains(ROOM_OVERLAP_CONSTRAINT)) {
+            return new ConflictException(("Room %s is already in use at that time. "
+                    + "Pick another room or another slot.")
+                    .formatted(appointment.getRoomCode() == null ? "" : appointment.getRoomCode()));
+        }
+        if (message.contains(CLINICIAN_OVERLAP_CONSTRAINT)) {
+            return new ConflictException("That slot has just been taken; please pick another");
+        }
+        return ex;
     }
 
     @Transactional(readOnly = true)
@@ -191,10 +226,7 @@ public class AppointmentService {
         try {
             appointments.saveAndFlush(appointment);
         } catch (DataIntegrityViolationException ex) {
-            if (isOverlapViolation(ex)) {
-                throw new ConflictException("That slot has just been taken; please pick another");
-            }
-            throw ex;
+            throw overlapConflict(ex, appointment);
         }
         audit.record("APPOINTMENT_RESCHEDULED", "Appointment", id, "moved to " + request.startsAt());
         publish("appointment.rescheduled", appointment);

@@ -43,6 +43,9 @@ management:
         enabled: true
 
 hms:
+  patient:
+    # Where the facility directory lives. Room codes are validated against it at booking time.
+    base-url: ${HMS_PATIENT_URI:http://localhost:8082}
   security:
     mode: resource-server
   events:
