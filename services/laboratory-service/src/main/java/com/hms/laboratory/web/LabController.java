@@ -9,6 +9,7 @@ import com.hms.laboratory.label.SpecimenLabelRenderer;
 import com.hms.laboratory.service.DeviceIngestService;
 import com.hms.laboratory.service.LabMapper;
 import com.hms.laboratory.service.LabOrderService;
+import com.hms.laboratory.service.LabReportService;
 import com.hms.laboratory.service.LabResultService;
 import com.hms.laboratory.service.InterpretationService;
 import com.hms.laboratory.service.ReferenceRangeService;
@@ -19,7 +20,10 @@ import java.util.List;
 import java.util.UUID;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.CacheControl;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -55,6 +59,7 @@ public class LabController {
     private final SpecimenLabelRenderer labels;
     private final WorklistService worklists;
     private final InterpretationService interpretations;
+    private final LabReportService reports;
 
     public LabController(LabOrderService orderService, LabResultService resultService,
                          DeviceIngestService ingestService, ReferenceRangeService rangeService,
@@ -63,7 +68,7 @@ public class LabController {
                          DeviceMessageRepository messages,
                          ReferenceRangeRepository ranges, LabMapper mapper,
                          SpecimenLabelRenderer labels, WorklistService worklists,
-                         InterpretationService interpretations) {
+                         InterpretationService interpretations, LabReportService reports) {
         this.orderService = orderService;
         this.resultService = resultService;
         this.ingestService = ingestService;
@@ -76,6 +81,7 @@ public class LabController {
         this.labels = labels;
         this.worklists = worklists;
         this.interpretations = interpretations;
+        this.reports = reports;
     }
 
     // ---- orders ----------------------------------------------------------------
@@ -189,6 +195,47 @@ public class LabController {
         return ResponseEntity.ok()
                 .cacheControl(CacheControl.noStore())
                 .body(worklists.astmReply(queryTransmission));
+    }
+
+    // ---- the printed report ----------------------------------------------------
+
+    /**
+     * The pathology report, as a PDF.
+     *
+     * <p>{@code CHART_READ} rather than {@code CLINICAL_READ}: this is the whole clinical document
+     * with the patient's name on it, which is a narrower thing than a worklist row. Reception can see
+     * that an order exists; it has no business printing the result.
+     *
+     * <p>Available before verification, watermarked PROVISIONAL. A clinician sometimes needs to see
+     * results before the pathologist has signed, and refusing would push people to screenshots -
+     * which carry no watermark at all.
+     */
+    @GetMapping(value = "/orders/{id}/report.pdf", produces = MediaType.APPLICATION_PDF_VALUE)
+    @PreAuthorize(Roles.CHART_READ)
+    public ResponseEntity<byte[]> reportPdf(@PathVariable UUID id, HttpServletRequest httpRequest) {
+        LabReportService.Rendered rendered = reports.render(id, bearerToken(httpRequest));
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_PDF)
+                // inline, so a clinician reads it in the browser instead of accumulating downloads;
+                // no-store because a report is patient data and must not sit in a shared cache.
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        "inline; filename=\"" + rendered.fileName() + "\"")
+                .cacheControl(CacheControl.noStore())
+                .body(rendered.pdf());
+    }
+
+    /**
+     * The caller's own token, forwarded so the patient lookup runs with their authority.
+     *
+     * <p>Not a service credential: whoever prints a report must be entitled to read that patient, and
+     * borrowing a platform-wide identity here would quietly bypass that.
+     */
+    private static String bearerToken(HttpServletRequest request) {
+        String header = request.getHeader(HttpHeaders.AUTHORIZATION);
+        if (header == null || !header.startsWith("Bearer ")) {
+            return null;
+        }
+        return header.substring("Bearer ".length()).trim();
     }
 
     // ---- specimens: barcode labels and scan-to-find ----------------------------

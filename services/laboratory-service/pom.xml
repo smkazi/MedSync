@@ -52,6 +52,31 @@
       <artifactId>spring-security-test</artifactId>
       <scope>test</scope>
     </dependency>
+
+    <!--
+      PDF rendering for the pathology report. Apache-2.0, and the same licence family as
+      everything else here.
+    -->
+    <dependency>
+      <groupId>org.apache.pdfbox</groupId>
+      <artifactId>pdfbox</artifactId>
+      <version>3.0.3</version>
+    </dependency>
+
+    <!--
+      QR encoding for the report's result summary.
+
+      A dependency here where Code 128 was hand-written, and the difference is not inconsistency.
+      Code 128 is a lookup table and two loops. QR needs Reed-Solomon error correction over a
+      Galois field plus mask-pattern selection - several hundred lines of arithmetic whose failure
+      mode is a code that scans as the wrong data. Hand-rolling that on a clinical document would
+      be a liability, not a saving.
+    -->
+    <dependency>
+      <groupId>com.google.zxing</groupId>
+      <artifactId>core</artifactId>
+      <version>3.5.3</version>
+    </dependency>
   </dependencies>
 
   <build>

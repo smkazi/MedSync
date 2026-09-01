@@ -164,6 +164,38 @@ test.describe("laboratory", () => {
     await expect(page.getByText("L2026-999999").first()).toBeVisible();
   });
 
+  test("the released report downloads as a real PDF", async ({ page }) => {
+    await signIn(page, "dr.pathan");
+    await page.goto("/laboratory?status=VERIFIED");
+    await page.getByRole("link", { name: "Open" }).first().click();
+
+    // page.request shares the browser context's cookies, so this exercises the same authenticated
+    // path the link does - the token is httpOnly and never reaches client script.
+    const href = await page.getByRole("link", { name: "Report PDF" }).getAttribute("href");
+    expect(href).toBeTruthy();
+    const response = await page.request.get(href!);
+
+    expect(response.status()).toBe(200);
+    expect(response.headers()["content-type"]).toContain("application/pdf");
+    // Patient data: must not sit in a shared cache.
+    expect(response.headers()["cache-control"]).toContain("no-store");
+
+    const body = await response.body();
+    expect(body.subarray(0, 5).toString("latin1")).toBe("%PDF-");
+    expect(body.length).toBeGreaterThan(1000);
+  });
+
+  test("the report route serves nothing without a session", async ({ page, baseURL }) => {
+    // Deliberately not signed in. The bearer token lives in an httpOnly cookie, so an
+    // unauthenticated request has no authority at all - and must be turned away rather than
+    // reaching the gateway.
+    const response = await page.request.get(new URL("/laboratory/any-id/report", baseURL).toString(), {
+      maxRedirects: 0,
+    });
+    expect(response.status()).toBe(307);
+    expect(response.headers()["location"]).toContain("/login");
+  });
+
   test("the label sheet renders a barcode carrying no patient identity", async ({ page }) => {
     await signIn(page, "lab.tech");
     await page.goto("/laboratory?status=VERIFIED");

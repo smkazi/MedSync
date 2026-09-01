@@ -10,11 +10,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.hms.laboratory.client.PatientDirectoryClient;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -24,6 +26,7 @@ import org.springframework.http.MediaType;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
 import tools.jackson.databind.JsonNode;
@@ -43,6 +46,31 @@ class LabApiIntegrationTest {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    /**
+     * The patient directory, stubbed.
+     *
+     * <p>{@code PatientDirectoryClient} reaches patient-service over HTTP, which is not running in a
+     * unit test, and it is deliberately fail-closed - so without this every report request would 500
+     * rather than exercising the renderer. The cross-service call itself is covered by the journey in
+     * {@code tests/api} and was verified by hand against a live stack.
+     */
+    @MockitoBean
+    private PatientDirectoryClient patientDirectory;
+
+    /** The name the report is expected to print. */
+    private static final String FIXTURE_PATIENT_NAME = "Test Patient";
+
+    @BeforeEach
+    void stubPatientDirectory() {
+        // nullable() rather than anyString(): MockMvc's jwt() post-processor populates the
+        // SecurityContext without an Authorization header, so the forwarded token is null.
+        org.mockito.Mockito.reset(patientDirectory);
+        org.mockito.Mockito.when(patientDirectory.require(org.mockito.ArgumentMatchers.any(),
+                        org.mockito.ArgumentMatchers.nullable(String.class)))
+                .thenReturn(new PatientDirectoryClient.PatientIdentity(
+                        FIXTURE_PATIENT_NAME, "F", 44, "MRN-STUB"));
+    }
 
     private static RequestPostProcessor as(String... roles) {
         List<GrantedAuthority> authorities = Arrays.stream(roles)
@@ -228,6 +256,127 @@ class LabApiIntegrationTest {
 
         mockMvc.perform(get("/lab/specimens/{a}/label", accession).with(as("RECEPTIONIST")))
                 .andExpect(status().isForbidden());
+    }
+
+    // ---- the printed report ----------------------------------------------------
+
+    @Test
+    @DisplayName("a report cannot be issued for an order with no results")
+    void reportNeedsResults() throws Exception {
+        String orderId = createOrder("F", "CBC").get("id").asString();
+        collectSpecimen(orderId);
+
+        // An empty report filed in a chart reads as a normal one.
+        mockMvc.perform(get("/lab/orders/{id}/report.pdf", orderId).with(as("DOCTOR")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value(
+                        org.hamcrest.Matchers.containsString("nothing to report")));
+    }
+
+    @Test
+    @DisplayName("a report cannot be issued for a cancelled order, and says so")
+    void cancelledOrderHasNoReport() throws Exception {
+        String orderId = createOrder("F", "CBC").get("id").asString();
+        mockMvc.perform(delete("/lab/orders/" + orderId).with(as("DOCTOR")))
+                .andExpect(status().isOk());
+
+        // Cancelled, not "no results" - both are 400 but they send somebody to different places.
+        mockMvc.perform(get("/lab/orders/{id}/report.pdf", orderId).with(as("DOCTOR")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value(
+                        org.hamcrest.Matchers.containsString("cancelled")));
+    }
+
+    @Test
+    @DisplayName("a released order renders a PDF carrying the patient and the values")
+    void releasedOrderRendersAPdf() throws Exception {
+        JsonNode order = releasedOrderWith("F", Map.of("HGB", "9.4", "PLT", "250"));
+        String orderId = order.get("id").asString();
+
+        byte[] pdf = mockMvc.perform(get("/lab/orders/{id}/report.pdf", orderId).with(as("DOCTOR")))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Type",
+                        org.hamcrest.Matchers.containsString("application/pdf")))
+                // A report is patient data and must not sit in a shared cache.
+                .andExpect(header().string("Cache-Control",
+                        org.hamcrest.Matchers.containsString("no-store")))
+                .andExpect(header().string("Content-Disposition",
+                        org.hamcrest.Matchers.containsString("report-L")))
+                .andReturn().getResponse().getContentAsByteArray();
+
+        assertThat(new String(pdf, 0, 5, java.nio.charset.StandardCharsets.US_ASCII)).isEqualTo("%PDF-");
+        String text = pdfText(pdf);
+        assertThat(text).contains(FIXTURE_PATIENT_NAME);
+        assertThat(text).contains(order.get("patientMrn").asString());
+        assertThat(text).contains("Haemoglobin").contains("9.4");
+        // Released, so no watermark and the releasing pathologist is named.
+        assertThat(text.replaceAll("\\s+", "")).doesNotContain("PROVISIONAL");
+        assertThat(text).contains("Verified and released");
+    }
+
+    @Test
+    @DisplayName("results entered but not released render as PROVISIONAL")
+    void unreleasedOrderIsProvisional() throws Exception {
+        String orderId = createOrder("F", "CBC").get("id").asString();
+        collectSpecimen(orderId);
+        mockMvc.perform(post("/lab/orders/" + orderId + "/results").with(as("LAB_TECH"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("results",
+                                List.of(Map.of("parameter", "HGB", "value", "9.4", "unit", "g/dL"))))))
+                .andExpect(status().isOk());
+
+        // Renders rather than refusing: a clinician sometimes needs results before the pathologist
+        // has signed, and refusing pushes people to screenshots, which carry no watermark at all.
+        byte[] pdf = mockMvc.perform(get("/lab/orders/{id}/report.pdf", orderId).with(as("DOCTOR")))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsByteArray();
+
+        assertThat(pdfText(pdf).replaceAll("\\s+", "")).contains("PROVISIONAL");
+    }
+
+    @Test
+    @DisplayName("no report is produced when the patient's name cannot be read")
+    void reportFailsClosedWithoutAName() throws Exception {
+        JsonNode order = releasedOrderWith("F", Map.of("HGB", "9.4"));
+
+        // An unidentified pathology report is worse than a missing one: it can be filed against the
+        // wrong patient and there is no way to tell afterwards that it was.
+        org.mockito.Mockito.when(patientDirectory.require(org.mockito.ArgumentMatchers.any(),
+                        org.mockito.ArgumentMatchers.nullable(String.class)))
+                .thenThrow(new IllegalStateException("The patient directory is unreachable"));
+        try {
+            mockMvc.perform(get("/lab/orders/{id}/report.pdf", order.get("id").asString())
+                            .with(as("DOCTOR")))
+                    .andExpect(status().is5xxServerError());
+        } finally {
+            stubPatientDirectory();
+        }
+    }
+
+    private static String pdfText(byte[] pdf) throws Exception {
+        try (org.apache.pdfbox.pdmodel.PDDocument document = org.apache.pdfbox.Loader.loadPDF(
+                new org.apache.pdfbox.io.RandomAccessReadBuffer(
+                        new java.io.ByteArrayInputStream(pdf)))) {
+            return new org.apache.pdfbox.text.PDFTextStripper().getText(document);
+        }
+    }
+
+    @Test
+    @DisplayName("printing a report is chart access, not worklist access")
+    void reportRequiresChartAccess() throws Exception {
+        String orderId = createOrder("F", "CBC").get("id").asString();
+
+        // Reception can see that an order exists - it has no business printing the result, which
+        // carries the patient's name and every value.
+        mockMvc.perform(get("/lab/orders/{id}/report.pdf", orderId).with(as("RECEPTIONIST")))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("an unknown order has no report")
+    void unknownOrderHasNoReport() throws Exception {
+        mockMvc.perform(get("/lab/orders/{id}/report.pdf", UUID.randomUUID()).with(as("DOCTOR")))
+                .andExpect(status().isNotFound());
     }
 
     // ---- report interpretation -------------------------------------------------

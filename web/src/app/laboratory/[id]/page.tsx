@@ -60,6 +60,17 @@ export default async function LabOrderPage({ params }: { params: Promise<{ id: s
               Print labels
             </Link>
           )}
+          {order.results.length > 0 && (
+            <a
+              href={`/laboratory/${order.id}/report`}
+              target="_blank"
+              rel="noopener"
+              className="rounded border border-line px-3 py-1 text-sm hover:bg-surface"
+            >
+              {/* Before release it is still available, watermarked PROVISIONAL - so the label says so. */}
+              {order.status === "VERIFIED" ? "Report PDF" : "Provisional PDF"}
+            </a>
+          )}
         </div>
       </div>
 
