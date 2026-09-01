@@ -111,6 +111,24 @@ public final class LabDtos {
                                         int payloadBytes) {
     }
 
+    /**
+     * What is ordered for one scanned sample.
+     *
+     * @param runnable whether an analyzer may be told to run it. False for a cancelled order (the
+     *                 tests were called off) and for a verified one (signed off and closed - a
+     *                 genuine repeat is a new order, which is also how it gets its own audit trail).
+     *                 Exposed as a field rather than implied by an empty test list, so a UI can say
+     *                 <em>why</em> a tube will not run instead of showing nothing.
+     */
+    public record WorklistResponse(String accessionNo, UUID orderId, String patientMrn,
+                                   String patientSex, String priority, String orderStatus,
+                                   String specimenType, List<String> testCodes, boolean runnable) {
+
+        public WorklistResponse {
+            testCodes = testCodes == null ? List.of() : List.copyOf(testCodes);
+        }
+    }
+
     public record MessageResponse(String message) {
     }
 }

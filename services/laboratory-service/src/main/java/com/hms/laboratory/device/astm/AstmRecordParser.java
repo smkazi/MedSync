@@ -193,6 +193,37 @@ final class AstmRecordParser {
     }
 
     /**
+     * Parses a Q record — the analyzer's request for a sample's orders.
+     *
+     * <p>Field 2 is the starting range id, and where the sample number sits inside it varies by
+     * vendor and firmware: {@code Q|1|^123456}, {@code Q|1|^^^^^123456} and {@code Q|1|123456^} are
+     * all seen in the field. Rather than encoding one layout, the last non-empty component wins —
+     * the same pragmatism {@link #parseResult} already applies to the test identifier, and for the
+     * same reason: the alternative is a parser that works against one instrument and silently
+     * returns nothing for the next one.
+     *
+     * <p>An {@code ALL} in the universal test id field is the convention for "everything ordered",
+     * which is the only thing this host answers; a request for a specific test set is answered with
+     * the full order rather than filtered, because deciding a subset on the analyzer's behalf is how
+     * a requested test quietly fails to run.
+     */
+    static AstmRecord.Query parseQuery(List<String> parts) {
+        String range = field(parts, 2);
+        String sampleId = "";
+        if (!range.isEmpty()) {
+            String[] components = range.split("\\^");
+            for (int i = components.length - 1; i >= 0; i--) {
+                String component = components[i].trim();
+                if (!component.isEmpty()) {
+                    sampleId = component;
+                    break;
+                }
+            }
+        }
+        return new AstmRecord.Query(sampleId, field(parts, 4, "ALL"), field(parts, 13, "O"));
+    }
+
+    /**
      * Parses an R record — the measured result.
      *
      * <p>The test identifier arrives as an ASTM component string such as {@code ^^^WBC^1} or

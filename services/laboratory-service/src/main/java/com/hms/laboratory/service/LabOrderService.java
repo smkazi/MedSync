@@ -19,6 +19,7 @@ import com.hms.laboratory.domain.Specimen;
 import com.hms.laboratory.web.dto.LabDtos;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -168,8 +169,23 @@ public class LabOrderService {
     @Transactional(readOnly = true)
     public Specimen requireSpecimen(String accessionNo) {
         String trimmed = accessionNo == null ? "" : accessionNo.trim();
-        return specimens.findByAccessionNo(trimmed)
+        return findSpecimen(trimmed)
                 .orElseThrow(() -> new NotFoundException("No specimen with accession '" + trimmed + "'"));
+    }
+
+    /**
+     * Looks a specimen up without throwing when it is absent.
+     *
+     * <p>Needed because a caller that must not fail - the analyzer query path, which owes a waiting
+     * instrument a reply - cannot simply catch {@link NotFoundException} from
+     * {@link #requireSpecimen}. Throwing a runtime exception out of a transactional method marks
+     * that transaction rollback-only, so swallowing it upstream still fails at commit with an
+     * {@code UnexpectedRollbackException}. An absent row is an expected outcome for that caller, so
+     * it is modelled as an empty Optional rather than as an exception to be recovered from.
+     */
+    @Transactional(readOnly = true)
+    public Optional<Specimen> findSpecimen(String accessionNo) {
+        return specimens.findByAccessionNo(accessionNo == null ? "" : accessionNo.trim());
     }
 
     /**

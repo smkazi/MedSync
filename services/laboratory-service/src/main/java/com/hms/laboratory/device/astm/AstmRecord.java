@@ -39,6 +39,23 @@ public final class AstmRecord {
         }
     }
 
+    /**
+     * Q — query. The analyzer asking the host what is ordered for a sample it has just read.
+     *
+     * <p>This is the record that makes the link bidirectional. Without it the only traffic is the
+     * analyzer pushing results and a technician keying the worklist into the instrument by hand.
+     *
+     * @param sampleId    the specimen the analyzer wants orders for; the accession number
+     * @param universalId the requested test set, conventionally {@code ALL}
+     * @param statusCode  request information status, conventionally {@code O} for orders
+     */
+    public record Query(String sampleId, String universalId, String statusCode) {
+
+        public boolean isEmpty() {
+            return sampleId == null || sampleId.isBlank();
+        }
+    }
+
     /** R — result: one measured parameter. */
     public record Result(String parameter, String value, String unit, String normalRange, Double normalLow,
                         Double normalHigh, String flag) {

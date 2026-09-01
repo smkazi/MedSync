@@ -11,6 +11,7 @@ import com.hms.laboratory.service.LabMapper;
 import com.hms.laboratory.service.LabOrderService;
 import com.hms.laboratory.service.LabResultService;
 import com.hms.laboratory.service.ReferenceRangeService;
+import com.hms.laboratory.service.WorklistService;
 import com.hms.laboratory.web.dto.LabDtos;
 import jakarta.validation.Valid;
 import java.util.List;
@@ -51,6 +52,7 @@ public class LabController {
     private final ReferenceRangeRepository ranges;
     private final LabMapper mapper;
     private final SpecimenLabelRenderer labels;
+    private final WorklistService worklists;
 
     public LabController(LabOrderService orderService, LabResultService resultService,
                          DeviceIngestService ingestService, ReferenceRangeService rangeService,
@@ -58,7 +60,7 @@ public class LabController {
                          AnalyzerRepository analyzers,
                          DeviceMessageRepository messages,
                          ReferenceRangeRepository ranges, LabMapper mapper,
-                         SpecimenLabelRenderer labels) {
+                         SpecimenLabelRenderer labels, WorklistService worklists) {
         this.orderService = orderService;
         this.resultService = resultService;
         this.ingestService = ingestService;
@@ -69,6 +71,7 @@ public class LabController {
         this.ranges = ranges;
         this.mapper = mapper;
         this.labels = labels;
+        this.worklists = worklists;
     }
 
     // ---- orders ----------------------------------------------------------------
@@ -117,6 +120,40 @@ public class LabController {
     public LabDtos.MessageResponse cancelOrder(@PathVariable UUID id) {
         orderService.cancel(id);
         return new LabDtos.MessageResponse("Order cancelled");
+    }
+
+    // ---- analyzer worklist: the host-query direction ---------------------------
+
+    /**
+     * What is ordered for a sample, as JSON.
+     *
+     * <p>The protocol-neutral form of the question, for the bench UI and for any device gateway that
+     * would rather speak JSON than ASTM. 404 for an unknown accession, because a person asking about
+     * a tube that does not exist needs telling.
+     */
+    @GetMapping("/worklist/query")
+    @PreAuthorize(Roles.CLINICAL_READ)
+    public LabDtos.WorklistResponse worklistFor(@RequestParam String sampleId) {
+        return worklists.forSample(sampleId);
+    }
+
+    /**
+     * The same question from an instrument, answered on the wire.
+     *
+     * <p>Raw ASTM in, raw ASTM out — this is the seam a serial or TCP device gateway relays through,
+     * the reply half of the {@code POST /lab/device-messages} path that already existed. Text rather
+     * than JSON because the payload is a framed transmission, not a document.
+     *
+     * <p>Always 200 with a well-formed transmission, even when nothing is ordered. An analyzer is a
+     * state machine waiting on a reply: an error status would leave it blocked mid-conversation, and
+     * the operator would see a hung instrument rather than a tube with no orders.
+     */
+    @PostMapping(value = "/device-messages/query", consumes = "text/plain", produces = "text/plain")
+    @PreAuthorize(Roles.LAB_WRITE)
+    public ResponseEntity<String> answerAnalyzerQuery(@RequestBody String queryTransmission) {
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.noStore())
+                .body(worklists.astmReply(queryTransmission));
     }
 
     // ---- specimens: barcode labels and scan-to-find ----------------------------

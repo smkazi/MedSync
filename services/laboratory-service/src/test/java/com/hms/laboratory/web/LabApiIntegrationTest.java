@@ -2,6 +2,7 @@ package com.hms.laboratory.web;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -226,6 +227,126 @@ class LabApiIntegrationTest {
 
         mockMvc.perform(get("/lab/specimens/{a}/label", accession).with(as("RECEPTIONIST")))
                 .andExpect(status().isForbidden());
+    }
+
+    // ---- the host-query direction ----------------------------------------------
+
+    @Test
+    @DisplayName("an analyzer asks what is ordered for a scanned sample")
+    void worklistForSample() throws Exception {
+        JsonNode order = createOrder("F", "CBC", "ESR");
+        String accession = collectSpecimen(order.get("id").asString());
+
+        mockMvc.perform(get("/lab/worklist/query").param("sampleId", accession).with(as("LAB_TECH")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.accessionNo").value(accession))
+                .andExpect(jsonPath("$.orderId").value(order.get("id").asString()))
+                .andExpect(jsonPath("$.patientSex").value("F"))
+                .andExpect(jsonPath("$.specimenType").value("WHOLE_BLOOD"))
+                .andExpect(jsonPath("$.testCodes").value(
+                        org.hamcrest.Matchers.containsInAnyOrder("CBC", "ESR")))
+                .andExpect(jsonPath("$.runnable").value(true));
+    }
+
+    @Test
+    @DisplayName("a cancelled order is not offered to an analyzer")
+    void cancelledOrderIsNotRunnable() throws Exception {
+        String orderId = createOrder("F", "CBC").get("id").asString();
+        String accession = collectSpecimen(orderId);
+        mockMvc.perform(delete("/lab/orders/" + orderId).with(as("DOCTOR")))
+                .andExpect(status().isOk());
+
+        // Running a cancelled test burns reagent and produces a result nobody asked for, which then
+        // has to be explained away on a chart.
+        mockMvc.perform(get("/lab/worklist/query").param("sampleId", accession).with(as("LAB_TECH")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.orderStatus").value("CANCELLED"))
+                .andExpect(jsonPath("$.runnable").value(false));
+    }
+
+    @Test
+    @DisplayName("the JSON worklist 404s for an unknown sample")
+    void unknownSampleIsNotFoundForAHuman() throws Exception {
+        mockMvc.perform(get("/lab/worklist/query").param("sampleId", "L2026-999999")
+                        .with(as("LAB_TECH")))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    @DisplayName("an ASTM query is answered with the order on the wire")
+    void astmQueryIsAnswered() throws Exception {
+        JsonNode order = createOrder("F", "CBC");
+        String accession = collectSpecimen(order.get("id").asString());
+
+        String reply = mockMvc.perform(post("/lab/device-messages/query").with(as("LAB_TECH"))
+                        .contentType(MediaType.TEXT_PLAIN)
+                        .content("H|\\^&|||XP300|||||||Q|1\r"
+                                + "Q|1|^" + accession + "||ALL||||||||O\r"
+                                + "L|1|N\r"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(reply).startsWith("H|");
+        assertThat(reply).contains(accession);
+        assertThat(reply).contains("^^^CBC");
+        assertThat(reply).contains("L|1|N");
+    }
+
+    @Test
+    @DisplayName("an ASTM query for an unknown sample gets an empty worklist, never an error")
+    void astmQueryForUnknownSampleIsStillAnswered() throws Exception {
+        // The asymmetry that matters. An analyzer is a state machine waiting on a reply: an error
+        // status leaves it blocked, and the operator sees a hung instrument rather than a tube with
+        // nothing ordered. "No orders" is an answer; a 404 is not.
+        String reply = mockMvc.perform(post("/lab/device-messages/query").with(as("LAB_TECH"))
+                        .contentType(MediaType.TEXT_PLAIN)
+                        .content("Q|1|^L2026-999999||ALL||||||||O\r"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(reply).startsWith("H|").contains("L|1|N");
+        assertThat(reply).doesNotContain("O|");
+    }
+
+    @Test
+    @DisplayName("answering an analyzer needs bench access")
+    void analyzerQueryRequiresLabAccess() throws Exception {
+        mockMvc.perform(post("/lab/device-messages/query").with(as("RECEPTIONIST"))
+                        .contentType(MediaType.TEXT_PLAIN)
+                        .content("Q|1|^L2026-000001||ALL||||||||O\r"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("query then result: the full bidirectional conversation reaches VERIFIED")
+    void fullBidirectionalConversation() throws Exception {
+        String orderId = createOrder("F", "CBC").get("id").asString();
+        String accession = collectSpecimen(orderId);
+
+        // 1. The instrument reads the barcode and asks what to run.
+        String worklist = mockMvc.perform(post("/lab/device-messages/query").with(as("LAB_TECH"))
+                        .contentType(MediaType.TEXT_PLAIN)
+                        .content("Q|1|^" + accession + "||ALL||||||||O\r"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        assertThat(worklist).contains("^^^CBC");
+
+        // 2. It runs the sample and transmits results back through the existing inbound seam,
+        //    addressed to the accession number it was told about - nobody keyed anything.
+        ingestAstm(accession);
+
+        // 3. The pathologist releases them.
+        mockMvc.perform(post("/lab/orders/" + orderId + "/verify").with(as("PATHOLOGIST")))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/lab/orders/" + orderId).with(as("DOCTOR")))
+                .andExpect(jsonPath("$.status").value("VERIFIED"))
+                .andExpect(jsonPath("$.results", org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.empty())));
+
+        // And the closed order is no longer offered for a re-run.
+        mockMvc.perform(get("/lab/worklist/query").param("sampleId", accession).with(as("LAB_TECH")))
+                .andExpect(jsonPath("$.runnable").value(false));
     }
 
     private static int countOccurrences(String haystack, String needle) {
