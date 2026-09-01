@@ -1,0 +1,9 @@
+# Tiny buckets so the rate-limit tests finish in milliseconds rather than sending 600 requests.
+hms:
+  rate-limit:
+    enabled: true
+    requests-per-minute: 50
+    auth-requests-per-minute: 3
+logging:
+  level:
+    com.hms.gateway: DEBUG

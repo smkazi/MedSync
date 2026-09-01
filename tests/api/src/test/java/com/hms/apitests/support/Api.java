@@ -83,6 +83,20 @@ public final class Api {
     public record Tokens(String accessToken, String refreshToken) {
     }
 
+    /** True when the gateway is currently refusing this client with 429. */
+    public static boolean rateLimited() {
+        try {
+            int status = RestAssured.given().baseUri(BASE_URL)
+                    .contentType(ContentType.JSON)
+                    .body(Map.of("username", "rate-limit-probe", "password", "not-a-password"))
+                    .when().post("/auth/login")
+                    .then().extract().statusCode();
+            return status == 429;
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
     /** True when the stack answers. Used to fail the suite with a useful message, not a timeout. */
     public static boolean reachable() {
         try {

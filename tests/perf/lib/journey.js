@@ -30,6 +30,16 @@ function params(tag, token) {
 
 export function login(user) {
   const res = http.post(`${BASE_URL}/auth/login`, JSON.stringify(user), params('login'));
+  if (res.status === 429) {
+    // The gateway's rate limiter and a load test want opposite things, so say exactly that
+    // instead of letting the run report a mysterious 90% failure rate. The auth bucket is the
+    // one that bites first: it defaults to 20/min and every iteration here signs in.
+    fail(
+      'The gateway rate-limited this run (429). A load profile cannot run against the ' +
+        'production limits - start the stack with HMS_RATE_LIMIT_ENABLED=false, or raise ' +
+        'HMS_RATE_LIMIT_AUTH_RPM and HMS_RATE_LIMIT_RPM well above the offered rate.',
+    );
+  }
   const ok = check(res, {
     'login returns 200': (r) => r.status === 200,
     'login returns an access token': (r) => !!(r.json() || {}).accessToken,

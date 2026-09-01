@@ -1,6 +1,13 @@
 spring:
   application:
     name: gateway
+  main:
+    # Stated, not inferred. Spring Cloud Gateway is reactive, but the parent POM puts
+    # spring-boot-starter-webmvc-test on every module's test classpath for MockMvc, and Boot's
+    # auto-detection picks servlet the moment spring-webmvc appears - which starts a servlet
+    # container with no WebFluxProperties bean and fails every gateway bean at once. Pinning it
+    # here means the classpath cannot decide this for us.
+    web-application-type: reactive
   cloud:
     gateway:
       server:
@@ -16,6 +23,15 @@ server:
   port: ${HMS_GATEWAY_PORT:8080}
 
 hms:
+  rate-limit:
+    # Per-client, per-minute, counted in this JVM. 600/min is roughly ten requests a second, which
+    # a browser loading a busy worklist can reach in a burst and a human cannot sustain.
+    enabled: ${HMS_RATE_LIMIT_ENABLED:true}
+    requests-per-minute: ${HMS_RATE_LIMIT_RPM:600}
+    # Far stricter, because nobody signs in twenty times a minute. This is what makes password
+    # spraying - one password against many usernames - impractical; per-account lockout in
+    # identity-service handles the other shape of the attack.
+    auth-requests-per-minute: ${HMS_RATE_LIMIT_AUTH_RPM:20}
   services:
     identity: ${HMS_IDENTITY_URI:http://localhost:8081}
     patient: ${HMS_PATIENT_URI:http://localhost:8082}
