@@ -15,6 +15,7 @@ from __future__ import annotations
 import re
 
 from app.schemas import AcuityLevel, TriageRequest, Vitals
+from app.services.negation import is_negated
 
 #: How soon each acuity level should be assessed, in minutes.
 TARGET_MINUTES: dict[AcuityLevel, int] = {
@@ -132,30 +133,6 @@ def _abnormal_vitals(vitals: Vitals, age: int) -> tuple[list[str], list[str]]:
     return critical, concerning
 
 
-#: Cues that a term is being ruled out rather than reported. Triage text is full of them -
-#: "no fever", "denies chest pain", "nil neurological deficit" - and matching the term anyway
-#: over-triages the patient on a finding the clinician explicitly excluded.
-_NEGATION_CUES = re.compile(
-    r"\b(no|not|without|denies|denied|denying|nil|negative for|absent|free of|rules? out)\b"
-)
-
-#: How far back to look for a negation cue. Long enough for "no history of chest pain", short
-#: enough that a cue in an unrelated earlier clause does not suppress a real finding.
-_NEGATION_WINDOW = 30
-
-
-def _is_negated(complaint: str, match_start: int) -> bool:
-    """Whether the text immediately before a match negates it."""
-    window_start = max(0, match_start - _NEGATION_WINDOW)
-    preceding = complaint[window_start:match_start]
-    # A clause boundary between the cue and the term ends the negation's scope:
-    # "no fever. severe chest pain" does not negate the chest pain.
-    last_boundary = max(preceding.rfind("."), preceding.rfind(";"), preceding.rfind(" but "))
-    if last_boundary != -1:
-        preceding = preceding[last_boundary + 1:]
-    return bool(_NEGATION_CUES.search(preceding))
-
-
 def _match(patterns: tuple[tuple[str, str], ...], complaint: str) -> list[str]:
     """
     Which patterns the complaint actually asserts.
@@ -165,7 +142,7 @@ def _match(patterns: tuple[tuple[str, str], ...], complaint: str) -> list[str]:
     reasons: list[str] = []
     for pattern, reason in patterns:
         matches = list(re.finditer(pattern, complaint))
-        if matches and any(not _is_negated(complaint, m.start()) for m in matches):
+        if matches and any(not is_negated(complaint, m.start()) for m in matches):
             reasons.append(reason)
     return reasons
 

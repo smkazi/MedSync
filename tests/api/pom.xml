@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>com.hms</groupId>
+    <artifactId>hms-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <relativePath>../../pom.xml</relativePath>
+  </parent>
+
+  <artifactId>api-tests</artifactId>
+  <name>api-tests</name>
+  <description>
+    Black-box API automation against a running stack: cross-service clinical journeys and a
+    security abuse-case suite. Deliberately outside the default reactor - these tests talk HTTP to
+    a deployed gateway and have no application context of their own, so they must never run as
+    part of an ordinary `mvn verify`. They are bound to failsafe (*IT) and reachable through the
+    `automation` profile.
+  </description>
+
+  <properties>
+    <rest-assured.version>6.0.1</rest-assured.version>
+    <nimbus-jose-jwt.version>10.9.1</nimbus-jose-jwt.version>
+    <!-- Where the tests point. Override with -Dhms.api.base-url=... -->
+    <hms.api.base-url>http://localhost:8080</hms.api.base-url>
+    <hms.api.password>ChangeMe!Dev2026</hms.api.password>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>io.rest-assured</groupId>
+      <artifactId>rest-assured</artifactId>
+      <version>${rest-assured.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>io.rest-assured</groupId>
+      <artifactId>json-path</artifactId>
+      <version>${rest-assured.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <!-- Forging and mangling tokens for the JWT abuse cases. -->
+    <dependency>
+      <groupId>com.nimbusds</groupId>
+      <artifactId>nimbus-jose-jwt</artifactId>
+      <version>${nimbus-jose-jwt.version}</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <!-- Nothing to compile or run at unit-test time; everything here is an *IT. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <configuration>
+          <skipTests>true</skipTests>
+        </configuration>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-failsafe-plugin</artifactId>
+        <executions>
+          <execution>
+            <goals>
+              <goal>integration-test</goal>
+              <goal>verify</goal>
+            </goals>
+          </execution>
+        </executions>
+        <configuration>
+          <systemPropertyVariables>
+            <hms.api.base-url>${hms.api.base-url}</hms.api.base-url>
+            <hms.api.password>${hms.api.password}</hms.api.password>
+          </systemPropertyVariables>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

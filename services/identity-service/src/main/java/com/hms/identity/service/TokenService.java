@@ -1,6 +1,5 @@
 package com.hms.identity.service;
 
-import com.hms.common.error.BadRequestException;
 import com.hms.identity.domain.RefreshToken;
 import com.hms.identity.domain.User;
 import com.hms.identity.repo.RefreshTokenRepository;
@@ -24,6 +23,7 @@ import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -90,12 +90,16 @@ public class TokenService {
      * Consumes a refresh token and returns the stored record it matched, revoking it so the caller
      * can issue a replacement in the same family.
      *
-     * @throws BadRequestException if the token is unknown, expired, or already used
+     * @throws BadCredentialsException if the token is unknown, expired, or already used -
+     *         one indistinguishable response for all three, so a caller cannot probe which
      */
     @Transactional
     public RefreshToken consumeForRotation(String rawRefreshToken) {
+        // 401, not 400: the token is a credential, and a client that gets a 400 has no reason to
+        // send the user back to sign in. Every rejection below reads the same to the caller, so a
+        // spent token cannot be distinguished from a forged one.
         RefreshToken stored = refreshTokens.findByTokenHash(sha256Hex(rawRefreshToken))
-                .orElseThrow(() -> new BadRequestException("Refresh token is not valid"));
+                .orElseThrow(() -> new BadCredentialsException("Refresh token is not valid"));
 
         if (stored.isRevoked()) {
             // A revoked token being presented means it leaked after rotation. Burn the family --
@@ -103,11 +107,11 @@ public class TokenService {
             int revoked = revoker.revokeFamily(stored.getFamilyId(), "reuse-detected");
             log.warn("Refresh token reuse detected for user {}; revoked {} token(s) in family {}",
                     stored.getUserId(), revoked, stored.getFamilyId());
-            throw new BadRequestException("Refresh token is not valid");
+            throw new BadCredentialsException("Refresh token is not valid");
         }
         if (stored.isExpired()) {
             revoker.revokeOne(stored.getId(), "expired");
-            throw new BadRequestException("Refresh token has expired");
+            throw new BadCredentialsException("Refresh token is not valid");
         }
         stored.revoke("rotated");
         return stored;

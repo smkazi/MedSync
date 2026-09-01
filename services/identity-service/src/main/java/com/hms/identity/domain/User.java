@@ -129,6 +129,11 @@ public class User extends BaseEntity {
         return lockedUntil;
     }
 
+    /** Consecutive failed sign-ins since the last success. Reset when the lockout goes on. */
+    public int getFailedLoginAttempts() {
+        return failedLoginAttempts;
+    }
+
     public void changePassword(String newHash) {
         this.passwordHash = newHash;
         this.mustChangePassword = false;
@@ -136,18 +141,10 @@ public class User extends BaseEntity {
         this.lockedUntil = null;
     }
 
-    public void recordSuccessfulLogin() {
-        this.failedLoginAttempts = 0;
-        this.lockedUntil = null;
-        this.lastLoginAt = Instant.now();
-    }
-
-    /** Counts a failure and locks the account once the threshold is crossed. */
-    public void recordFailedLogin() {
-        this.failedLoginAttempts++;
-        if (this.failedLoginAttempts >= MAX_FAILED_ATTEMPTS) {
-            this.lockedUntil = Instant.now().plus(LOCK_DURATION);
-            this.failedLoginAttempts = 0;
-        }
-    }
+    // Sign-in bookkeeping deliberately does NOT live here. Counting a failure or stamping a
+    // success by mutating this entity contends on the @Version column, so two sign-ins for the
+    // same account at the same instant fail one of them, and a read-modify-write counter loses
+    // increments under exactly the burst a lockout exists to stop. Both are single SQL statements
+    // in UserRepository, driven by LoginAttemptService. MAX_FAILED_ATTEMPTS and LOCK_DURATION
+    // above are the policy those statements apply.
 }

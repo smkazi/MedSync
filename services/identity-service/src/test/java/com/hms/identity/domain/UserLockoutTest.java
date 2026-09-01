@@ -4,6 +4,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import org.junit.jupiter.api.Test;
 
+/**
+ * The parts of {@link User} that are still plain in-memory state.
+ *
+ * <p>The failure counter and the lockout are NOT tested here, and that is the point: they are
+ * applied by single SQL statements rather than by mutating this entity, so an entity-level test
+ * would be blessing code the login path no longer runs. They are covered by
+ * {@link com.hms.identity.service.LoginAttemptServiceTest}, against the real database, and by the
+ * end-to-end lockout assertion in {@code AuthFlowIntegrationTest}.
+ */
 class UserLockoutTest {
 
     private User newUser() {
@@ -16,39 +25,9 @@ class UserLockoutTest {
     }
 
     @Test
-    void locksOnlyOnceTheThresholdIsReached() {
-        User user = newUser();
-        for (int attempt = 1; attempt < User.MAX_FAILED_ATTEMPTS; attempt++) {
-            user.recordFailedLogin();
-            assertThat(user.isLocked())
-                    .as("still unlocked after %d failure(s)", attempt)
-                    .isFalse();
-        }
-        user.recordFailedLogin();
-        assertThat(user.isLocked()).isTrue();
-        assertThat(user.getLockedUntil()).isNotNull();
-    }
-
-    @Test
-    void successfulLoginClearsFailuresAndLock() {
-        User user = newUser();
-        for (int i = 0; i < User.MAX_FAILED_ATTEMPTS; i++) {
-            user.recordFailedLogin();
-        }
-        assertThat(user.isLocked()).isTrue();
-
-        user.recordSuccessfulLogin();
-
-        assertThat(user.isLocked()).isFalse();
-        assertThat(user.getLockedUntil()).isNull();
-        assertThat(user.getLastLoginAt()).isNotNull();
-    }
-
-    @Test
-    void changingPasswordClearsLockAndForcedChangeFlag() {
+    void changingPasswordClearsTheForcedChangeFlag() {
         User user = newUser();
         user.setMustChangePassword(true);
-        user.recordFailedLogin();
 
         user.changePassword("{argon2}newhash");
 

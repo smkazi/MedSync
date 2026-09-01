@@ -7,6 +7,7 @@ import com.hms.identity.domain.RefreshToken;
 import com.hms.identity.domain.User;
 import com.hms.identity.repo.UserRepository;
 import com.hms.identity.web.dto.AuthDtos;
+import java.time.Instant;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -75,11 +76,14 @@ public class AuthService {
             throw new BadCredentialsException("Invalid username or password");
         }
 
-        user.recordSuccessfulLogin();
+        // Stamped by a targeted statement rather than by mutating the entity: users is
+        // optimistically locked, and two simultaneous sign-ins for one account would otherwise
+        // collide on the version column and fail a login that was perfectly valid.
+        Instant loggedInAt = loginAttempts.recordSuccess(user.getId());
         TokenService.TokenPair pair = tokens.issueFor(user, userAgent);
         audit.record("LOGIN_SUCCEEDED", "User", user.getId(), "roles " + user.roleCodes());
         log.info("User {} logged in", user.getUsername());
-        return response(pair, user);
+        return response(pair, user, loggedInAt);
     }
 
     @Transactional
@@ -125,7 +129,20 @@ public class AuthService {
     }
 
     private AuthDtos.TokenResponse response(TokenService.TokenPair pair, User user) {
+        return response(pair, user, user.getLastLoginAt());
+    }
+
+    /**
+     * @param loggedInAt the sign-in timestamp to report. Passed in on the login path because the
+     *                   timestamp is written by a bulk update, which by design does not refresh
+     *                   the managed entity - reading it back off {@code user} would report the
+     *                   previous sign-in.
+     */
+    private AuthDtos.TokenResponse response(TokenService.TokenPair pair, User user, Instant loggedInAt) {
+        AuthDtos.UserResponse mapped = UserMapper.toResponse(user);
         return new AuthDtos.TokenResponse(pair.accessToken(), pair.refreshToken(), "Bearer",
-                pair.expiresInSeconds(), UserMapper.toResponse(user));
+                pair.expiresInSeconds(),
+                new AuthDtos.UserResponse(mapped.id(), mapped.username(), mapped.email(), mapped.fullName(),
+                        mapped.active(), mapped.mustChangePassword(), mapped.roles(), loggedInAt));
     }
 }

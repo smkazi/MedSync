@@ -94,3 +94,38 @@ class TestRobustness:
         assert "tension" in summary.assessment.lower()
         assert summary.plan
         assert summary.follow_up
+
+
+def test_red_flags_respect_negation():
+    """
+    A red flag the clinician explicitly ruled out must not be reported as present.
+
+    Found by the cross-service API journey: a note reading "productive cough and intermittent
+    fever. No chest pain, no shortness of breath at rest." came back with "chest pain" in
+    red_flags. False alarms are not a cosmetic problem - a red-flag field that cries wolf is one
+    clinicians stop reading, which costs exactly the cases it exists to catch.
+    """
+    note = (
+        "Patient reports three days of productive cough and intermittent fever. "
+        "No chest pain, no shortness of breath at rest."
+    )
+    summary = extractive_summary(note)
+    assert "chest pain" not in summary.red_flags
+    assert "shortness of breath" not in summary.red_flags
+
+
+def test_red_flags_survive_a_negation_in_an_earlier_clause():
+    """A cue in a previous sentence must not suppress a genuine finding after it."""
+    note = "No fever. Severe chest pain radiating to the left arm, sudden onset."
+    summary = extractive_summary(note)
+    assert "chest pain" in summary.red_flags
+    assert "sudden onset" in summary.red_flags
+
+
+def test_a_flag_asserted_after_being_excluded_is_still_reported():
+    """
+    "No chest pain on arrival, now with chest pain" asserts chest pain. One un-negated occurrence
+    is enough - erring towards reporting is the right direction for a safety field.
+    """
+    note = "No chest pain on arrival. Now reports chest pain at rest."
+    assert "chest pain" in extractive_summary(note).red_flags

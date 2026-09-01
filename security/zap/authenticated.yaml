@@ -1,0 +1,180 @@
+# OWASP ZAP Automation Framework - authenticated full scan.
+#
+# Logs in as the seeded doctor, keeps the bearer token in a session-management header, seeds the
+# real API surface with a requestor job (an API is barely spiderable), then runs a full active
+# scan over it.
+#
+# /auth/** is excluded from the active scan on purpose: identity locks an account after five
+# failed logins, so letting the injection rules hammer the login body would lock the scan user
+# and every request after that would be a false 401. Login itself is attacked by the
+# unauthenticated baseline and by the REST Assured abuse-case suite (tests/api), which asserts
+# the lockout instead of tripping over it.
+---
+env:
+  contexts:
+    - name: medsync-api
+      urls:
+        - "${ZAP_TARGET}"
+      includePaths:
+        - "${ZAP_TARGET}/.*"
+      excludePaths:
+        - "${ZAP_TARGET}/auth/.*"
+        - "${ZAP_TARGET}/admin/users/.*/password"
+      authentication:
+        method: json
+        parameters:
+          loginPageUrl: "${ZAP_TARGET}/auth/login"
+          loginRequestUrl: "${ZAP_TARGET}/auth/login"
+          loginRequestBody: '{"username":"{%username%}","password":"{%password%}"}'
+        verification:
+          method: response
+          loggedInRegex: '"accessToken"'
+          loggedOutRegex: '"status"\s*:\s*401'
+          pollFrequency: 60
+          pollUnits: requests
+          pollUrl: "${ZAP_TARGET}/auth/me"
+      sessionManagement:
+        method: headers
+        parameters:
+          Authorization: "Bearer {%json:accessToken%}"
+      users:
+        - name: doctor
+          credentials:
+            username: "${ZAP_USERNAME}"
+            password: "${ZAP_PASSWORD}"
+  parameters:
+    failOnError: true
+    failOnWarning: false
+    progressToStdout: true
+
+jobs:
+  - type: passiveScan-config
+    parameters:
+      maxAlertsPerRule: 10
+      scanOnlyInScope: true
+
+  - type: requestor
+    name: "seed the authenticated surface"
+    parameters:
+      user: doctor
+    requests:
+      - url: "${ZAP_TARGET}/auth/me"
+        method: GET
+        responseCode: 200
+      - url: "${ZAP_TARGET}/patients?page=0&size=20"
+        method: GET
+      - url: "${ZAP_TARGET}/patients?q=test&page=0&size=20"
+        method: GET
+      - url: "${ZAP_TARGET}/staff?q=rao&department=CARD"
+        method: GET
+      - url: "${ZAP_TARGET}/departments"
+        method: GET
+      # from/to are ISO dates here, not instants - the controller binds LocalDate.
+      - url: "${ZAP_TARGET}/appointments?from=2026-01-01&to=2026-12-31&page=0&size=50"
+        method: GET
+      - url: "${ZAP_TARGET}/appointments?mrn=MRN-000001"
+        method: GET
+      - url: "${ZAP_TARGET}/appointments/availability?clinicianId=00000000-0000-0000-0000-000000000000&date=2026-06-01"
+        method: GET
+      - url: "${ZAP_TARGET}/lab/orders?status=ORDERED&mrn=MRN-000001&page=0&size=20"
+        method: GET
+      - url: "${ZAP_TARGET}/lab/catalog"
+        method: GET
+      - url: "${ZAP_TARGET}/lab/reference-ranges"
+        method: GET
+      # Raw analyzer frames are lab-only; a DOCTOR must be refused.
+      - url: "${ZAP_TARGET}/lab/device-messages?page=0&size=20"
+        method: GET
+        responseCode: 403
+      - url: "${ZAP_TARGET}/lab/analyzers"
+        method: GET
+      # Admin surface as a DOCTOR: these must be 403, not 200. A 200 here is a finding.
+      - url: "${ZAP_TARGET}/admin/users"
+        method: GET
+        responseCode: 403
+      - url: "${ZAP_TARGET}/admin/audit"
+        method: GET
+        responseCode: 403
+
+  - type: spider
+    parameters:
+      context: medsync-api
+      user: doctor
+      maxDuration: 3
+      maxDepth: 6
+
+  - type: passiveScan-wait
+    parameters:
+      maxDuration: 5
+
+  - type: activeScan
+    parameters:
+      context: medsync-api
+      user: doctor
+      maxRuleDurationInMins: 3
+      maxScanDurationInMins: 45
+      policy: "medsync-api"
+    policyDefinition:
+      defaultStrength: medium
+      defaultThreshold: medium
+      rules:
+        # SQL injection, at high strength - the search and filter endpoints are the whole point
+        # of this scan, and they are the only places raw terms reach a query.
+        - id: 40018
+          strength: high
+          threshold: low
+        - id: 40019
+          strength: high
+          threshold: low
+        - id: 40020
+          strength: high
+          threshold: low
+        - id: 40021
+          strength: high
+          threshold: low
+        - id: 40022
+          strength: high
+          threshold: low
+        # Command injection and code injection.
+        - id: 90020
+          strength: high
+          threshold: low
+        - id: 90019
+          strength: high
+          threshold: low
+        # XSS - the API returns JSON, but a reflected value that survives into the UI matters.
+        - id: 40012
+          threshold: low
+        - id: 40014
+          threshold: low
+        - id: 40016
+          threshold: low
+        - id: 40017
+          threshold: low
+        # Path traversal / RFI against a JSON API: noise.
+        - id: 6
+          threshold: off
+        - id: 7
+          threshold: off
+
+  - type: report
+    parameters:
+      template: traditional-html
+      reportDir: "${ZAP_REPORT_DIR}"
+      reportFile: "zap-authenticated"
+      reportTitle: "MedSync - authenticated full scan"
+    risks: [high, medium, low, info]
+
+  - type: report
+    parameters:
+      template: sarif-json
+      reportDir: "${ZAP_REPORT_DIR}"
+      reportFile: "zap-authenticated"
+    risks: [high, medium]
+
+  - type: report
+    parameters:
+      template: traditional-json
+      reportDir: "${ZAP_REPORT_DIR}"
+      reportFile: "zap-authenticated"
+    risks: [high, medium, low, info]

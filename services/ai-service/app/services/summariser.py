@@ -15,6 +15,7 @@ import re
 
 from app.config import Settings
 from app.schemas import NoteSummary
+from app.services.negation import asserted
 
 logger = logging.getLogger(__name__)
 
@@ -90,8 +91,10 @@ def extractive_summary(note: str) -> NoteSummary:
     sections = _find_sections(note)
     sentences = _split_sentences(note)
 
-    lowered_note = note.lower()
-    red_flags = sorted({term for term in _RED_FLAG_TERMS if term in lowered_note})
+    # Only flags the note actually asserts. A substring match reports "chest pain" on a note that
+    # says "no chest pain" - the exact opposite of what the clinician wrote, and precisely the
+    # kind of false alarm that teaches people to stop reading the field.
+    red_flags = sorted({term for term in _RED_FLAG_TERMS if asserted(term, note)})
 
     complaint = sections["presenting_complaint"][0] if sections["presenting_complaint"] else (
         sentences[0] if sentences else ""

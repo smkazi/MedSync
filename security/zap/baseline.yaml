@@ -1,0 +1,127 @@
+# OWASP ZAP Automation Framework - unauthenticated baseline.
+#
+# What this proves: an anonymous attacker reaching the gateway gets nothing but 401s, and the
+# responses that ARE public (login, JWKS, health) carry the right headers and leak nothing.
+# Passive rules run over everything; the active scan is deliberately narrow here because the
+# only unauthenticated write endpoint is /auth/login and identity locks an account after five
+# failures - a full active scan would lock the seeded users and poison the authenticated run.
+---
+env:
+  contexts:
+    - name: medsync-public
+      urls:
+        - "${ZAP_TARGET}"
+      includePaths:
+        - "${ZAP_TARGET}/.*"
+      excludePaths:
+        # Logging out mid-scan would invalidate nothing here, but the 204 wastes requests.
+        - "${ZAP_TARGET}/auth/logout"
+  parameters:
+    failOnError: true
+    failOnWarning: false
+    progressToStdout: true
+
+jobs:
+  - type: passiveScan-config
+    parameters:
+      maxAlertsPerRule: 10
+      scanOnlyInScope: true
+    rules:
+      # Rule 10015 (incidental cache control) fires on JSON APIs that already send no-store on
+      # the endpoints that matter; keep it as INFO rather than muting it outright.
+      - id: 10015
+        threshold: low
+
+  - type: requestor
+    name: "seed the public surface"
+    requests:
+      - url: "${ZAP_TARGET}/actuator/health"
+        method: GET
+        responseCode: 200
+      - url: "${ZAP_TARGET}/.well-known/jwks.json"
+        method: GET
+        responseCode: 200
+      # Every one of these must be 401 without a token. If any returns 200 the scan fails.
+      - url: "${ZAP_TARGET}/patients"
+        method: GET
+        responseCode: 401
+      - url: "${ZAP_TARGET}/staff"
+        method: GET
+        responseCode: 401
+      - url: "${ZAP_TARGET}/departments"
+        method: GET
+        responseCode: 401
+      - url: "${ZAP_TARGET}/appointments"
+        method: GET
+        responseCode: 401
+      - url: "${ZAP_TARGET}/encounters"
+        method: GET
+        responseCode: 401
+      - url: "${ZAP_TARGET}/lab/orders"
+        method: GET
+        responseCode: 401
+      - url: "${ZAP_TARGET}/admin/users"
+        method: GET
+        responseCode: 401
+      - url: "${ZAP_TARGET}/admin/audit"
+        method: GET
+        responseCode: 401
+      # Actuator surfaces that must not be exposed through the gateway at all.
+      - url: "${ZAP_TARGET}/identity/actuator/env"
+        method: GET
+        responseCode: 404
+      - url: "${ZAP_TARGET}/actuator/env"
+        method: GET
+        responseCode: 404
+      - url: "${ZAP_TARGET}/actuator/heapdump"
+        method: GET
+        responseCode: 404
+
+  - type: spider
+    parameters:
+      context: medsync-public
+      maxDuration: 3
+      maxDepth: 5
+
+  - type: passiveScan-wait
+    parameters:
+      maxDuration: 5
+
+  - type: activeScan
+    name: "narrow active scan (no auth endpoints)"
+    parameters:
+      context: medsync-public
+      maxRuleDurationInMins: 2
+      maxScanDurationInMins: 15
+      policy: "medsync-public"
+    policyDefinition:
+      defaultStrength: medium
+      defaultThreshold: medium
+      rules:
+        # Path traversal and remote file include against a JSON API are pure noise.
+        - id: 6
+          threshold: off
+        - id: 7
+          threshold: off
+
+  - type: report
+    parameters:
+      template: traditional-html
+      reportDir: "${ZAP_REPORT_DIR}"
+      reportFile: "zap-baseline"
+      reportTitle: "MedSync - unauthenticated baseline"
+    risks: [high, medium, low, info]
+
+  - type: report
+    parameters:
+      template: sarif-json
+      reportDir: "${ZAP_REPORT_DIR}"
+      reportFile: "zap-baseline"
+    risks: [high, medium]
+
+  - type: report
+    parameters:
+      template: traditional-json
+      reportDir: "${ZAP_REPORT_DIR}"
+      reportFile: "zap-baseline"
+    risks: [high, medium, low, info]

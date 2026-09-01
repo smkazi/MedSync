@@ -1,0 +1,195 @@
+# The whole platform, for a laptop or a demo.
+#
+# `docker compose up --build` gives a working hospital system: Postgres, Kafka in KRaft mode, the
+# five services, the AI service and the web UI. Kafka is enabled here (unlike the local dev
+# scripts), so the audit consumer and the event topics are exercised as they would be in
+# production.
+#
+# The secrets below are development values and are deliberately obvious about it. See the README's
+# pre-deployment checklist before this goes anywhere real.
+
+name: medsync
+
+x-service-defaults: &service-defaults
+  restart: unless-stopped
+  depends_on:
+    postgres:
+      condition: service_healthy
+    kafka:
+      condition: service_healthy
+  environment: &platform-env
+    HMS_DB_URL: jdbc:postgresql://postgres:5432/hms
+    HMS_DB_USER: hms
+    HMS_DB_PASSWORD: hms-dev-password
+    HMS_KAFKA: kafka:9092
+    HMS_EVENTS_TRANSPORT: kafka
+    HMS_JWKS_URI: http://identity-service:8081/.well-known/jwks.json
+    HMS_JWT_ISSUER: http://identity-service:8081
+    HMS_JWT_AUDIENCE: hms
+    # Development key only. It protects nothing; the services log a warning about it.
+    HMS_PHI_KEY: ZGV2LW9ubHkta2V5LW5vdC1mb3ItcHJvZHVjdGlvbjEyMw==
+    SPRING_PROFILES_ACTIVE: docker
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: hms
+      POSTGRES_USER: hms
+      POSTGRES_PASSWORD: hms-dev-password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    # Not published by default: nothing outside the compose network needs the database.
+    expose:
+      - "5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hms -d hms"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  kafka:
+    image: apache/kafka:3.9.0
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      CLUSTER_ID: medsync-dev-cluster-0001
+    expose:
+      - "9092"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    restart: unless-stopped
+
+  identity-service:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: Dockerfile.java
+      args:
+        SERVICE: identity-service
+    environment:
+      <<: *platform-env
+      SERVER_PORT: 8081
+      HMS_IDENTITY_PORT: 8081
+      # Seeds the demo accounts. Turn this off in any real environment.
+      HMS_SEED_ENABLED: "true"
+      HMS_SEED_PASSWORD: ${HMS_SEED_PASSWORD:-ChangeMe!Dev2026}
+    expose:
+      - "8081"
+
+  patient-service:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: Dockerfile.java
+      args:
+        SERVICE: patient-service
+    environment:
+      <<: *platform-env
+      SERVER_PORT: 8082
+      HMS_PATIENT_PORT: 8082
+    expose:
+      - "8082"
+
+  scheduling-service:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: Dockerfile.java
+      args:
+        SERVICE: scheduling-service
+    environment:
+      <<: *platform-env
+      SERVER_PORT: 8083
+      HMS_SCHEDULING_PORT: 8083
+      HMS_AI_URI: http://ai-service:8000
+    expose:
+      - "8083"
+
+  laboratory-service:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: Dockerfile.java
+      args:
+        SERVICE: laboratory-service
+    environment:
+      <<: *platform-env
+      SERVER_PORT: 8084
+      HMS_LABORATORY_PORT: 8084
+    expose:
+      - "8084"
+
+  ai-service:
+    build:
+      context: ./services/ai-service
+    environment:
+      HMS_AI_JWKS_URI: http://identity-service:8081/.well-known/jwks.json
+      HMS_AI_JWT_ISSUER: http://identity-service:8081
+      HMS_AI_JWT_AUDIENCE: hms
+      # Optional. Without it, note summarisation uses its deterministic fallback.
+      HMS_AI_ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    expose:
+      - "8000"
+    restart: unless-stopped
+
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.java
+      args:
+        SERVICE: gateway
+    environment:
+      SERVER_PORT: 8080
+      HMS_GATEWAY_PORT: 8080
+      HMS_IDENTITY_URI: http://identity-service:8081
+      HMS_PATIENT_URI: http://patient-service:8082
+      HMS_SCHEDULING_URI: http://scheduling-service:8083
+      HMS_LABORATORY_URI: http://laboratory-service:8084
+      HMS_AI_URI: http://ai-service:8000
+      HMS_CORS_ALLOWED_ORIGINS: http://localhost:3000
+    ports:
+      - "8080:8080"
+    depends_on:
+      identity-service:
+        condition: service_started
+      patient-service:
+        condition: service_started
+      scheduling-service:
+        condition: service_started
+      laboratory-service:
+        condition: service_started
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./web
+    environment:
+      GATEWAY_URL: http://gateway:8080
+      IDENTITY_URL: http://identity-service:8081
+      # Set to true wherever this is served over TLS, so the session cookie is marked Secure.
+      COOKIE_SECURE: "false"
+    ports:
+      - "3000:3000"
+    depends_on:
+      gateway:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  postgres-data:

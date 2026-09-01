@@ -68,6 +68,18 @@
     </dependency>
   </dependencies>
 
+  <profiles>
+    <!-- API automation. Kept out of the default reactor on purpose: these tests talk HTTP to a
+         deployed gateway, so an ordinary `mvn verify` on a developer machine must not try to run
+         them. Reachable as `mvn -pl tests/api verify -Pautomation` (or `make test-api`). -->
+    <profile>
+      <id>automation</id>
+      <modules>
+        <module>tests/api</module>
+      </modules>
+    </profile>
+  </profiles>
+
   <build>
     <pluginManagement>
       <plugins>

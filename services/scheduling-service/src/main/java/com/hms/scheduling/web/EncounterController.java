@@ -35,13 +35,13 @@ public class EncounterController {
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize(Roles.CLINICAL_READ)
+    @PreAuthorize(Roles.CHART_READ)
     public SchedulingDtos.EncounterResponse get(@PathVariable UUID id) {
         return service.detail(id);
     }
 
     @GetMapping("/patients/{patientId}")
-    @PreAuthorize(Roles.CLINICAL_READ)
+    @PreAuthorize(Roles.CHART_READ)
     public List<SchedulingDtos.EncounterSummary> forPatient(@PathVariable UUID patientId) {
         return service.forPatient(patientId);
     }
@@ -66,7 +66,7 @@ public class EncounterController {
 
     /** Every revision, so an addendum can be read against what it amended. */
     @GetMapping("/{id}/note/history")
-    @PreAuthorize(Roles.CLINICAL_READ)
+    @PreAuthorize(Roles.CHART_READ)
     public List<SchedulingDtos.NoteResponse> noteHistory(@PathVariable UUID id) {
         return service.noteHistory(id);
     }

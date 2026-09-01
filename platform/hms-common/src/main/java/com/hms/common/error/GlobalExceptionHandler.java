@@ -8,6 +8,7 @@ import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
@@ -16,6 +17,9 @@ import org.springframework.security.authentication.DisabledException;
 import org.springframework.security.authentication.LockedException;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.HttpMediaTypeNotAcceptableException;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
@@ -102,11 +106,60 @@ public class GlobalExceptionHandler {
                 req);
     }
 
+    /**
+     * Wrong verb on a real path. Left unmapped this is a 500, which is both wrong and noisy: a
+     * scanner walking the API with the wrong methods fills the logs with server errors and buries
+     * the failures that matter.
+     */
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ApiError> methodNotAllowed(HttpRequestMethodNotSupportedException ex,
+                                                     HttpServletRequest req) {
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
+                // RFC 9110 requires Allow on a 405, and it is the one thing that makes the error
+                // actionable.
+                .header("Allow", String.join(", ",
+                        ex.getSupportedMethods() == null ? new String[0] : ex.getSupportedMethods()))
+                .body(error(HttpStatus.METHOD_NOT_ALLOWED, "Method Not Allowed",
+                        ex.getMethod() + " is not supported on this resource", req));
+    }
+
+    /** A body in a format nothing here reads. 415, not 500. */
+    @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
+    public ResponseEntity<ApiError> unsupportedMediaType(HttpMediaTypeNotSupportedException ex,
+                                                         HttpServletRequest req) {
+        return build(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "Unsupported Media Type",
+                "This endpoint accepts application/json", req);
+    }
+
+    /** An Accept header nothing here can satisfy. */
+    @ExceptionHandler(HttpMediaTypeNotAcceptableException.class)
+    public ResponseEntity<ApiError> notAcceptable(HttpMediaTypeNotAcceptableException ex,
+                                                  HttpServletRequest req) {
+        return build(HttpStatus.NOT_ACCEPTABLE, "Not Acceptable",
+                "This endpoint produces application/json", req);
+    }
+
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<ApiError> integrity(DataIntegrityViolationException ex, HttpServletRequest req) {
         log.warn("Data integrity violation on {}: {}", req.getRequestURI(), ex.getMostSpecificCause().getMessage());
         return build(HttpStatus.CONFLICT, "Conflict",
                 "The request conflicts with existing data or a database constraint", req);
+    }
+
+    /**
+     * A lost race on a versioned row is the caller's to retry, not a server fault. Mapped
+     * explicitly because the default is a 500, and a 500 says "we are broken" when the honest
+     * answer is "someone else changed this row while you were editing it".
+     *
+     * <p>Reaching this handler on a path where concurrency is expected rather than exceptional is
+     * a design smell, not a resolved problem: the login bookkeeping used to land here on every
+     * simultaneous sign-in, and the fix was to stop taking the lock, not to translate the failure.
+     */
+    @ExceptionHandler(OptimisticLockingFailureException.class)
+    public ResponseEntity<ApiError> optimisticLock(OptimisticLockingFailureException ex, HttpServletRequest req) {
+        log.warn("Optimistic locking failure on {}: {}", req.getRequestURI(), ex.getMessage());
+        return build(HttpStatus.CONFLICT, "Conflict",
+                "This record was changed by someone else while you were working on it. Reload and try again", req);
     }
 
     @ExceptionHandler(Exception.class)
@@ -117,7 +170,10 @@ public class GlobalExceptionHandler {
     }
 
     private ResponseEntity<ApiError> build(HttpStatus status, String title, String detail, HttpServletRequest req) {
-        return ResponseEntity.status(status)
-                .body(ApiError.of(status.value(), title, detail, req.getRequestURI(), CorrelationId.current()));
+        return ResponseEntity.status(status).body(error(status, title, detail, req));
+    }
+
+    private ApiError error(HttpStatus status, String title, String detail, HttpServletRequest req) {
+        return ApiError.of(status.value(), title, detail, req.getRequestURI(), CorrelationId.current());
     }
 }
