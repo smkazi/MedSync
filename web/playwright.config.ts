@@ -7,6 +7,10 @@ import { defineConfig, devices } from "@playwright/test";
  */
 export default defineConfig({
   testDir: "./e2e",
+  // Provisions the patient the chart tests search for. Without it the suite depends on whatever
+  // happens to be in the database, which is how three tests passed locally and failed the first
+  // time CI ran them against a fresh PostgreSQL.
+  globalSetup: "./e2e/global-setup.ts",
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
