@@ -23,7 +23,11 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.function.Function;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
@@ -213,7 +217,8 @@ public class AppointmentService {
 
     @Transactional
     public SchedulingDtos.AppointmentResponse reschedule(UUID id,
-                                                         SchedulingDtos.RescheduleRequest request) {
+                                                         SchedulingDtos.RescheduleRequest request,
+                                                         String bearerToken) {
         Appointment appointment = require(id);
         if (!appointment.isAmendable()) {
             throw new ConflictException("A " + appointment.getStatus() + " appointment cannot be moved");
@@ -230,12 +235,14 @@ public class AppointmentService {
         }
         audit.record("APPOINTMENT_RESCHEDULED", "Appointment", id, "moved to " + request.startsAt());
         publish("appointment.rescheduled", appointment);
-        return SchedulingMapper.toResponse(appointment, encounterIdFor(id));
+        return SchedulingMapper.toResponse(appointment, encounterIdFor(id),
+                roomResolver(bearerToken).apply(appointment.getRoomCode()));
     }
 
     @Transactional
     public SchedulingDtos.AppointmentResponse transition(UUID id,
-                                                         SchedulingEnums.AppointmentStatus target) {
+                                                         SchedulingEnums.AppointmentStatus target,
+                                                         String bearerToken) {
         Appointment appointment = require(id);
         if (!appointment.canTransitionTo(target)) {
             throw new ConflictException("An appointment cannot go from " + appointment.getStatus()
@@ -257,7 +264,8 @@ public class AppointmentService {
         }
         audit.record("APPOINTMENT_" + target, "Appointment", id, "status now " + target);
         publish("appointment." + target.name().toLowerCase(Locale.ROOT), appointment);
-        return SchedulingMapper.toResponse(appointment, encounterIdFor(id));
+        return SchedulingMapper.toResponse(appointment, encounterIdFor(id),
+                roomResolver(bearerToken).apply(appointment.getRoomCode()));
     }
 
     @Transactional
@@ -277,15 +285,17 @@ public class AppointmentService {
     }
 
     @Transactional(readOnly = true)
-    public SchedulingDtos.AppointmentResponse get(UUID id) {
-        return SchedulingMapper.toResponse(require(id), encounterIdFor(id));
+    public SchedulingDtos.AppointmentResponse get(UUID id, String bearerToken) {
+        Appointment appointment = require(id);
+        return SchedulingMapper.toResponse(appointment, encounterIdFor(id),
+                roomResolver(bearerToken).apply(appointment.getRoomCode()));
     }
 
     @Transactional(readOnly = true)
     public Page<SchedulingDtos.AppointmentResponse> search(String mrn,
                                                             List<SchedulingEnums.AppointmentStatus> statuses,
                                                             LocalDate from, LocalDate to,
-                                                            Pageable pageable) {
+                                                            Pageable pageable, String bearerToken) {
         List<SchedulingEnums.AppointmentStatus> effective = statuses == null || statuses.isEmpty()
                 ? List.of(SchedulingEnums.AppointmentStatus.BOOKED,
                           SchedulingEnums.AppointmentStatus.CHECKED_IN,
@@ -295,24 +305,60 @@ public class AppointmentService {
         LocalDate end = to == null ? start.plusDays(1) : to.plusDays(1);
         return appointments.search(QueryPatterns.exactOrAny(mrn), effective,
                         start.atStartOfDay(zone).toInstant(), end.atStartOfDay(zone).toInstant(), pageable)
-                .map(appointment -> SchedulingMapper.toResponse(appointment,
-                        encounterIdFor(appointment.getId())));
+                .map(withRooms(roomResolver(bearerToken)));
     }
 
     @Transactional(readOnly = true)
-    public List<SchedulingDtos.AppointmentResponse> forPatient(UUID patientId) {
+    public List<SchedulingDtos.AppointmentResponse> forPatient(UUID patientId, String bearerToken) {
+        Function<Appointment, SchedulingDtos.AppointmentResponse> mapper =
+                withRooms(roomResolver(bearerToken));
         return appointments.findByPatientIdOrderByStartsAtDesc(patientId).stream()
-                .map(appointment -> SchedulingMapper.toResponse(appointment,
-                        encounterIdFor(appointment.getId())))
+                .map(mapper)
                 .toList();
     }
 
     /** Booked appointments whose time has passed with no check-in — the no-show candidates. */
     @Transactional(readOnly = true)
-    public List<SchedulingDtos.AppointmentResponse> lapsed() {
+    public List<SchedulingDtos.AppointmentResponse> lapsed(String bearerToken) {
+        Function<String, RoomDirectoryClient.RoomLocation> rooms = roomResolver(bearerToken);
         return appointments.findLapsed(Instant.now()).stream()
-                .map(appointment -> SchedulingMapper.toResponse(appointment, null))
+                .map(appointment -> SchedulingMapper.toResponse(appointment, null,
+                        rooms.apply(appointment.getRoomCode())))
                 .toList();
+    }
+
+    /** One mapper for a whole page, so the room cache is shared across its rows. */
+    private Function<Appointment, SchedulingDtos.AppointmentResponse> withRooms(
+            Function<String, RoomDirectoryClient.RoomLocation> rooms) {
+        return appointment -> SchedulingMapper.toResponse(appointment,
+                encounterIdFor(appointment.getId()), rooms.apply(appointment.getRoomCode()));
+    }
+
+    /**
+     * Resolves room codes to locations, once per distinct code per request.
+     *
+     * <p>Every read path used to pass {@code null} here, which meant {@code RoomView.resolved} was
+     * <em>always</em> false and the wayfinding this was all for — "General OPD · Ground Floor, from
+     * reception turn right" — never appeared anywhere. The DTO's own comment claimed the name and
+     * directions were "resolved live". They were not, on any endpoint except the booking response
+     * itself, and nothing noticed because no screen displayed a room until the appointment book
+     * became writable.
+     *
+     * <p>The cache is what makes this affordable. A page holds up to 200 appointments and the
+     * building has 21 rooms, so without it a single list would make 200 HTTP calls to
+     * patient-service for a handful of distinct answers. With it, one call per distinct code.
+     *
+     * <p>{@link RoomDirectoryClient#find} is the fail-soft variant on purpose: rendering is not
+     * booking. A directory that cannot answer leaves {@code resolved} false and the bare code on
+     * screen, which is the honest thing to show — the booking path still uses {@code require} and
+     * still refuses outright.
+     */
+    private Function<String, RoomDirectoryClient.RoomLocation> roomResolver(String bearerToken) {
+        Map<String, Optional<RoomDirectoryClient.RoomLocation>> resolved = new HashMap<>();
+        return code -> code == null
+                ? null
+                : resolved.computeIfAbsent(code, key -> roomDirectory.find(key, bearerToken))
+                        .orElse(null);
     }
 
     private UUID encounterIdFor(UUID appointmentId) {

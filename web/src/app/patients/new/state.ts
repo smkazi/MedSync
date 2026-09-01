@@ -1,3 +1,4 @@
+import { EMPTY_FORM_STATE, type FormState } from "@/lib/form";
 import type { PatientSummary } from "@/lib/types";
 
 /**
@@ -12,12 +13,13 @@ import type { PatientSummary } from "@/lib/types";
  * ordinary module exports.
  */
 
-/** What the form renders after a submit. Values are echoed back so nothing is retyped. */
-export type RegisterState = {
-  values: Record<string, string>;
-  /** Keyed by the field name the service used, so each input can show its own message. */
-  fieldErrors: Record<string, string>;
-  error: string | null;
+/**
+ * Registration adds one field to the shared form state.
+ *
+ * <p>`duplicates` is why this screen is more than a POST: the service's 409 carries candidate
+ * charts, and they are the entire point of that response.
+ */
+export type RegisterState = FormState & {
   /**
    * Charts that look like the same person, from the service's 409. Present means the registration
    * was refused pending a decision — not that it failed.
@@ -25,9 +27,4 @@ export type RegisterState = {
   duplicates: PatientSummary[] | null;
 };
 
-export const EMPTY_REGISTER_STATE: RegisterState = {
-  values: {},
-  fieldErrors: {},
-  error: null,
-  duplicates: null,
-};
+export const EMPTY_REGISTER_STATE: RegisterState = { ...EMPTY_FORM_STATE, duplicates: null };

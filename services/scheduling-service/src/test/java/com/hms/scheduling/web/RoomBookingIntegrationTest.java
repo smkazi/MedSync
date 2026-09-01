@@ -2,9 +2,13 @@ package com.hms.scheduling.web;
 
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.nullable;
+import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -148,6 +152,20 @@ class RoomBookingIntegrationTest {
                 .plus(minutesFromNoon, ChronoUnit.MINUTES);
     }
 
+    /**
+     * The day {@link #slot} builds its instants on.
+     *
+     * <p>`GET /appointments` defaults to today when no range is given, and every fixture here is
+     * three weeks out, so a list assertion without this looks at an empty page and proves nothing.
+     */
+    private String slotDate() {
+        LocalDate date = LocalDate.now(ZoneOffset.UTC).plusDays(21);
+        while (date.getDayOfWeek() == DayOfWeek.SATURDAY || date.getDayOfWeek() == DayOfWeek.SUNDAY) {
+            date = date.plusDays(1);
+        }
+        return date.toString();
+    }
+
     private Map<String, Object> booking(UUID clinicianId, String roomCode, Instant startsAt) {
         Map<String, Object> body = new HashMap<>();
         body.put("patientId", UUID.randomUUID());
@@ -288,5 +306,97 @@ class RoomBookingIntegrationTest {
                 // The one field that turns a room code into something a person can follow.
                 .andExpect(jsonPath("$.room.directions").value(
                         org.hamcrest.Matchers.containsString("reception")));
+    }
+
+    /**
+     * The booking response was the <em>only</em> place wayfinding ever resolved.
+     *
+     * <p>Every read path passed a null room into the mapper, so `room.resolved` came back false and
+     * the name, floor and directions came back null — on the appointment book, on the patient's
+     * chart, on the lapsed list, and after every check-in. The DTO's own comment claimed they were
+     * "resolved live". Nothing caught it because no screen displayed a room until the appointment
+     * book became writable, and the one test that looked only ever looked at the 201.
+     *
+     * <p>So this asserts the reads, one per shape: by id, in a page, and per patient.
+     */
+    @Test
+    @DisplayName("wayfinding resolves on reads too, not only on the booking response")
+    void wayfindingResolvesOnReads() throws Exception {
+        Map<String, Object> body = booking(UUID.randomUUID(), CONSULT_ROOM, slot(495));
+        String created = book(body).andExpect(status().isCreated()).andReturn()
+                .getResponse().getContentAsString();
+        String id = objectMapper.readTree(created).get("id").asText();
+        String mrn = String.valueOf(body.get("patientMrn"));
+        String patientId = String.valueOf(body.get("patientId"));
+
+        mockMvc.perform(get("/appointments/" + id).with(as("RECEPTIONIST")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.room.resolved").value(true))
+                .andExpect(jsonPath("$.room.name").value("General OPD"));
+
+        mockMvc.perform(get("/appointments")
+                        .param("mrn", mrn)
+                        .param("from", slotDate())
+                        .param("to", slotDate())
+                        .with(as("RECEPTIONIST")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].room.resolved").value(true))
+                .andExpect(jsonPath("$.content[0].room.floorName").value("Ground Floor"));
+
+        mockMvc.perform(get("/appointments/patients/" + patientId).with(as("RECEPTIONIST")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].room.resolved").value(true))
+                .andExpect(jsonPath("$[0].room.directions").value(
+                        org.hamcrest.Matchers.containsString("reception")));
+
+        // And after a transition, which is where the front desk looks immediately after check-in.
+        mockMvc.perform(post("/appointments/" + id + "/check-in").with(as("RECEPTIONIST")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.room.resolved").value(true))
+                .andExpect(jsonPath("$.room.name").value("General OPD"));
+    }
+
+    @Test
+    @DisplayName("a room the directory cannot answer for still renders its code, and says so")
+    void anUnresolvableRoomIsHonestAboutIt() throws Exception {
+        String id = objectMapper.readTree(
+                        book(booking(UUID.randomUUID(), CONSULT_ROOM, slot(510)))
+                                .andExpect(status().isCreated())
+                                .andReturn().getResponse().getContentAsString())
+                .get("id").asText();
+
+        // The room is decommissioned, or patient-service is briefly unreachable. Rendering is not
+        // booking: the read must degrade to the bare code rather than failing the whole page.
+        when(roomDirectory.find(eq(CONSULT_ROOM), nullable(String.class))).thenReturn(Optional.empty());
+
+        mockMvc.perform(get("/appointments/" + id).with(as("RECEPTIONIST")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.room.code").value(CONSULT_ROOM))
+                .andExpect(jsonPath("$.room.resolved").value(false))
+                .andExpect(jsonPath("$.room.name").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("a page of appointments in one room asks the directory once, not once per row")
+    void theDirectoryIsNotAskedPerRow() throws Exception {
+        // Without the per-request cache a 200-row page would make 200 calls to patient-service for
+        // one answer. Three bookings in the same room must cost one lookup for the list.
+        String mrn = "MRN-CACHE-" + System.nanoTime() % 100000;
+        for (int i = 0; i < 3; i++) {
+            Map<String, Object> body = booking(UUID.randomUUID(), CONSULT_ROOM, slot(525 + i * 15));
+            body.put("patientMrn", mrn);
+            book(body).andExpect(status().isCreated());
+        }
+        clearInvocations(roomDirectory);
+
+        mockMvc.perform(get("/appointments")
+                        .param("mrn", mrn)
+                        .param("from", slotDate())
+                        .param("to", slotDate())
+                        .with(as("RECEPTIONIST")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[2].room.resolved").value(true));
+
+        verify(roomDirectory, times(1)).find(eq(CONSULT_ROOM), nullable(String.class));
     }
 }

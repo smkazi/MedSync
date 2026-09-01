@@ -85,6 +85,7 @@ export const MENUS: Menu[] = [
     label: "Scheduling",
     items: [
       { label: "Appointment book", href: "/appointments", roles: CLINICAL_READ },
+      { label: "Book an appointment", href: "/appointments/new", roles: FRONT_DESK },
       { label: "Clinician availability", href: "/scheduling/availability", roles: CLINICAL_READ },
       {
         label: "Lapsed appointments",

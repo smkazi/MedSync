@@ -58,21 +58,25 @@ public class AppointmentController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "50") int size) {
+            @RequestParam(defaultValue = "50") int size,
+            HttpServletRequest httpRequest) {
         return PageResponse.of(service.search(mrn, status, from, to,
-                PageRequest.of(page, Math.min(size, 200), Sort.by("startsAt"))));
+                PageRequest.of(page, Math.min(size, 200), Sort.by("startsAt")),
+                bearerToken(httpRequest)));
     }
 
     @GetMapping("/{id}")
     @PreAuthorize(Roles.CLINICAL_READ)
-    public SchedulingDtos.AppointmentResponse get(@PathVariable UUID id) {
-        return service.get(id);
+    public SchedulingDtos.AppointmentResponse get(@PathVariable UUID id,
+                                                  HttpServletRequest httpRequest) {
+        return service.get(id, bearerToken(httpRequest));
     }
 
     @GetMapping("/patients/{patientId}")
     @PreAuthorize(Roles.CLINICAL_READ)
-    public List<SchedulingDtos.AppointmentResponse> forPatient(@PathVariable UUID patientId) {
-        return service.forPatient(patientId);
+    public List<SchedulingDtos.AppointmentResponse> forPatient(@PathVariable UUID patientId,
+                                                               HttpServletRequest httpRequest) {
+        return service.forPatient(patientId, bearerToken(httpRequest));
     }
 
     /** Slots for one clinician on one day, each marked bookable or not with the reason. */
@@ -87,40 +91,45 @@ public class AppointmentController {
     @PutMapping("/{id}/schedule")
     @PreAuthorize(Roles.FRONT_DESK)
     public SchedulingDtos.AppointmentResponse reschedule(@PathVariable UUID id,
-                                                         @Valid @RequestBody SchedulingDtos.RescheduleRequest request) {
-        return service.reschedule(id, request);
+                                                         @Valid @RequestBody SchedulingDtos.RescheduleRequest request,
+                                                         HttpServletRequest httpRequest) {
+        return service.reschedule(id, request, bearerToken(httpRequest));
     }
 
     @PostMapping("/{id}/check-in")
     @PreAuthorize(Roles.FRONT_DESK)
-    public SchedulingDtos.AppointmentResponse checkIn(@PathVariable UUID id) {
-        return service.transition(id, SchedulingEnums.AppointmentStatus.CHECKED_IN);
+    public SchedulingDtos.AppointmentResponse checkIn(@PathVariable UUID id,
+                                                  HttpServletRequest httpRequest) {
+        return service.transition(id, SchedulingEnums.AppointmentStatus.CHECKED_IN, bearerToken(httpRequest));
     }
 
     @PostMapping("/{id}/start")
     @PreAuthorize(Roles.CLINICAL_WRITE)
-    public SchedulingDtos.AppointmentResponse start(@PathVariable UUID id) {
-        return service.transition(id, SchedulingEnums.AppointmentStatus.IN_PROGRESS);
+    public SchedulingDtos.AppointmentResponse start(@PathVariable UUID id,
+                                                  HttpServletRequest httpRequest) {
+        return service.transition(id, SchedulingEnums.AppointmentStatus.IN_PROGRESS, bearerToken(httpRequest));
     }
 
     @PostMapping("/{id}/complete")
     @PreAuthorize(Roles.CLINICAL_WRITE)
-    public SchedulingDtos.AppointmentResponse complete(@PathVariable UUID id) {
-        return service.transition(id, SchedulingEnums.AppointmentStatus.COMPLETED);
+    public SchedulingDtos.AppointmentResponse complete(@PathVariable UUID id,
+                                                  HttpServletRequest httpRequest) {
+        return service.transition(id, SchedulingEnums.AppointmentStatus.COMPLETED, bearerToken(httpRequest));
     }
 
     /** Records that the patient did not attend. Only valid once the slot has passed. */
     @PostMapping("/{id}/no-show")
     @PreAuthorize(Roles.FRONT_DESK)
-    public SchedulingDtos.AppointmentResponse noShow(@PathVariable UUID id) {
-        return service.transition(id, SchedulingEnums.AppointmentStatus.NO_SHOW);
+    public SchedulingDtos.AppointmentResponse noShow(@PathVariable UUID id,
+                                                  HttpServletRequest httpRequest) {
+        return service.transition(id, SchedulingEnums.AppointmentStatus.NO_SHOW, bearerToken(httpRequest));
     }
 
     /** Booked appointments whose slot has passed with no check-in. */
     @GetMapping("/lapsed")
     @PreAuthorize(Roles.FRONT_DESK)
-    public List<SchedulingDtos.AppointmentResponse> lapsed() {
-        return service.lapsed();
+    public List<SchedulingDtos.AppointmentResponse> lapsed(HttpServletRequest httpRequest) {
+        return service.lapsed(bearerToken(httpRequest));
     }
 
     @DeleteMapping("/{id}")

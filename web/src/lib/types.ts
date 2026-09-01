@@ -58,8 +58,39 @@ export type Appointment = {
   reason: string | null;
   bookedBy: string;
   checkedInAt: string | null;
+  cancelledReason: string | null;
   noShowRisk: { score: number; band: string } | null;
   encounterId: string | null;
+  /** Null when the booking has no room — a slot taken before one was assigned, or a teleconsult. */
+  room: RoomView | null;
+};
+
+/**
+ * Wayfinding, as a patient reads it.
+ *
+ * <p>Only `code` is stored on the appointment; the name, floor and directions are resolved live, so
+ * a renamed room never leaves stale text on an existing booking. `resolved` is false when the
+ * directory could not answer for the code — a decommissioned room, or a brief outage — and the UI
+ * then shows the bare code rather than pretending there is no room.
+ */
+export type RoomView = {
+  code: string;
+  name: string | null;
+  floorName: string | null;
+  directions: string | null;
+  resolved: boolean;
+};
+
+/** A room that can carry an appointment, from GET /rooms/bookable. */
+export type BookableRoom = {
+  id: string;
+  code: string;
+  name: string;
+  roomTypeCode: string;
+  roomTypeName: string;
+  floorName: string | null;
+  departmentCode: string | null;
+  bookable: boolean;
 };
 
 export type Slot = {

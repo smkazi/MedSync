@@ -2,7 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { api, ApiError } from "@/lib/api";
+import { readForm, refused, withoutBlanks } from "@/lib/form";
+import { submit } from "@/lib/mutate";
 import type { Patient, PatientSummary } from "@/lib/types";
 import type { RegisterState } from "./state";
 
@@ -51,53 +52,27 @@ export async function registerPatient(
   _previous: RegisterState,
   form: FormData,
 ): Promise<RegisterState> {
-  const values: Record<string, string> = {};
-  for (const field of FIELDS) {
-    values[field] = String(form.get(field) ?? "").trim();
-  }
+  const values = readForm(form, FIELDS);
   // Set only by the "Register anyway" button, which appears once candidates have been shown. It is
   // never a hidden input on the first submit: the confirmation has to be a deliberate act.
   const forceDuplicate = form.get("forceDuplicate") === "true";
 
-  const body: Record<string, unknown> = { forceDuplicate };
-  for (const [field, value] of Object.entries(values)) {
-    // Blank means "not recorded", and an empty string would fail the service's own @Pattern and
-    // @Email rules for a field the user simply left alone.
-    if (value !== "") body[field] = value;
-  }
+  const result = await submit<Patient>("/patients", "POST", {
+    ...withoutBlanks(values),
+    forceDuplicate,
+  });
 
-  let created: Patient;
-  try {
-    created = await api<Patient>("/patients", { method: "POST", body });
-  } catch (caught) {
-    if (caught instanceof ApiError) {
-      if (caught.status === 409) {
-        const warning = caught.body as { candidates?: PatientSummary[] } | undefined;
-        return {
-          values,
-          fieldErrors: {},
-          // Not an error. The service is asking a question, and the form renders it as one.
-          error: null,
-          duplicates: warning?.candidates ?? [],
-        };
-      }
-      return {
-        values,
-        fieldErrors: caught.fieldErrors ?? {},
-        error: caught.fieldErrors ? null : caught.detail,
-        duplicates: null,
-      };
+  if (!result.ok) {
+    if (result.status === 409) {
+      const warning = result.body as { candidates?: PatientSummary[] } | undefined;
+      // Not an error. The service is asking a question, and the form renders it as one.
+      return { values, fieldErrors: {}, error: null, done: null, duplicates: warning?.candidates ?? [] };
     }
-    return {
-      values,
-      fieldErrors: {},
-      error: caught instanceof Error ? caught.message : "Registration failed",
-      duplicates: null,
-    };
+    return { ...refused(values, result), duplicates: null };
   }
 
-  // Outside the try: redirect() works by throwing, and catching it here would render the throw as a
+  // Outside any try: redirect() works by throwing, and catching it would render the throw as a
   // registration failure for a patient who was in fact created.
   revalidatePath("/patients");
-  redirect(`/patients/${created.id}?registered=1`);
+  redirect(`/patients/${result.data.id}?registered=1`);
 }

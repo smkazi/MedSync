@@ -10,9 +10,9 @@ haematology analyzer over its own wire protocol and released by a pathologist.
 
 > **Status:** the clinical core, the laboratory (including analyzer integration), the AI service
 > and the web UI are implemented and verified end to end against a real stack, and so are the
-> containerisation, TLS, security-testing and performance-testing layers. **529 tests pass** —
-> 296 Java unit and integration, 91 Python, 34 web unit, 72 black-box API and security abuse cases,
-> and 36 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
+> containerisation, TLS, security-testing and performance-testing layers. **540 tests pass** —
+> 299 Java unit and integration, 91 Python, 34 web unit, 72 black-box API and security abuse cases,
+> and 44 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
 > [Security](#security); what is left is in the [Roadmap](#roadmap).
 
 ---
@@ -171,10 +171,20 @@ real browser for all six seeded roles:
 
 Writes go through **server actions**, not route handlers: `api()` already runs server-side with the
 session cookie, so an action can call the gateway directly and then `revalidatePath()`, and the form
-still works with JavaScript disabled. `src/app/patients/new` is the reference implementation —
-field errors come back from the service's own Bean Validation messages rather than being
-reimplemented in TypeScript, and the duplicate-patient 409 renders as a question ("these look like
-the same person") with the candidate charts as links, not as a failure.
+still works with JavaScript disabled. `src/lib/mutate.ts` holds the one `submit()` every action
+uses; `src/lib/form.ts` holds the pure state helpers, separate because a `"use client"` module that
+imports the fetch drags `next/headers` into the browser bundle and fails the build. `src/app/patients/new`
+is the reference implementation — field errors come back from the service's own Bean Validation
+messages rather than being reimplemented in TypeScript, and the duplicate-patient 409 renders as a
+question ("these look like the same person") with the candidate charts as links, not as a failure.
+
+**Booking is slot-driven, and that is a correctness decision.** `/appointments/new` asks for a
+clinician and a day, then renders the availability the platform computed — each slot carrying its
+exact instant, and each unavailable one carrying *why* ("in the past", "already booked", the
+blackout's own reason). The form submits the chosen instant unmodified. Nothing in the web tier
+builds a timestamp: a `datetime-local` input yields a wall-clock string with no zone, and the
+browser's zone is not necessarily the platform's, so a booking assembled from one is a timezone bug
+waiting for the first clinician who travels.
 
 ### `services/ai-service` — Python, FastAPI
 Four clinical decision-support capabilities. Details in
@@ -280,6 +290,18 @@ The dev profile seeds one account per role, all flagged must-change-password:
 | `dr.pathan` | PATHOLOGIST |
 
 The seed password comes from `HMS_SEED_PASSWORD` and defaults to `ChangeMe!Dev2026`.
+
+Each of those accounts has a **stable id** (`33333333-0000-4000-8000-00000000000N`) and a matching
+staff record, and that pairing is load-bearing rather than tidy: an appointment's `clinician_id` *is*
+a user id, and the staff directory is the only thing that turns one into a name a receptionist can
+pick from a list. Before the ids were stable no migration in another service could reference these
+users, so no staff row existed, so the clinician dropdown was empty on every fresh deployment — and
+scheduling's own seeded weekly pattern pointed at a clinician who did not exist anywhere. Its comment
+said "clinician ids are resolved by the caller"; nothing resolved them.
+
+Because an id is a primary key, nothing repairs a database that was already seeded with random ones.
+A dev database from before that change needs its schemas dropped — which is what `make dev-test-stack`
+does.
 
 > **A gap, stated rather than hidden.** The seeder sets `mustChangePassword` and `/auth/me` returns
 > it, so the UI shows a banner — but **nothing enforces it**. `POST /auth/change-password` exists and
@@ -393,6 +415,14 @@ to a patient record on its own.
   `nosniff`, `X-Frame-Options: DENY`, `no-referrer`, a locked-down `Permissions-Policy`, COOP/CORP,
   and a `default-src 'none'` CSP for the JSON API. The web app has its own nonce-based policy. The
   runtime and its version are stripped from every response.
+
+  The web app deliberately sends `Referrer-Policy: strict-origin-when-cross-origin` rather than the
+  gateway's `no-referrer`, and the difference is not cosmetic. `no-referrer` also suppresses the
+  `Origin` header on a form POST — Chromium sends `Origin: null` — and Next.js compares `Origin`
+  against `x-forwarded-host` to reject cross-site Server Action calls. With `no-referrer` set, every
+  native form submission in the app was refused as "Invalid Server Actions request" before it reached
+  an action: the stricter-looking header broke the CSRF defence it was meant to help. The gateway
+  keeps `no-referrer` because a JSON API has no forms.
 - **Errors** — one problem+json shape everywhere; no stack traces, SQL, or clinical text in a
   response body. An unsupported method is a 405 with `Allow`, a wrong content type a 415, a lost
   race on a versioned row a 409 — never a 500 that says "we are broken" when it is not true.
@@ -425,7 +455,7 @@ make help          # everything else
 Or directly:
 
 ```bash
-mvn -q verify                                     # 296 Java unit and integration tests
+mvn -q verify                                     # 299 Java unit and integration tests
 cd services/ai-service && uv run pytest -q        # 91 Python tests
 cd web && npm run lint && npm run typecheck       # web static checks
 cd web && npm test                                # 34 web unit tests
