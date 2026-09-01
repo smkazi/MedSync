@@ -150,6 +150,29 @@ public class LabOrderService {
     }
 
     /**
+     * Finds the order a scanned tube belongs to.
+     *
+     * <p>This is the point of putting a barcode on the label. Without it a technician standing at a
+     * rack of six visually identical tubes types an accession number into a search box, and the
+     * failure mode of that is not a missing result - it is a result filed against the wrong patient.
+     *
+     * <p>404 for an unknown accession rather than an empty list: a tube whose label does not resolve
+     * is an incident to investigate, not a search that found nothing.
+     */
+    @Transactional(readOnly = true)
+    public LabDtos.OrderResponse byAccession(String accessionNo) {
+        Specimen specimen = requireSpecimen(accessionNo);
+        return toResponse(requireDetail(specimen.getOrder().getId()));
+    }
+
+    @Transactional(readOnly = true)
+    public Specimen requireSpecimen(String accessionNo) {
+        String trimmed = accessionNo == null ? "" : accessionNo.trim();
+        return specimens.findByAccessionNo(trimmed)
+                .orElseThrow(() -> new NotFoundException("No specimen with accession '" + trimmed + "'"));
+    }
+
+    /**
      * The worklist. Defaults to orders still needing attention rather than the full history, which
      * is what a bench technician actually wants to see.
      */

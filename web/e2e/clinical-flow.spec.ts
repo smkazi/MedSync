@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import {
   FIXTURE_HAEMOGLOBIN_RANGE,
   FIXTURE_LOW_HAEMOGLOBIN,
+  FIXTURE_SURNAME,
 } from "./global-setup";
 
 /**
@@ -127,6 +128,56 @@ test.describe("laboratory", () => {
 
     // And the report says so at the top, where a clinician scanning a list of reports sees it.
     await expect(page.getByText("abnormal results")).toBeVisible();
+  });
+
+  test("scanning a tube barcode opens the order it belongs to", async ({ page }) => {
+    await signIn(page, "lab.tech");
+    await page.goto("/laboratory?status=VERIFIED");
+
+    // Read the accession off the report the fixture released, then use it the way a bench scanner
+    // would: type it into the scan box and press Enter.
+    await page.getByRole("link", { name: "Open" }).first().click();
+    const accession = (await page.getByText(/accession L\d{4}-\d{6}/).innerText())
+      .replace(/^.*accession /, "")
+      .trim();
+    expect(accession).toMatch(/^L\d{4}-\d{6}$/);
+
+    await page.goto("/laboratory");
+    await page.getByLabel("Scan a tube").fill(accession);
+    await page.getByRole("button", { name: "Open" }).click();
+
+    // Landed on the right report, not on a search results page.
+    await expect(page.getByRole("columnheader", { name: "Reference" })).toBeVisible();
+    await expect(page.getByText(accession)).toBeVisible();
+  });
+
+  test("an unrecognised label stops rather than silently returning nothing", async ({ page }) => {
+    await signIn(page, "lab.tech");
+    await page.goto("/laboratory");
+
+    await page.getByLabel("Scan a tube").fill("L2026-999999");
+    await page.getByRole("button", { name: "Open" }).click();
+
+    // A tube whose label does not resolve is an incident. Bouncing back to the worklist would look
+    // like a scan that worked and found nothing.
+    await expect(page.getByRole("heading", { name: "Scan not recognised" })).toBeVisible();
+    await expect(page.getByText("L2026-999999").first()).toBeVisible();
+  });
+
+  test("the label sheet renders a barcode carrying no patient identity", async ({ page }) => {
+    await signIn(page, "lab.tech");
+    await page.goto("/laboratory?status=VERIFIED");
+    await page.getByRole("link", { name: "Open" }).first().click();
+    await page.getByRole("link", { name: "Print labels" }).click();
+
+    await expect(page.getByRole("heading", { name: "Specimen labels" })).toBeVisible();
+    // The barcode is inlined SVG, so the bars are real elements on the page.
+    const bars = page.locator("svg rect[fill='#000000']");
+    await expect(bars.first()).toBeVisible();
+    expect(await bars.count()).toBeGreaterThan(20);
+
+    // A tube label is handled by couriers and seen in shared collection rooms.
+    await expect(page.locator("figure")).not.toContainText(FIXTURE_SURNAME);
   });
 });
 

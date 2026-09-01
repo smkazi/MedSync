@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -142,6 +143,99 @@ class LabApiIntegrationTest {
         assertThat(first).isNotEqualTo(second);
         mockMvc.perform(get("/lab/orders/" + orderId).with(as("DOCTOR")))
                 .andExpect(jsonPath("$.status").value("COLLECTED"));
+    }
+
+    @Test
+    @DisplayName("scanning a tube finds the order it belongs to")
+    void scanFindsTheOrder() throws Exception {
+        String orderId = createOrder("F", "CBC").get("id").asString();
+        String accession = collectSpecimen(orderId);
+
+        // The whole point of the barcode: the technician scans and lands on the right order rather
+        // than typing an accession number next to a rack of identical tubes.
+        mockMvc.perform(get("/lab/specimens/by-accession/{a}", accession).with(as("LAB_TECH")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(orderId))
+                .andExpect(jsonPath("$.specimens[0].accessionNo").value(accession));
+    }
+
+    @Test
+    @DisplayName("an unknown accession is a 404, not an empty result")
+    void unknownAccessionIsNotFound() throws Exception {
+        // A tube whose label does not resolve is an incident, and 404 says so. An empty list would
+        // read as "nothing ordered", which is a different and much more dangerous statement.
+        mockMvc.perform(get("/lab/specimens/by-accession/{a}", "L2026-999999").with(as("LAB_TECH")))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.detail").value(
+                        org.hamcrest.Matchers.containsString("L2026-999999")));
+    }
+
+    @Test
+    @DisplayName("a nurse chasing a sample can scan it without bench write access")
+    void scanIsAReadNotAWrite() throws Exception {
+        String accession = collectSpecimen(createOrder("F", "CBC").get("id").asString());
+
+        mockMvc.perform(get("/lab/specimens/by-accession/{a}", accession).with(as("NURSE")))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("the specimen label is an SVG barcode carrying the accession number")
+    void labelIsRendered() throws Exception {
+        String accession = collectSpecimen(createOrder("F", "CBC").get("id").asString());
+
+        String svg = mockMvc.perform(get("/lab/specimens/{a}/label", accession).with(as("LAB_TECH")))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Type",
+                        org.hamcrest.Matchers.containsString("image/svg+xml")))
+                // Never cached: a label belongs to one tube, and a stale one is the wrong barcode
+                // on the right sample.
+                .andExpect(header().string("Cache-Control",
+                        org.hamcrest.Matchers.containsString("no-store")))
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(svg).startsWith("<svg").endsWith("</svg>");
+        // The human-readable line, for when the scanner fails and somebody has to read it out.
+        assertThat(svg).contains(accession);
+        // Bars actually drawn, not an empty frame.
+        assertThat(svg).contains("fill=\"#000000\"");
+        assertThat(countOccurrences(svg, "<rect")).isGreaterThan(20);
+    }
+
+    @Test
+    @DisplayName("the label carries no patient identity")
+    void labelCarriesNoPatientIdentity() throws Exception {
+        JsonNode order = createOrder("F", "CBC");
+        String mrn = order.get("patientMrn").asString();
+        String accession = collectSpecimen(order.get("id").asString());
+
+        String svg = mockMvc.perform(get("/lab/specimens/{a}/label", accession).with(as("LAB_TECH")))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+
+        // A tube label is handled by couriers and visible in a shared collection room. The lab works
+        // by accession number, so the name and MRN would leak identity and buy nothing.
+        assertThat(svg).doesNotContain(mrn);
+        assertThat(svg).doesNotContain("TEST^PATIENT");
+    }
+
+    @Test
+    @DisplayName("printing a label needs bench access")
+    void labelRequiresLabAccess() throws Exception {
+        String accession = collectSpecimen(createOrder("F", "CBC").get("id").asString());
+
+        mockMvc.perform(get("/lab/specimens/{a}/label", accession).with(as("RECEPTIONIST")))
+                .andExpect(status().isForbidden());
+    }
+
+    private static int countOccurrences(String haystack, String needle) {
+        int count = 0;
+        int at = haystack.indexOf(needle);
+        while (at >= 0) {
+            count++;
+            at = haystack.indexOf(needle, at + needle.length());
+        }
+        return count;
     }
 
     @Test

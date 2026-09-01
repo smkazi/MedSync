@@ -93,6 +93,33 @@ export default async function LaboratoryPage({
         </button>
       </form>
 
+      {/*
+        The scan box. A handheld scanner is a keyboard that types the barcode and presses Enter, so
+        this is a plain GET form with autoFocus - a technician at the bench scans without touching
+        the mouse. Separate from the filter form above because it navigates rather than filters.
+      */}
+      <form action="/laboratory/scan" method="get" className="flex flex-wrap items-end gap-3">
+        <div>
+          <label htmlFor="accession" className="block text-sm font-medium">
+            Scan a tube
+          </label>
+          <input
+            id="accession"
+            name="accession"
+            autoFocus
+            autoComplete="off"
+            placeholder="L2026-000042"
+            className="numeric mt-1 rounded-md border border-line bg-surface-raised px-3 py-2 text-sm"
+          />
+        </div>
+        <button
+          type="submit"
+          className="rounded-md border border-line px-4 py-2 text-sm font-medium hover:bg-surface"
+        >
+          Open
+        </button>
+      </form>
+
       {error && <ErrorNote>{error}</ErrorNote>}
 
       <Card title="Worklist">

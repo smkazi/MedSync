@@ -4,6 +4,8 @@ import com.hms.common.api.PageResponse;
 import com.hms.common.error.NotFoundException;
 import com.hms.common.security.Roles;
 import com.hms.laboratory.domain.LabEnums;
+import com.hms.laboratory.domain.Specimen;
+import com.hms.laboratory.label.SpecimenLabelRenderer;
 import com.hms.laboratory.service.DeviceIngestService;
 import com.hms.laboratory.service.LabMapper;
 import com.hms.laboratory.service.LabOrderService;
@@ -15,7 +17,9 @@ import java.util.List;
 import java.util.UUID;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -46,13 +50,15 @@ public class LabController {
     private final DeviceMessageRepository messages;
     private final ReferenceRangeRepository ranges;
     private final LabMapper mapper;
+    private final SpecimenLabelRenderer labels;
 
     public LabController(LabOrderService orderService, LabResultService resultService,
                          DeviceIngestService ingestService, ReferenceRangeService rangeService,
                          LabTestCatalogRepository catalog,
                          AnalyzerRepository analyzers,
                          DeviceMessageRepository messages,
-                         ReferenceRangeRepository ranges, LabMapper mapper) {
+                         ReferenceRangeRepository ranges, LabMapper mapper,
+                         SpecimenLabelRenderer labels) {
         this.orderService = orderService;
         this.resultService = resultService;
         this.ingestService = ingestService;
@@ -62,6 +68,7 @@ public class LabController {
         this.messages = messages;
         this.ranges = ranges;
         this.mapper = mapper;
+        this.labels = labels;
     }
 
     // ---- orders ----------------------------------------------------------------
@@ -110,6 +117,37 @@ public class LabController {
     public LabDtos.MessageResponse cancelOrder(@PathVariable UUID id) {
         orderService.cancel(id);
         return new LabDtos.MessageResponse("Order cancelled");
+    }
+
+    // ---- specimens: barcode labels and scan-to-find ----------------------------
+
+    /**
+     * The order a scanned tube belongs to.
+     *
+     * <p>{@code CLINICAL_READ} rather than {@code LAB_WRITE}: scanning a tube to see what was
+     * ordered is a read, and a nurse chasing a sample should not need write access to the bench.
+     */
+    @GetMapping("/specimens/by-accession/{accessionNo}")
+    @PreAuthorize(Roles.CLINICAL_READ)
+    public LabDtos.OrderResponse orderForSpecimen(@PathVariable String accessionNo) {
+        return orderService.byAccession(accessionNo);
+    }
+
+    /**
+     * The tube label, as SVG.
+     *
+     * <p>Served as {@code image/svg+xml} so a browser prints it rather than displaying markup, and
+     * with {@code no-store}: a label is generated for a specific tube at a specific moment, and a
+     * cached label is how the wrong barcode ends up on the right tube.
+     */
+    @GetMapping(value = "/specimens/{accessionNo}/label", produces = "image/svg+xml")
+    @PreAuthorize(Roles.LAB_WRITE)
+    public ResponseEntity<String> specimenLabel(@PathVariable String accessionNo) {
+        Specimen specimen = orderService.requireSpecimen(accessionNo);
+        String svg = labels.render(specimen.getAccessionNo(), specimen.getSpecimenType());
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.noStore())
+                .body(svg);
     }
 
     // ---- results ---------------------------------------------------------------

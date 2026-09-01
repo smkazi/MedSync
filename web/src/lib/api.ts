@@ -60,6 +60,33 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
   return payload as T;
 }
 
+/**
+ * Fetches a non-JSON resource from the gateway as text, on the server.
+ *
+ * Exists for the specimen label, which the gateway returns as SVG. It has to be fetched server-side
+ * like everything else: the bearer token lives in an httpOnly cookie and the browser never sees it,
+ * so an `<img src="/lab/...">` would arrive unauthenticated. The caller inlines the markup instead.
+ */
+export async function apiText(path: string, accept = "*/*"): Promise<string> {
+  const token = await accessToken();
+  const response = await fetch(`${GATEWAY}${path}`, {
+    headers: {
+      Accept: accept,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    cache: "no-store",
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    const problem = safeParse(text) as { detail?: string; title?: string } | undefined;
+    throw new ApiError(
+      response.status,
+      problem?.detail ?? problem?.title ?? `Request failed (${response.status})`,
+    );
+  }
+  return text;
+}
+
 function safeParse(text: string): unknown {
   try {
     return JSON.parse(text);

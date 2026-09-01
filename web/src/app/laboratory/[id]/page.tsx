@@ -46,12 +46,20 @@ export default async function LabOrderPage({ params }: { params: Promise<{ id: s
             {specimen ? ` · accession ${specimen.accessionNo}` : ""}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {order.priority !== "ROUTINE" && (
             <Badge tone={statusTone(order.priority)}>{order.priority}</Badge>
           )}
           <Badge tone={statusTone(order.status)}>{order.status}</Badge>
           {order.hasAbnormalResults && <Badge tone="critical">abnormal results</Badge>}
+          {order.specimens.length > 0 && (
+            <Link
+              href={`/laboratory/${order.id}/labels`}
+              className="rounded border border-line px-3 py-1 text-sm hover:bg-surface"
+            >
+              Print labels
+            </Link>
+          )}
         </div>
       </div>
 
