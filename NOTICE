@@ -1,0 +1,32 @@
+MedSync
+=======
+
+Portions of services/laboratory-service are derived from smkazi/HaematologyIS
+(https://github.com/smkazi/HaematologyIS), a Python hematology Laboratory
+Information System by the same author.
+
+Specifically, the following were ported to Java:
+
+  services/laboratory-service/src/main/java/com/hms/laboratory/device/astm/
+      AstmParser.java, AstmRecordParser.java, AstmFrames.java,
+      HistogramExtractor.java
+        <- parsers/astm_parser.py
+
+  services/laboratory-service/src/main/java/com/hms/laboratory/device/kdps/
+      KdpsParser.java
+        <- parsers/kdps_parser.py
+
+  The reference-range flagging rule in
+  services/laboratory-service/src/main/java/com/hms/laboratory/service/
+      ReferenceRangeService.java
+        <- models/reference_ranges.py (range_flag / get_flag)
+
+The test fixtures in
+services/laboratory-service/src/test/resources/fixtures/ are the analyzer frames
+captured from a Sysmex RX-21/XP-100 used by that project's own test suite.
+
+Two deliberate departures from the source are documented in the ported classes:
+reference-range flagging moved out of the parser into a service, because the
+ranges are lab-configurable and live in the database; and K-DPS header detection
+now tolerates a leading STX byte, matching the header parser's own documented
+tolerance.

@@ -318,17 +318,23 @@ class PatientApiIntegrationTest {
     @Test
     @DisplayName("staff are created with a department and found by search")
     void staffCanBeCreatedAndSearched() throws Exception {
-        String employeeNo = "EMP-" + UUID.randomUUID().toString().substring(0, 8);
+        // Both the number and the searched name are unique per run: this suite runs against a
+        // persistent database, so a shared name would match records left by earlier runs.
+        String suffix = UUID.randomUUID().toString().substring(0, 8);
+        String employeeNo = "EMP-" + suffix;
+        String fullName = "Dr Cardiologist " + suffix;
+
         mockMvc.perform(post("/staff").with(as("ADMIN"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of(
-                                "employeeNo", employeeNo, "fullName", "Dr Test Cardiologist",
+                                "employeeNo", employeeNo, "fullName", fullName,
                                 "designation", "Consultant", "departmentCode", "CARD"))))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.departmentName").value("Cardiology"));
 
-        mockMvc.perform(get("/staff").param("q", "Test Cardiologist").with(as("NURSE")))
+        mockMvc.perform(get("/staff").param("q", fullName).with(as("NURSE")))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1))
                 .andExpect(jsonPath("$.content[0].employeeNo").value(employeeNo));
     }
 

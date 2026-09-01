@@ -1,0 +1,22 @@
+# Integration tests run against a real PostgreSQL: the double-booking guard is a
+# gist exclusion constraint over a tstzrange, which only PostgreSQL provides.
+spring:
+  datasource:
+    url: ${HMS_TEST_DB_URL:jdbc:postgresql://localhost:5432/hms_test}
+    username: ${HMS_TEST_DB_USER:hms}
+    password: ${HMS_TEST_DB_PASSWORD:hms}
+    hikari:
+      schema: scheduling
+  flyway:
+    enabled: true
+hms:
+  events:
+    transport: log
+  scheduling:
+    zone: UTC
+  ai:
+    # Decision support is not under test here; the client's fallback is covered separately.
+    enabled: false
+logging:
+  level:
+    org.flywaydb: WARN

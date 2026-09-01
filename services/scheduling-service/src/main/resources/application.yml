@@ -1,0 +1,77 @@
+spring:
+  application:
+    name: scheduling-service
+  datasource:
+    url: ${HMS_DB_URL:jdbc:postgresql://localhost:5432/hms}
+    username: ${HMS_DB_USER:hms}
+    password: ${HMS_DB_PASSWORD:hms}
+    hikari:
+      # Sets the connection's search_path. Hibernate's default_schema only qualifies mapped
+      # entities, so native SQL (the MRN sequence) needs the schema on the connection itself.
+      schema: scheduling
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: scheduling
+        jdbc:
+          time_zone: UTC
+  flyway:
+    enabled: true
+    schemas: scheduling
+    default-schema: scheduling
+    create-schemas: true
+  kafka:
+    bootstrap-servers: ${HMS_KAFKA:localhost:9092}
+
+server:
+  port: ${HMS_SCHEDULING_PORT:8083}
+  error:
+    include-message: never
+    include-stacktrace: never
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+hms:
+  security:
+    mode: resource-server
+  events:
+    transport: ${HMS_EVENTS_TRANSPORT:log}
+  scheduling:
+    # Clinic hours are local; slots are generated in this zone and stored as instants.
+    zone: ${HMS_TIMEZONE:UTC}
+  ai:
+    base-url: ${HMS_AI_URI:http://localhost:8000}
+    enabled: ${HMS_AI_ENABLED:true}
+
+# A decision-support outage must degrade the no-show badge, never block a booking.
+resilience4j:
+  circuitbreaker:
+    instances:
+      aiService:
+        slidingWindowSize: 10
+        minimumNumberOfCalls: 5
+        failureRateThreshold: 50
+        waitDurationInOpenState: 30s
+        permittedNumberOfCallsInHalfOpenState: 3
+  timelimiter:
+    instances:
+      aiService:
+        timeoutDuration: 2s
+        cancelRunningFuture: true
+
+spring.security.oauth2.resourceserver.jwt.jwk-set-uri: ${HMS_JWKS_URI:http://localhost:8081/.well-known/jwks.json}
+
+logging:
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level [%X{correlationId:-}] %logger{36} - %msg%n"
