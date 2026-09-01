@@ -1,0 +1,23 @@
+# Integration tests run against a real PostgreSQL: the schema uses Postgres types
+# (uuid, timestamptz) and an exclusion constraint elsewhere, so an in-memory
+# substitute would not exercise what production runs.
+spring:
+  datasource:
+    url: ${HMS_TEST_DB_URL:jdbc:postgresql://localhost:5432/hms_test}
+    username: ${HMS_TEST_DB_USER:hms}
+    password: ${HMS_TEST_DB_PASSWORD:hms}
+  flyway:
+    enabled: true
+    clean-disabled: false
+hms:
+  seed:
+    enabled: true
+    password: TestPassword!2026
+  events:
+    transport: log
+  jwt:
+    issuer: http://localhost:8081
+    audience: hms
+logging:
+  level:
+    org.flywaydb: WARN

@@ -1,0 +1,373 @@
+package com.hms.laboratory.web;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.http.MediaType;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.RequestPostProcessor;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+
+/**
+ * Drives the laboratory API against a real database, from ordering through analyzer ingest to
+ * verification — the path a sample actually takes.
+ */
+@SpringBootTest
+@AutoConfigureMockMvc
+@ActiveProfiles("test")
+class LabApiIntegrationTest {
+
+    @Autowired
+    private MockMvc mockMvc;
+
+    @Autowired
+    private ObjectMapper objectMapper;
+
+    private static RequestPostProcessor as(String... roles) {
+        List<GrantedAuthority> authorities = Arrays.stream(roles)
+                .map(role -> (GrantedAuthority) new SimpleGrantedAuthority("ROLE_" + role))
+                .toList();
+        return jwt()
+                .jwt(builder -> builder.subject(UUID.randomUUID().toString())
+                        .claim("preferred_username", "test-user")
+                        .claim("roles", List.of(roles)))
+                .authorities(authorities);
+    }
+
+    /** Creates an order for a fresh synthetic patient and returns it. */
+    private JsonNode createOrder(String sex, String... testCodes) throws Exception {
+        Map<String, Object> body = new HashMap<>();
+        body.put("patientId", UUID.randomUUID().toString());
+        body.put("patientMrn", "MRN-TEST-" + UUID.randomUUID().toString().substring(0, 8));
+        body.put("patientSex", sex);
+        body.put("testCodes", List.of(testCodes));
+        body.put("priority", "ROUTINE");
+
+        String response = mockMvc.perform(post("/lab/orders").with(as("DOCTOR"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        return objectMapper.readTree(response);
+    }
+
+    private String collectSpecimen(String orderId) throws Exception {
+        String response = mockMvc.perform(post("/lab/orders/" + orderId + "/specimens").with(as("LAB_TECH"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        return objectMapper.readTree(response).get("accessionNo").asString();
+    }
+
+    /** A Sysmex XP-300 transmission addressed to an accession number. */
+    private static String astmTransmission(String accession) {
+        return "H|\\^&|||XP300|||||||P|1\r"
+                + "P|1||" + accession + "||TEST^PATIENT||19880412|F|||||||Dr. TEST\r"
+                + "O|1|" + accession + "||^^^CBC|R||20260901090000\r"
+                + "R|1|^^^^WBC^26|12.8|10*3/uL|4.0-11.0|N\r"
+                + "R|2|^^^^HGB^26|9.4|g/dL|11.5-14.5|N\r"
+                + "R|3|^^^^PLT^26|140|10*3/uL|150.0-450.0|N\r"
+                + "R|4|^^^^W-SCR^26|26.9|%||N\r"
+                + "R|5|^^^^MCH^26|***.*|pg||A\r"
+                + "L|1|N\r";
+    }
+
+    private JsonNode ingestAstm(String accession) throws Exception {
+        String response = mockMvc.perform(post("/lab/device-messages").with(as("LAB_TECH"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "protocol", "ASTM",
+                                "analyzerName", "Haematology-1",
+                                "payload", astmTransmission(accession)))))
+                .andExpect(status().isAccepted())
+                .andReturn().getResponse().getContentAsString();
+        return objectMapper.readTree(response);
+    }
+
+    private JsonNode results(String orderId) throws Exception {
+        return objectMapper.readTree(mockMvc.perform(get("/lab/orders/" + orderId + "/results").with(as("DOCTOR")))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString());
+    }
+
+    @Test
+    @DisplayName("an order is created with its panel and starts as ORDERED")
+    void orderIsCreated() throws Exception {
+        JsonNode order = createOrder("F", "CBC");
+
+        assertThat(order.get("status").asString()).isEqualTo("ORDERED");
+        assertThat(order.get("items")).hasSize(1);
+        assertThat(order.get("items").get(0).get("testCode").asString()).isEqualTo("CBC");
+    }
+
+    @Test
+    @DisplayName("an unknown test code is rejected")
+    void unknownTestCodeIsRejected() throws Exception {
+        Map<String, Object> body = Map.of("patientId", UUID.randomUUID().toString(),
+                "patientMrn", "MRN-TEST-X", "testCodes", List.of("NOT-A-TEST"));
+
+        mockMvc.perform(post("/lab/orders").with(as("DOCTOR"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("collecting a specimen issues a unique accession number and advances the order")
+    void collectionIssuesAccession() throws Exception {
+        String orderId = createOrder("F", "CBC").get("id").asString();
+
+        String first = collectSpecimen(orderId);
+        String second = collectSpecimen(createOrder("M", "CBC").get("id").asString());
+
+        assertThat(first).matches("L\\d{4}-\\d{6}");
+        assertThat(first).isNotEqualTo(second);
+        mockMvc.perform(get("/lab/orders/" + orderId).with(as("DOCTOR")))
+                .andExpect(jsonPath("$.status").value("COLLECTED"));
+    }
+
+    @Test
+    @DisplayName("an ASTM transmission is matched to its order by accession number")
+    void astmIngestMatchesByAccession() throws Exception {
+        String orderId = createOrder("F", "CBC").get("id").asString();
+        String accession = collectSpecimen(orderId);
+
+        JsonNode ingest = ingestAstm(accession);
+
+        assertThat(ingest.get("parsedOk").asBoolean()).isTrue();
+        assertThat(ingest.get("matchedOrderId").asString()).isEqualTo(orderId);
+        assertThat(ingest.get("sampleId").asString()).isEqualTo(accession);
+    }
+
+    @Test
+    @DisplayName("results are flagged against the lab's ranges, overriding the analyzer's 'normal'")
+    void resultsAreFlaggedAgainstLabRanges() throws Exception {
+        String orderId = createOrder("F", "CBC").get("id").asString();
+        ingestAstm(collectSpecimen(orderId));
+
+        Map<String, String> flags = new HashMap<>();
+        results(orderId).forEach(result ->
+                flags.put(result.get("parameter").asString(), result.get("flag").asString()));
+
+        // Every one of these arrived with the analyzer's flag set to "N".
+        assertThat(flags).containsEntry("WBC", "H").containsEntry("HGB", "L").containsEntry("PLT", "L");
+    }
+
+    @Test
+    @DisplayName("XP W- codes are translated to the reported parameter names")
+    void xpCodesAreTranslated() throws Exception {
+        String orderId = createOrder("F", "CBC").get("id").asString();
+        ingestAstm(collectSpecimen(orderId));
+
+        List<String> parameters = new java.util.ArrayList<>();
+        results(orderId).forEach(result -> parameters.add(result.get("parameter").asString()));
+
+        assertThat(parameters).contains("LYM%").doesNotContain("W-SCR");
+    }
+
+    @Test
+    @DisplayName("a masked reading is not stored as a result at all")
+    void maskedReadingIsNotStored() throws Exception {
+        String orderId = createOrder("F", "CBC").get("id").asString();
+        JsonNode ingest = ingestAstm(collectSpecimen(orderId));
+
+        List<String> parameters = new java.util.ArrayList<>();
+        results(orderId).forEach(result -> parameters.add(result.get("parameter").asString()));
+
+        assertThat(parameters)
+                .as("MCH arrived as ***.* and carries no measurement")
+                .doesNotContain("MCH");
+        assertThat(ingest.get("warnings").toString()).contains("MCH");
+    }
+
+    @Test
+    @DisplayName("an unmatched transmission is retained and reported, never filed on a guess")
+    void unmatchedTransmissionIsNotGuessed() throws Exception {
+        JsonNode ingest = objectMapper.readTree(mockMvc.perform(post("/lab/device-messages").with(as("LAB_TECH"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "protocol", "ASTM", "payload", astmTransmission("L9999-999999")))))
+                .andExpect(status().isAccepted())
+                .andReturn().getResponse().getContentAsString());
+
+        assertThat(ingest.get("matchedOrderId").isNull()).isTrue();
+        assertThat(ingest.get("resultsStored").asInt()).isZero();
+        assertThat(ingest.get("warnings").toString()).contains("No open order matched");
+
+        // The message itself is kept, so a technician can see what arrived and why it did not land.
+        mockMvc.perform(get("/lab/device-messages").with(as("LAB_TECH")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(org.hamcrest.Matchers.greaterThan(0)));
+    }
+
+    @Test
+    @DisplayName("an unparseable transmission is recorded as a failure rather than lost")
+    void unparseableTransmissionIsRecorded() throws Exception {
+        JsonNode ingest = objectMapper.readTree(mockMvc.perform(post("/lab/device-messages").with(as("LAB_TECH"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "protocol", "ASTM", "payload", "this is not an ASTM transmission"))))
+                .andExpect(status().isAccepted())
+                .andReturn().getResponse().getContentAsString());
+
+        assertThat(ingest.get("parsedOk").asBoolean()).isFalse();
+        assertThat(ingest.get("error").asString()).isNotBlank();
+        assertThat(ingest.get("messageId").asString()).isNotBlank();
+    }
+
+    @Test
+    @DisplayName("manual entry records results a technician typed")
+    void manualEntryRecordsResults() throws Exception {
+        String orderId = createOrder("M", "ESR").get("id").asString();
+        collectSpecimen(orderId);
+
+        mockMvc.perform(post("/lab/orders/" + orderId + "/results").with(as("LAB_TECH"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("results",
+                                List.of(Map.of("parameter", "ESR", "value", "35", "unit", "mm/hr"))))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].parameter").value("ESR"))
+                .andExpect(jsonPath("$[0].flag").value("H"))
+                .andExpect(jsonPath("$[0].source").value("MANUAL"));
+    }
+
+    @Test
+    @DisplayName("re-entering a parameter amends it rather than adding a second row")
+    void reEntryAmendsRatherThanDuplicates() throws Exception {
+        String orderId = createOrder("M", "ESR").get("id").asString();
+        collectSpecimen(orderId);
+        String body = objectMapper.writeValueAsString(Map.of("results",
+                List.of(Map.of("parameter", "ESR", "value", "35", "unit", "mm/hr"))));
+        mockMvc.perform(post("/lab/orders/" + orderId + "/results").with(as("LAB_TECH"))
+                .contentType(MediaType.APPLICATION_JSON).content(body));
+
+        mockMvc.perform(post("/lab/orders/" + orderId + "/results").with(as("LAB_TECH"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("results",
+                                List.of(Map.of("parameter", "ESR", "value", "12", "unit", "mm/hr"))))))
+                .andExpect(status().isOk());
+
+        JsonNode found = results(orderId);
+        assertThat(found).hasSize(1);
+        assertThat(found.get(0).get("value").asString()).isEqualTo("12");
+        assertThat(found.get(0).get("flag").asString()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("only a pathologist may verify, and verification closes the order")
+    void verificationIsPathologistOnly() throws Exception {
+        String orderId = createOrder("F", "CBC").get("id").asString();
+        ingestAstm(collectSpecimen(orderId));
+
+        mockMvc.perform(post("/lab/orders/" + orderId + "/verify").with(as("LAB_TECH")))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/lab/orders/" + orderId + "/verify").with(as("PATHOLOGIST")))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/lab/orders/" + orderId).with(as("DOCTOR")))
+                .andExpect(jsonPath("$.status").value("VERIFIED"))
+                .andExpect(jsonPath("$.hasAbnormalResults").value(true));
+        results(orderId).forEach(result ->
+                assertThat(result.get("status").asString()).isEqualTo("VERIFIED"));
+    }
+
+    @Test
+    @DisplayName("a verified order takes no further results")
+    void verifiedOrderIsClosedToNewResults() throws Exception {
+        String orderId = createOrder("F", "CBC").get("id").asString();
+        ingestAstm(collectSpecimen(orderId));
+        mockMvc.perform(post("/lab/orders/" + orderId + "/verify").with(as("PATHOLOGIST")));
+
+        mockMvc.perform(post("/lab/orders/" + orderId + "/results").with(as("LAB_TECH"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("results",
+                                List.of(Map.of("parameter", "ESR", "value", "30"))))))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    @DisplayName("an order with results cannot be cancelled")
+    void orderWithResultsCannotBeCancelled() throws Exception {
+        String orderId = createOrder("F", "CBC").get("id").asString();
+        ingestAstm(collectSpecimen(orderId));
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .delete("/lab/orders/" + orderId).with(as("DOCTOR")))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    @DisplayName("an order with no results can be cancelled")
+    void emptyOrderCanBeCancelled() throws Exception {
+        String orderId = createOrder("F", "CBC").get("id").asString();
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .delete("/lab/orders/" + orderId).with(as("DOCTOR")))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/lab/orders/" + orderId).with(as("DOCTOR")))
+                .andExpect(jsonPath("$.status").value("CANCELLED"));
+    }
+
+    @Test
+    @DisplayName("the worklist shows orders awaiting attention")
+    void worklistShowsOpenOrders() throws Exception {
+        JsonNode order = createOrder("F", "CBC");
+        String mrn = order.get("patientMrn").asString();
+
+        mockMvc.perform(get("/lab/orders").param("mrn", mrn).with(as("LAB_TECH")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[0].status").value("ORDERED"));
+    }
+
+    @Test
+    @DisplayName("reference ranges and the catalog are readable, and ranges are editable by a pathologist")
+    void referenceDataIsAvailable() throws Exception {
+        mockMvc.perform(get("/lab/catalog").with(as("DOCTOR")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", org.hamcrest.Matchers.hasSize(
+                        org.hamcrest.Matchers.greaterThanOrEqualTo(4))));
+
+        String ranges = mockMvc.perform(get("/lab/reference-ranges").with(as("DOCTOR")))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        JsonNode first = objectMapper.readTree(ranges).get(0);
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .patch("/lab/reference-ranges/" + first.get("id").asString()).with(as("DOCTOR"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"normalHigh\": 99}"))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .patch("/lab/reference-ranges/" + first.get("id").asString()).with(as("PATHOLOGIST"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"normalHigh\": 99}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.normalHigh").value(99));
+    }
+
+    @Test
+    @DisplayName("an anonymous request reaches nothing")
+    void anonymousAccessIsRejected() throws Exception {
+        mockMvc.perform(get("/lab/orders")).andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/lab/device-messages").contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isUnauthorized());
+    }
+}

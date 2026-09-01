@@ -1,0 +1,344 @@
+package com.hms.patient.web;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import com.hms.patient.domain.Patient;
+import com.hms.patient.domain.Sex;
+import com.hms.patient.repo.PatientRepository;
+import java.time.LocalDate;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import javax.sql.DataSource;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import org.springframework.test.web.servlet.request.RequestPostProcessor;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+
+/**
+ * Covers the patient API against a real database.
+ *
+ * <p>Callers are authenticated with the {@code jwt()} post-processor rather than a live
+ * identity-service: this service is a stateless resource server, so a request carries a bearer
+ * token and nothing else. What is under test here is this service's authorisation rules and
+ * persistence; token minting is covered by identity-service's own suite.
+ */
+@SpringBootTest
+@AutoConfigureMockMvc
+@ActiveProfiles("test")
+class PatientApiIntegrationTest {
+
+    @Autowired
+    private MockMvc mockMvc;
+
+    @Autowired
+    private ObjectMapper objectMapper;
+
+    @Autowired
+    private PatientRepository patients;
+
+    @Autowired
+    private DataSource dataSource;
+
+    /** A caller holding the given roles, shaped exactly like a token identity-service would mint. */
+    private static RequestPostProcessor as(String... roles) {
+        List<GrantedAuthority> authorities = Arrays.stream(roles)
+                .map(role -> (GrantedAuthority) new SimpleGrantedAuthority("ROLE_" + role))
+                .toList();
+        return jwt()
+                .jwt(builder -> builder
+                        .subject(UUID.randomUUID().toString())
+                        .claim("preferred_username", "test-user")
+                        .claim("roles", List.of(roles)))
+                .authorities(authorities);
+    }
+
+    /** A unique surname per test, so tests never collide over duplicate detection. */
+    private String uniqueSurname() {
+        return "Surname" + UUID.randomUUID().toString().substring(0, 8);
+    }
+
+    private Map<String, Object> validRegistration(String surname) {
+        return Map.of("firstName", "Meera", "lastName", surname, "dateOfBirth", "1988-04-12",
+                "sex", "FEMALE", "phone", "+91 98200 11223", "nationalId", "ABCDE1234F",
+                "insurancePolicyNo", "SH-99881");
+    }
+
+    private MockHttpServletRequestBuilder registrationRequest(Map<String, Object> body, String... roles)
+            throws Exception {
+        return post("/patients").with(as(roles))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(body));
+    }
+
+    private JsonNode register(String surname) throws Exception {
+        String body = mockMvc.perform(registrationRequest(validRegistration(surname), "RECEPTIONIST"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        return objectMapper.readTree(body);
+    }
+
+    private void recordAllergy(String patientId, String substance, String severity) throws Exception {
+        mockMvc.perform(post("/patients/" + patientId + "/allergies").with(as("DOCTOR"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                Map.of("substance", substance, "severity", severity))))
+                .andExpect(status().isCreated());
+    }
+
+    @Test
+    @DisplayName("an anonymous request is rejected")
+    void anonymousAccessIsRejected() throws Exception {
+        mockMvc.perform(get("/patients")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    @DisplayName("registration issues an MRN and never echoes the encrypted identifiers")
+    void registrationIssuesMrnAndHidesIdentifiers() throws Exception {
+        JsonNode created = register(uniqueSurname());
+
+        assertThat(created.get("mrn").asString()).matches("MRN-\\d{4}-\\d{6}");
+        assertThat(created.has("nationalId"))
+                .as("the encrypted national id must not appear in an ordinary patient response")
+                .isFalse();
+        assertThat(created.has("insurancePolicyNo")).isFalse();
+    }
+
+    @Test
+    @DisplayName("MRNs are unique across registrations")
+    void mrnsAreUnique() throws Exception {
+        List<String> issued = List.of(register(uniqueSurname()).get("mrn").asString(),
+                register(uniqueSurname()).get("mrn").asString(),
+                register(uniqueSurname()).get("mrn").asString());
+
+        assertThat(issued).doesNotHaveDuplicates();
+    }
+
+    @Test
+    @DisplayName("identifiers are stored as ciphertext, not plaintext")
+    void identifiersAreEncryptedAtRest() throws Exception {
+        UUID id = UUID.fromString(register(uniqueSurname()).get("id").asString());
+
+        String storedNationalId = new JdbcTemplate(dataSource)
+                .queryForObject("select national_id from patient.patients where id = ?", String.class, id);
+
+        assertThat(storedNationalId).startsWith("v1:").doesNotContain("ABCDE1234F");
+    }
+
+    @Test
+    @DisplayName("identifiers decrypt back to the submitted values")
+    void identifiersDecryptForAuthorisedRoles() throws Exception {
+        String id = register(uniqueSurname()).get("id").asString();
+
+        mockMvc.perform(get("/patients/" + id + "/identifiers").with(as("DOCTOR")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.nationalId").value("ABCDE1234F"))
+                .andExpect(jsonPath("$.insurancePolicyNo").value("SH-99881"));
+    }
+
+    @Test
+    @DisplayName("a matching surname and date of birth is reported as a duplicate with candidates")
+    void duplicateRegistrationIsReported() throws Exception {
+        String surname = uniqueSurname();
+        register(surname);
+
+        String conflict = mockMvc.perform(registrationRequest(validRegistration(surname), "RECEPTIONIST"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.candidates").isArray())
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(objectMapper.readTree(conflict).get("candidates")).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("forceDuplicate registers anyway")
+    void duplicateCanBeForced() throws Exception {
+        String surname = uniqueSurname();
+        register(surname);
+
+        Map<String, Object> forced = new HashMap<>(validRegistration(surname));
+        forced.put("forceDuplicate", true);
+
+        mockMvc.perform(registrationRequest(forced, "RECEPTIONIST")).andExpect(status().isCreated());
+    }
+
+    @Test
+    @DisplayName("a future date of birth is rejected with a field error")
+    void futureDateOfBirthIsRejected() throws Exception {
+        Map<String, Object> body = Map.of("firstName", "A", "lastName", uniqueSurname(),
+                "dateOfBirth", LocalDate.now().plusYears(1).toString(), "sex", "MALE");
+
+        mockMvc.perform(registrationRequest(body, "RECEPTIONIST"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors.dateOfBirth").exists());
+    }
+
+    @Test
+    @DisplayName("a malformed body is a 400, not a 500")
+    void malformedBodyIsBadRequest() throws Exception {
+        mockMvc.perform(post("/patients").with(as("RECEPTIONIST"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"firstName\":"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("search finds a patient by surname and by MRN")
+    void searchMatchesNameAndMrn() throws Exception {
+        JsonNode created = register(uniqueSurname());
+
+        mockMvc.perform(get("/patients").param("q", created.get("lastName").asString().toLowerCase())
+                        .with(as("DOCTOR")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1));
+
+        mockMvc.perform(get("/patients").param("q", created.get("mrn").asString()).with(as("DOCTOR")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1));
+    }
+
+    @Test
+    @DisplayName("the chart view loads allergies without a lazy-loading failure")
+    void chartLoadsAllergies() throws Exception {
+        String id = register(uniqueSurname()).get("id").asString();
+        recordAllergy(id, "Penicillin", "LIFE_THREATENING");
+
+        mockMvc.perform(get("/patients/" + id).with(as("DOCTOR")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.hasCriticalAllergy").value(true))
+                .andExpect(jsonPath("$.allergies", org.hamcrest.Matchers.hasSize(1)));
+    }
+
+    @Test
+    @DisplayName("search rows carry the critical-allergy marker")
+    void searchRowsCarryCriticalAllergyMarker() throws Exception {
+        JsonNode created = register(uniqueSurname());
+        recordAllergy(created.get("id").asString(), "Sulfa", "SEVERE");
+
+        mockMvc.perform(get("/patients").param("q", created.get("lastName").asString()).with(as("DOCTOR")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].hasCriticalAllergy").value(true));
+    }
+
+    @Test
+    @DisplayName("the same allergy cannot be recorded twice, whatever the casing")
+    void duplicateAllergyIsRejected() throws Exception {
+        String id = register(uniqueSurname()).get("id").asString();
+        recordAllergy(id, "Penicillin", "SEVERE");
+
+        mockMvc.perform(post("/patients/" + id + "/allergies").with(as("DOCTOR"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                Map.of("substance", "penicillin", "severity", "MILD"))))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    @DisplayName("a lab technician may read a chart but not the encrypted identifiers")
+    void labTechCannotReadIdentifiers() throws Exception {
+        UUID id = patients.save(new Patient("MRN-TEST-" + UUID.randomUUID().toString().substring(0, 8),
+                "Test", uniqueSurname(), LocalDate.of(1990, 1, 1), Sex.MALE)).getId();
+
+        mockMvc.perform(get("/patients/" + id).with(as("LAB_TECH"))).andExpect(status().isOk());
+        mockMvc.perform(get("/patients/" + id + "/identifiers").with(as("LAB_TECH")))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("a receptionist may register but not record clinical data")
+    void receptionistCannotRecordAllergies() throws Exception {
+        String id = register(uniqueSurname()).get("id").asString();
+
+        mockMvc.perform(post("/patients/" + id + "/allergies").with(as("RECEPTIONIST"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("substance", "Latex", "severity", "MILD"))))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("only an admin may archive a chart, and archiving is a soft delete")
+    void archivingIsSoftAndAdminOnly() throws Exception {
+        String id = register(uniqueSurname()).get("id").asString();
+
+        mockMvc.perform(delete("/patients/" + id).with(as("DOCTOR"))).andExpect(status().isForbidden());
+        mockMvc.perform(delete("/patients/" + id).with(as("ADMIN"))).andExpect(status().isOk());
+
+        // The row survives; it is merely inactive.
+        assertThat(patients.findById(UUID.fromString(id))).isPresent()
+                .get().extracting(Patient::isActive).isEqualTo(false);
+        mockMvc.perform(get("/patients/" + id).with(as("DOCTOR"))).andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("archived charts are hidden from search unless explicitly requested")
+    void archivedChartsAreHiddenByDefault() throws Exception {
+        JsonNode created = register(uniqueSurname());
+        String surname = created.get("lastName").asString();
+        mockMvc.perform(delete("/patients/" + created.get("id").asString()).with(as("ADMIN")));
+
+        mockMvc.perform(get("/patients").param("q", surname).with(as("DOCTOR")))
+                .andExpect(jsonPath("$.totalElements").value(0));
+        mockMvc.perform(get("/patients").param("q", surname).param("includeInactive", "true").with(as("DOCTOR")))
+                .andExpect(jsonPath("$.totalElements").value(1));
+    }
+
+    @Test
+    @DisplayName("an unknown patient id is a 404")
+    void unknownPatientIsNotFound() throws Exception {
+        mockMvc.perform(get("/patients/" + UUID.randomUUID()).with(as("DOCTOR"))).andExpect(status().isNotFound());
+    }
+
+    @Test
+    @DisplayName("the seeded departments are listed")
+    void departmentsAreSeeded() throws Exception {
+        mockMvc.perform(get("/departments").with(as("NURSE")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", org.hamcrest.Matchers.hasSize(
+                        org.hamcrest.Matchers.greaterThanOrEqualTo(6))));
+    }
+
+    @Test
+    @DisplayName("staff are created with a department and found by search")
+    void staffCanBeCreatedAndSearched() throws Exception {
+        String employeeNo = "EMP-" + UUID.randomUUID().toString().substring(0, 8);
+        mockMvc.perform(post("/staff").with(as("ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "employeeNo", employeeNo, "fullName", "Dr Test Cardiologist",
+                                "designation", "Consultant", "departmentCode", "CARD"))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.departmentName").value("Cardiology"));
+
+        mockMvc.perform(get("/staff").param("q", "Test Cardiologist").with(as("NURSE")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].employeeNo").value(employeeNo));
+    }
+
+    @Test
+    @DisplayName("a non-admin cannot create staff")
+    void staffCreationIsAdminOnly() throws Exception {
+        mockMvc.perform(post("/staff").with(as("DOCTOR"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("employeeNo", "EMP-X",
+                                "fullName", "X", "designation", "Y"))))
+                .andExpect(status().isForbidden());
+    }
+}

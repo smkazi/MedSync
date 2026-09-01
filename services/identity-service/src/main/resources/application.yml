@@ -1,0 +1,66 @@
+spring:
+  application:
+    name: identity-service
+  datasource:
+    url: ${HMS_DB_URL:jdbc:postgresql://localhost:5432/hms}
+    username: ${HMS_DB_USER:hms}
+    password: ${HMS_DB_PASSWORD:hms}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: identity
+        jdbc:
+          time_zone: UTC
+  flyway:
+    enabled: true
+    schemas: identity
+    default-schema: identity
+    create-schemas: true
+  kafka:
+    bootstrap-servers: ${HMS_KAFKA:localhost:9092}
+    consumer:
+      auto-offset-reset: earliest
+
+server:
+  port: ${HMS_IDENTITY_PORT:8081}
+  error:
+    include-message: never
+    include-stacktrace: never
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+hms:
+  security:
+    # identity-service issues tokens rather than consuming them, so the shared
+    # resource-server chain in hms-common stays switched off here.
+    mode: issuer
+  events:
+    # kafka in deployed environments; log keeps the platform runnable with only Postgres.
+    transport: ${HMS_EVENTS_TRANSPORT:log}
+  jwt:
+    issuer: ${HMS_JWT_ISSUER:http://localhost:8081}
+    audience: ${HMS_JWT_AUDIENCE:hms}
+    access-token-ttl: PT15M
+    refresh-token-ttl: P30D
+    # Supply PEMs from a secret manager in production; otherwise a keypair is
+    # generated on first boot and stored in identity.signing_keys.
+    private-key: ${HMS_JWT_PRIVATE_KEY:}
+    public-key: ${HMS_JWT_PUBLIC_KEY:}
+  seed:
+    enabled: ${HMS_SEED_ENABLED:false}
+    password: ${HMS_SEED_PASSWORD:ChangeMe!Dev2026}
+
+logging:
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level [%X{correlationId:-}] %logger{36} - %msg%n"

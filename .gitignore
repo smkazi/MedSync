@@ -1,0 +1,38 @@
+# Java / Maven
+target/
+*.jar
+!.mvn/wrapper/maven-wrapper.jar
+.mvn/timing.properties
+
+# Local run state (scripts/local.sh)
+.run/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Trained model artifacts are rebuilt by services/ai-service/training
+services/ai-service/models/*.joblib
+
+# Env / secrets - never commit real credentials or signing keys
+.env
+.env.*
+!.env.example
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+*.log

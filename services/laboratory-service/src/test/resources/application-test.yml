@@ -1,0 +1,17 @@
+# Integration tests run against a real PostgreSQL: the schema uses jsonb for the
+# histogram curves, a sequence for accession numbers, and check constraints.
+spring:
+  datasource:
+    url: ${HMS_TEST_DB_URL:jdbc:postgresql://localhost:5432/hms_test}
+    username: ${HMS_TEST_DB_USER:hms}
+    password: ${HMS_TEST_DB_PASSWORD:hms}
+    hikari:
+      schema: laboratory
+  flyway:
+    enabled: true
+hms:
+  events:
+    transport: log
+logging:
+  level:
+    org.flywaydb: WARN

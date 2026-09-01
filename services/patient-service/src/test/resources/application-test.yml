@@ -1,0 +1,20 @@
+# Integration tests run against a real PostgreSQL: the schema relies on pg_trgm,
+# a sequence and Postgres types that an in-memory database would not reproduce.
+spring:
+  datasource:
+    url: ${HMS_TEST_DB_URL:jdbc:postgresql://localhost:5432/hms_test}
+    username: ${HMS_TEST_DB_USER:hms}
+    password: ${HMS_TEST_DB_PASSWORD:hms}
+    hikari:
+      schema: patient
+  flyway:
+    enabled: true
+hms:
+  events:
+    transport: log
+  crypto:
+    # Test-only key; production supplies HMS_PHI_KEY from a secret manager.
+    phi-key: Zm9yLXRlc3RzLW9ubHktMzItYnl0ZS1rZXktMDAwMDA=
+logging:
+  level:
+    org.flywaydb: WARN

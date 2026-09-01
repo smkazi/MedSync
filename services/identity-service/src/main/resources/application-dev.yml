@@ -1,0 +1,9 @@
+# Local development: seed users and keep events in the log so no broker is needed.
+hms:
+  seed:
+    enabled: true
+  events:
+    transport: log
+logging:
+  level:
+    com.hms: DEBUG
