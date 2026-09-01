@@ -1,0 +1,311 @@
+# Every push and pull request. Three language jobs in parallel, then the black-box suites against
+# a stack this workflow starts itself.
+#
+# What is deliberately NOT here: the slow security scans. Dependency-Check has to pull the NVD
+# feed, ZAP takes the better part of an hour on the authenticated plan, and PIT rebuilds the
+# world. Those live in security.yml on a nightly schedule, so this workflow stays fast enough
+# that people actually wait for it.
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  # A newer push supersedes an in-flight run on the same ref. Nobody needs the result for a commit
+  # that has already been replaced.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Reproducible, quiet Maven. -B is batch mode; the transfer progress lines are 90% of the log.
+  MAVEN_ARGS: "-B -ntp"
+
+jobs:
+  java:
+    name: Java (unit + integration)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      # A real PostgreSQL, not H2. The schema uses tstzrange exclusion constraints, pg_trgm,
+      # btree_gist and jsonb - an in-memory substitute would not run the migrations, let alone
+      # prove the double-booking guard works.
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: hms
+          POSTGRES_PASSWORD: hms
+          POSTGRES_DB: hms_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U hms"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: temurin
+          cache: maven
+
+      - name: Build and test
+        env:
+          HMS_TEST_DB_URL: jdbc:postgresql://localhost:5432/hms_test
+          HMS_DB_USER: hms
+          HMS_DB_PASSWORD: hms
+        run: mvn $MAVEN_ARGS verify
+
+      - name: Static analysis (SpotBugs + FindSecBugs)
+        # Separate step so a security finding is visibly a security finding in the job summary,
+        # rather than one line in the middle of a test run.
+        run: mvn $MAVEN_ARGS -Pquality verify -DskipTests
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: java-reports
+          path: |
+            **/target/surefire-reports/**
+            **/target/spotbugs*.xml
+            **/target/site/**
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Package the service jars
+        run: mvn $MAVEN_ARGS package -DskipTests
+
+      - name: Upload the jars for the end-to-end job
+        uses: actions/upload-artifact@v4
+        with:
+          name: service-jars
+          path: services/*/target/*-SNAPSHOT.jar
+          retention-days: 1
+
+  python:
+    name: Python (ai-service)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: services/ai-service
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install
+        run: uv sync --frozen
+
+      - name: Lint (ruff, security rules included)
+        run: uv run ruff check .
+
+      - name: Static security analysis (bandit)
+        run: uv run bandit -q -r app training
+
+      - name: Dependency audit
+        # Advisory rather than blocking: pip-audit's database moves under you, and a red build
+        # nobody caused teaches people to ignore red builds. security.yml gates on this nightly.
+        continue-on-error: true
+        run: uv run --with pip-audit pip-audit
+
+      - name: Tests
+        run: uv run pytest -q
+
+      - name: Train the no-show model
+        # Proves the training script still runs and the artifact it writes still loads. A model
+        # nobody can rebuild is a model nobody can change.
+        run: |
+          uv run python training/generate_noshow_data.py
+          uv run python training/train_noshow.py
+
+  web:
+    name: Web (Next.js)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: web
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Dependency audit
+        continue-on-error: true
+        run: npm audit --audit-level=high
+
+      - name: Build
+        run: npm run build
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # gitleaks needs the history to scan it. Without this it sees one commit and reports
+          # nothing, which looks identical to a clean repository.
+          fetch-depth: 0
+
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  end-to-end:
+    name: API and browser end-to-end
+    needs: [java, python, web]
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: hms
+          POSTGRES_PASSWORD: hms
+          POSTGRES_DB: hms
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U hms"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      HMS_DB_URL: jdbc:postgresql://localhost:5432/hms
+      HMS_DB_USER: hms
+      HMS_DB_PASSWORD: hms
+      # Events go to the log so no broker is needed. The Kafka path has its own coverage in the
+      # per-service integration tests via spring-kafka-test.
+      HMS_PROFILE: dev
+      # The abuse-case suites make more sign-in attempts per minute than any human, on purpose.
+      # The limiter itself is covered by EdgeFilterTest, so raising it here costs no coverage.
+      HMS_RATE_LIMIT_AUTH_RPM: "5000"
+      HMS_RATE_LIMIT_RPM: "100000"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: temurin
+          cache: maven
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Download the jars built by the Java job
+        uses: actions/download-artifact@v4
+        with:
+          name: service-jars
+          path: services
+
+      - name: Restore the jar layout
+        # download-artifact flattens nothing but does drop the target/ level differently across
+        # versions; scripts/local.sh looks for services/<name>/target/<name>-*.jar.
+        run: |
+          find services -name '*-SNAPSHOT.jar' -print
+          for jar in $(find services -name '*-SNAPSHOT.jar'); do
+            name=$(basename "$jar" | sed 's/-[0-9].*//')
+            mkdir -p "services/$name/target"
+            [ "$jar" = "services/$name/target/$(basename "$jar")" ] || mv "$jar" "services/$name/target/"
+          done
+
+      - name: Start the AI service
+        working-directory: services/ai-service
+        run: |
+          uv sync --frozen
+          uv run python training/generate_noshow_data.py
+          uv run python training/train_noshow.py
+          nohup uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 > /tmp/ai-service.log 2>&1 &
+          for _ in $(seq 1 40); do
+            curl -fsS http://127.0.0.1:8000/actuator/health >/dev/null 2>&1 && exit 0
+            sleep 2
+          done
+          echo "ai-service did not come up"; cat /tmp/ai-service.log; exit 1
+
+      - name: Start the Java services
+        run: scripts/local.sh start
+
+      - name: API automation and security abuse cases
+        run: mvn $MAVEN_ARGS -Pautomation -pl tests/api verify
+
+      - name: Build and start the web app
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+          nohup npm start > /tmp/web.log 2>&1 &
+          for _ in $(seq 1 40); do
+            curl -fsS http://127.0.0.1:3000 >/dev/null 2>&1 && exit 0
+            sleep 2
+          done
+          echo "web did not come up"; cat /tmp/web.log; exit 1
+
+      - name: Browser end-to-end (Playwright)
+        working-directory: web
+        run: |
+          npx playwright install --with-deps chromium
+          npx playwright test
+
+      - name: k6 smoke
+        # Smoke only. The load, stress and soak profiles need a machine whose performance means
+        # something, which a shared runner is not - they belong on real hardware, run deliberately.
+        run: |
+          curl -fsSL https://github.com/grafana/k6/releases/download/v0.57.0/k6-v0.57.0-linux-amd64.tar.gz \
+            | tar xz --strip-components=1 -C /usr/local/bin k6-v0.57.0-linux-amd64/k6
+          k6 run --no-usage-report tests/perf/smoke.js
+
+      - name: Collect logs and reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: end-to-end-diagnostics
+          path: |
+            .run/*.log
+            /tmp/ai-service.log
+            /tmp/web.log
+            tests/api/target/failsafe-reports/**
+            web/playwright-report/**
+            web/test-results/**
+          retention-days: 14
+          if-no-files-found: ignore

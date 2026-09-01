@@ -116,7 +116,9 @@ jobs:
     parameters:
       template: sarif-json
       reportDir: "${ZAP_REPORT_DIR}"
-      reportFile: "zap-baseline"
+      # Named so the file lands as zap-baseline.sarif.json - GitHub's SARIF upload only
+      # recognises .sarif and .sarif.json, and the sarif-json template appends .json.
+      reportFile: "zap-baseline.sarif"
     risks: [high, medium]
 
   - type: report

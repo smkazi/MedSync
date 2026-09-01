@@ -1,0 +1,295 @@
+#
+# The slow security work, on a nightly schedule.
+#
+# Split out from ci.yml on purpose. Dependency-Check pulls the NVD feed, the authenticated ZAP plan
+# takes most of an hour, and PIT rebuilds and re-runs the world. Putting any of that on every push
+# would make people stop waiting for CI, and a pipeline nobody waits for is a pipeline nobody reads.
+#
+# Findings go to the code-scanning tab as SARIF where the tool can produce it, so a new
+# vulnerability shows up as an alert on the repository rather than a line in a log nobody opens.
+#
+name: Nightly security
+
+on:
+  schedule:
+    # 02:30 UTC. Late enough that the day's merges are in, early enough that someone reads it.
+    - cron: "30 2 * * *"
+  workflow_dispatch:
+    inputs:
+      run_dast:
+        description: "Also run the ZAP scans (slow)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  # Required to upload SARIF to the code-scanning tab.
+  security-events: write
+
+env:
+  MAVEN_ARGS: "-B -ntp"
+
+jobs:
+  dependencies:
+    name: Dependency vulnerabilities
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: temurin
+          cache: maven
+
+      - name: Cache the NVD database
+        # Without this, every run re-downloads the full feed: slow, and rate-limited hard enough
+        # that consecutive runs start failing for reasons unrelated to any dependency.
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository/org/owasp/dependency-check-data
+          key: nvd-${{ github.run_id }}
+          restore-keys: nvd-
+
+      - name: OWASP Dependency-Check (fails on CVSS 7.0+)
+        env:
+          # Optional but strongly advised - free from nvd.nist.gov. Without it the feed download is
+          # throttled to the point of timing out.
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        run: mvn $MAVEN_ARGS -Psecurity verify -DskipTests
+
+      - name: Upload Dependency-Check SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: target/dependency-check-report.sarif
+          category: dependency-check
+        continue-on-error: true
+
+      - name: Upload the full reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-check
+          path: "**/target/dependency-check-report.*"
+          retention-days: 30
+          if-no-files-found: ignore
+
+  python-audit:
+    name: Python dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: services/ai-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - name: pip-audit (blocking here, advisory in CI)
+        run: uv run --with pip-audit pip-audit
+
+  semgrep:
+    name: Semgrep (OWASP Top Ten, JWT, secrets)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: semgrep/semgrep
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan
+        run: |
+          semgrep scan \
+            --config p/owasp-top-ten \
+            --config p/jwt \
+            --config p/secrets \
+            --config p/dockerfile \
+            --sarif --output semgrep.sarif \
+            --metrics off
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+        continue-on-error: true
+
+  containers:
+    name: Container and IaC scan (Trivy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the service image
+        # One image is enough to prove the shared Dockerfile's base layer and packaging are clean;
+        # the five services differ only in which jar they copy.
+        run: docker build -f Dockerfile.java --build-arg SERVICE=identity-service -t medsync/java:ci .
+
+      - name: Scan the image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: medsync/java:ci
+          format: sarif
+          output: trivy-image.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+
+      - name: Scan the compose file and Dockerfiles
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: config
+          scan-ref: .
+          format: sarif
+          output: trivy-config.sarif
+          severity: HIGH,CRITICAL
+
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-image.sarif
+          category: trivy-image
+        continue-on-error: true
+
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-config.sarif
+          category: trivy-config
+        continue-on-error: true
+
+  mutation:
+    name: Mutation testing (PIT)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: hms
+          POSTGRES_PASSWORD: hms
+          POSTGRES_DB: hms_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U hms"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: temurin
+          cache: maven
+
+      - name: PIT
+        # Line coverage says a line ran. This says a test would have noticed if the line were
+        # wrong, which is the only claim worth making about a clinical system's test suite.
+        env:
+          HMS_TEST_DB_URL: jdbc:postgresql://localhost:5432/hms_test
+          HMS_DB_USER: hms
+          HMS_DB_PASSWORD: hms
+        run: mvn $MAVEN_ARGS -Pmutation test
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pit-reports
+          path: "**/target/pit-reports/**"
+          retention-days: 30
+          if-no-files-found: ignore
+
+  dast:
+    name: OWASP ZAP (baseline and authenticated)
+    if: github.event_name == 'schedule' || inputs.run_dast
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: hms
+          POSTGRES_PASSWORD: hms
+          POSTGRES_DB: hms
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U hms"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      HMS_DB_URL: jdbc:postgresql://localhost:5432/hms
+      HMS_DB_USER: hms
+      HMS_DB_PASSWORD: hms
+      HMS_PROFILE: dev
+      # ZAP's active scan sends far more requests per minute than any client. Raised so the scan
+      # measures the application rather than the limiter, which EdgeFilterTest already covers.
+      HMS_RATE_LIMIT_ENABLED: "false"
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: temurin
+          cache: maven
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Build
+        run: mvn $MAVEN_ARGS package -DskipTests
+
+      - name: Start the AI service
+        working-directory: services/ai-service
+        run: |
+          uv sync --frozen
+          uv run python training/generate_noshow_data.py
+          uv run python training/train_noshow.py
+          nohup uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 > /tmp/ai-service.log 2>&1 &
+          for _ in $(seq 1 40); do
+            curl -fsS http://127.0.0.1:8000/actuator/health >/dev/null 2>&1 && exit 0
+            sleep 2
+          done
+          echo "ai-service did not come up"; cat /tmp/ai-service.log; exit 1
+
+      - name: Start the Java services
+        run: scripts/local.sh start
+
+      - name: ZAP scans
+        env:
+          ZAP_TARGET: http://localhost:8080
+          ZAP_USERNAME: dr.rao
+          ZAP_PASSWORD: ChangeMe!Dev2026
+          ZAP_FAIL_ON: high
+        # ZAP_FAIL_ON=high, not medium: a nightly scan reports its Mediums as artifacts for a human
+        # to triage, and blocks only on something that needs waking someone up. The gate is
+        # meaningful precisely because it does not fire on every missing-header advisory.
+        run: security/zap/run.sh
+
+      - name: Upload ZAP SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: build/zap
+          category: zap
+        continue-on-error: true
+
+      - name: Upload the ZAP reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-reports
+          path: |
+            build/zap/**
+            .run/*.log
+          retention-days: 30
+          if-no-files-found: ignore
