@@ -87,6 +87,7 @@ public class LabOrderService {
         if (request.department() != null && !request.department().isBlank()) {
             order.setDepartment(request.department().trim());
         }
+        order.setEncounterId(request.encounterId());
         order.setClinicalNotes(request.clinicalNotes());
 
         for (String code : codes) {
@@ -209,6 +210,17 @@ public class LabOrderService {
                 });
     }
 
+    /** What this encounter ordered — the chart's own list, not the patient's whole history. */
+    @Transactional(readOnly = true)
+    public List<LabDtos.OrderSummary> forEncounter(UUID encounterId) {
+        return orders.findByEncounterIdOrderByOrderedAtDesc(encounterId).stream()
+                .map(order -> {
+                    List<LabResult> found = results.findByOrderIdOrderByParameter(order.getId());
+                    return mapper.toSummary(order, found.size(), found.stream().anyMatch(LabResult::isAbnormal));
+                })
+                .toList();
+    }
+
     @Transactional(readOnly = true)
     public List<LabDtos.OrderSummary> forPatient(UUID patientId) {
         return orders.findByPatientIdOrderByOrderedAtDesc(patientId).stream()
@@ -231,7 +243,8 @@ public class LabOrderService {
                 .toList();
 
         return new LabDtos.OrderResponse(order.getId(), order.getPatientId(), order.getPatientMrn(),
-                order.getPatientSex(), order.getOrderedBy(), order.getDepartment(), order.getPriority(),
+                order.getPatientSex(), order.getOrderedBy(), order.getDepartment(),
+                order.getEncounterId(), order.getPriority(),
                 order.getStatus(), order.getClinicalNotes(), order.getOrderedAt(),
                 order.getItems().stream().map(mapper::toResponse).toList(),
                 order.getSpecimens().stream().map(mapper::toResponse).toList(),

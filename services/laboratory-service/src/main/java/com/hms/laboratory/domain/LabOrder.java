@@ -31,14 +31,31 @@ public class LabOrder extends BaseEntity {
     @Column(name = "patient_mrn", nullable = false, length = 24)
     private String patientMrn;
 
-    @Column(name = "patient_sex", nullable = false, length = 1)
-    private String patientSex = "M";
+    /**
+     * {@code M}, {@code F}, or null when it was never recorded.
+     *
+     * <p>Nullable, and that is the point. It defaulted to {@code "M"}, so an order that omitted the
+     * sex was silently interpreted against male reference intervals — and a haemoglobin of 12.5
+     * g/dL is normal for a woman and low for a man. Absent now means absent, and no interval is
+     * applied rather than the wrong one.
+     */
+    @Column(name = "patient_sex", length = 1)
+    private String patientSex;
 
     @Column(name = "ordered_by", nullable = false, length = 64)
     private String orderedBy;
 
     @Column(name = "department", nullable = false, length = 32)
     private String department = "PATH";
+
+    /**
+     * The encounter this was ordered from, when it was ordered from one.
+     *
+     * <p>Null for a walk-in and for every order raised before the chart could raise one. No foreign
+     * key: it is scheduling-service's id, like {@code clinician_id} on an appointment.
+     */
+    @Column(name = "encounter_id")
+    private UUID encounterId;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "priority", nullable = false, length = 16)
@@ -81,6 +98,14 @@ public class LabOrder extends BaseEntity {
 
     public String getPatientMrn() {
         return patientMrn;
+    }
+
+    public UUID getEncounterId() {
+        return encounterId;
+    }
+
+    public void setEncounterId(UUID encounterId) {
+        this.encounterId = encounterId;
     }
 
     public String getPatientSex() {

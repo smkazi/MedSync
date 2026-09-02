@@ -1,10 +1,15 @@
 package com.hms.laboratory.service;
 
+import com.hms.common.audit.AuditService;
+import com.hms.common.error.BadRequestException;
+import com.hms.common.error.NotFoundException;
 import com.hms.laboratory.domain.ReferenceRange;
+import com.hms.laboratory.web.dto.LabDtos;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import com.hms.laboratory.repo.ReferenceRangeRepository;
@@ -25,9 +30,11 @@ public class ReferenceRangeService {
     public static final String NO_FLAG = "";
 
     private final ReferenceRangeRepository ranges;
+    private final AuditService audit;
 
-    public ReferenceRangeService(ReferenceRangeRepository ranges) {
+    public ReferenceRangeService(ReferenceRangeRepository ranges, AuditService audit) {
         this.ranges = ranges;
+        this.audit = audit;
     }
 
     /** The configured range for a parameter and sex, if the lab defines one. */
@@ -36,7 +43,13 @@ public class ReferenceRangeService {
         if (parameter == null || parameter.isBlank()) {
             return Optional.empty();
         }
-        return ranges.findByParameterIgnoreCaseAndSex(parameter.trim(), normaliseSex(sex));
+        String resolved = normaliseSex(sex);
+        if (resolved == null) {
+            // No sex on the order, so no sex-specific interval applies. `interpret` then falls
+            // back to the instrument's own range, which is honest; guessing here is not.
+            return Optional.empty();
+        }
+        return ranges.findByParameterIgnoreCaseAndSex(parameter.trim(), resolved);
     }
 
     @Transactional(readOnly = true)
@@ -117,12 +130,65 @@ public class ReferenceRangeService {
         }
     }
 
+    /**
+     * The reference-interval scale to look up, or {@code null} when there is none to look up.
+     *
+     * <p>This used to answer {@code "M"} for absent, blank and unrecognised alike, so an order
+     * carrying no sex — or, before the request pattern was tightened, a sex of {@code "X"} — was
+     * flagged against male intervals with nothing on the report saying so. A haemoglobin of 12.5
+     * g/dL is normal for a woman and low for a man; picking a side by default is picking wrong half
+     * the time, silently, on the number a clinician treats from.
+     *
+     * <p>So the unknown answers {@code null} and the caller declines to apply a range. Returning
+     * {@code "M"} was never a clinical judgement, only a lookup that could not fail.
+     */
     static String normaliseSex(String sex) {
         if (sex == null || sex.isBlank()) {
-            return "M";
+            return null;
         }
         String first = sex.trim().substring(0, 1).toUpperCase(Locale.ROOT);
-        return "F".equals(first) ? "F" : "M";
+        if ("F".equals(first)) {
+            return "F";
+        }
+        return "M".equals(first) ? "M" : null;
+    }
+
+    /**
+     * Retunes one interval.
+     *
+     * <p>Sparse, and the comparison is why this cannot live in the request record: patching only
+     * the low bound has to be checked against the high bound already stored, or an inverted pair
+     * is reachable in two requests that each look fine on their own. An inverted interval is not a
+     * cosmetic error — {@code deriveFlag} then marks every subsequent value for that parameter as
+     * high, on every report, until somebody notices.
+     *
+     * <p>Equal bounds are allowed: an interval of exactly one value is unusual but legitimate, and
+     * refusing it would be inventing a rule the laboratory did not ask for.
+     */
+    @Transactional
+    public ReferenceRange update(UUID id, LabDtos.UpdateReferenceRangeRequest request) {
+        ReferenceRange range = ranges.findById(id)
+                .orElseThrow(() -> NotFoundException.of("ReferenceRange", id));
+
+        BigDecimal low = request.normalLow() == null ? range.getNormalLow() : request.normalLow();
+        BigDecimal high = request.normalHigh() == null ? range.getNormalHigh() : request.normalHigh();
+        if (low != null && high != null && low.compareTo(high) > 0) {
+            throw new BadRequestException(("A reference interval cannot start above where it ends: "
+                    + "low %s is greater than high %s for %s (%s). Every value would read as high.")
+                    .formatted(low.stripTrailingZeros().toPlainString(),
+                            high.stripTrailingZeros().toPlainString(),
+                            range.getParameter(), range.getSex()));
+        }
+
+        range.setNormalLow(low);
+        range.setNormalHigh(high);
+        ReferenceRange saved = ranges.save(range);
+        // Audited like every other configuration write. This one was the exception: it mutated the
+        // repository from inside the controller and left no trace of who moved a reporting
+        // threshold.
+        audit.record("REFERENCE_RANGE_UPDATED", "ReferenceRange", saved.getId(),
+                "%s (%s) now %s".formatted(saved.getParameter(), saved.getSex(), saved.asText()));
+        return saved;
     }
 
     /** How a value was interpreted: the range applied, the unit, and the resulting flag. */

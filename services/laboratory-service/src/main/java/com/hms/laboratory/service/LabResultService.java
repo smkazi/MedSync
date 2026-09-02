@@ -1,6 +1,7 @@
 package com.hms.laboratory.service;
 
 import com.hms.common.audit.AuditService;
+import com.hms.common.error.BadRequestException;
 import com.hms.common.error.ConflictException;
 import com.hms.common.error.NotFoundException;
 import com.hms.common.events.DomainEvent;
@@ -94,9 +95,20 @@ public class LabResultService {
         Specimen specimen = order.getSpecimens().isEmpty() ? null
                 : order.getSpecimens().get(order.getSpecimens().size() - 1);
 
+        // Checked here as well as by @Valid on the request, because this is not the only road in:
+        // device ingest reaches `record` directly, and a service that trusts its annotations
+        // to have run is a service that NPEs on `.trim()` and answers 500 where 400 belonged.
+        // That is exactly what happened while the request's element constraints were uncascaded.
         List<LabResult> recorded = request.results().stream()
-                .map(entry -> record(order, entry.parameter().trim().toUpperCase(Locale.ROOT), entry.value(), entry.unit(),
-                        LabEnums.ResultSource.MANUAL, null, null, null, specimen, null))
+                .map(entry -> {
+                    if (entry == null || entry.parameter() == null || entry.parameter().isBlank()) {
+                        throw new BadRequestException(
+                                "Every result needs a parameter; one in this batch has none");
+                    }
+                    return record(order, entry.parameter().trim().toUpperCase(Locale.ROOT),
+                            entry.value(), entry.unit(),
+                            LabEnums.ResultSource.MANUAL, null, null, null, specimen, null);
+                })
                 .toList();
 
         order.advanceTo(LabEnums.OrderStatus.RESULTED);

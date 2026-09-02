@@ -875,11 +875,244 @@ class LabApiIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON).content("{\"normalHigh\": 99}"))
                 .andExpect(status().isForbidden());
 
-        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+        // Restored afterwards, because the range set is shared state the next test reads and this
+        // left one interval permanently at 99 - the same order-dependence `aRuleIsConfiguration`
+        // takes care to avoid a few tests above.
+        String originalHigh = first.get("normalHigh").isNull() ? null : first.get("normalHigh").asString();
+        try {
+            mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                            .patch("/lab/reference-ranges/" + first.get("id").asString()).with(as("PATHOLOGIST"))
+                            .contentType(MediaType.APPLICATION_JSON).content("{\"normalHigh\": 99}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.normalHigh").value(99));
+        } finally {
+            if (originalHigh != null) {
+                mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
                         .patch("/lab/reference-ranges/" + first.get("id").asString()).with(as("PATHOLOGIST"))
-                        .contentType(MediaType.APPLICATION_JSON).content("{\"normalHigh\": 99}"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"normalHigh\": " + originalHigh + "}"));
+            }
+        }
+    }
+
+    // ---- what the write layer is built on: the refusals -------------------------
+
+    /** The id of a reference range, for the tests that retune one. */
+    private String firstRangeId() throws Exception {
+        String ranges = mockMvc.perform(get("/lab/reference-ranges").with(as("PATHOLOGIST")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.normalHigh").value(99));
+                .andReturn().getResponse().getContentAsString();
+        return objectMapper.readTree(ranges).get(0).get("id").asString();
+    }
+
+    @Test
+    @DisplayName("an inverted reference interval is refused, and the refusal names both numbers")
+    void invertedRangeIsRefused() throws Exception {
+        // Nothing checked this at any layer, and an inverted interval is not a cosmetic error:
+        // deriveFlag then marks every subsequent value for that parameter as high, on every
+        // report, until somebody notices.
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .patch("/lab/reference-ranges/" + firstRangeId()).with(as("PATHOLOGIST"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"normalLow\": 100, \"normalHigh\": 1}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value(
+                        org.hamcrest.Matchers.allOf(
+                                org.hamcrest.Matchers.containsString("100"),
+                                org.hamcrest.Matchers.containsString("1"),
+                                org.hamcrest.Matchers.containsString("read as high"))));
+    }
+
+    @Test
+    @DisplayName("patching one bound is still checked against the bound already stored")
+    void aSparsePatchCannotInvertTheInterval() throws Exception {
+        // The comparison cannot be an annotation on the request: two requests that each look fine
+        // on their own reach an inverted pair, so the check needs the stored value of whichever
+        // bound the caller left out.
+        String id = firstRangeId();
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .patch("/lab/reference-ranges/" + id).with(as("PATHOLOGIST"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"normalLow\": 5000}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("an interval of exactly one value is allowed")
+    void equalBoundsAreAllowed() throws Exception {
+        // Unusual, and legitimate. Refusing it would be inventing a rule the laboratory did not
+        // ask for, which is a different failure from the one being fixed.
+        String id = firstRangeId();
+        String body = mockMvc.perform(get("/lab/reference-ranges").with(as("PATHOLOGIST")))
+                .andReturn().getResponse().getContentAsString();
+        JsonNode original = objectMapper.readTree(body).get(0);
+        try {
+            mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                            .patch("/lab/reference-ranges/" + id).with(as("PATHOLOGIST"))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"normalLow\": 7, \"normalHigh\": 7}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.normalLow").value(7));
+        } finally {
+            mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                    .patch("/lab/reference-ranges/" + id).with(as("PATHOLOGIST"))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"normalLow\": %s, \"normalHigh\": %s}"
+                            .formatted(original.get("normalLow").asString(),
+                                    original.get("normalHigh").asString())));
+        }
+    }
+
+    @Test
+    @DisplayName("a negative reference bound is refused")
+    void negativeBoundIsRefused() throws Exception {
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .patch("/lab/reference-ranges/" + firstRangeId()).with(as("PATHOLOGIST"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"normalLow\": -3}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("a result with no parameter is answered 400, not 500")
+    void aBlankResultParameterIsRefused() throws Exception {
+        // The request's element constraints were not cascaded, so @NotBlank on the parameter never
+        // fired and a null one reached LabResultService and threw on .trim(). A 500 tells a
+        // technician nothing about what they typed.
+        String orderId = createOrder("F", "CBC").get("id").asString();
+        mockMvc.perform(post("/lab/orders/" + orderId + "/results").with(as("LAB_TECH"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"results\": [{\"parameter\": \"  \", \"value\": \"9.8\"}]}"))
+                .andExpect(status().isBadRequest());
+
+        mockMvc.perform(post("/lab/orders/" + orderId + "/results").with(as("LAB_TECH"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"results\": [{\"value\": \"9.8\"}]}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("an oversized specimen type is answered 400 rather than a database error")
+    void anOversizedSpecimenTypeIsRefused() throws Exception {
+        mockMvc.perform(post("/lab/orders/" + createOrder("F", "CBC").get("id").asString() + "/specimens").with(as("LAB_TECH"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"specimenType\": \"" + "W".repeat(64) + "\"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("an order for a sex that is neither M nor F is refused")
+    void anUnknownSexIsRefused() throws Exception {
+        // It was @Size(max = 1), so any single character passed and normaliseSex coerced the
+        // unknown to male. An order for "X" was flagged against male intervals with no warning
+        // anywhere, which is a wrong clinical answer arrived at quietly.
+        mockMvc.perform(post("/lab/orders").with(as("DOCTOR"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(java.util.Map.of(
+                                "patientId", UUID.randomUUID(), "patientMrn", "MRN-SEX-1",
+                                "patientSex", "X", "testCodes", java.util.List.of("CBC")))))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("an order with no sex recorded applies no reference interval rather than a male one")
+    void anAbsentSexAppliesNoInterval() throws Exception {
+        String orderId = mockMvc.perform(post("/lab/orders").with(as("DOCTOR"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(java.util.Map.of(
+                                "patientId", UUID.randomUUID(), "patientMrn", "MRN-SEX-2",
+                                "testCodes", java.util.List.of("CBC")))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.patientSex").value(org.hamcrest.Matchers.nullValue()))
+                .andReturn().getResponse().getContentAsString();
+        String id = objectMapper.readTree(orderId).get("id").asString();
+
+        mockMvc.perform(post("/lab/orders/" + id + "/results").with(as("LAB_TECH"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"results\": [{\"parameter\": \"HGB\", \"value\": \"12.5\"}]}"))
+                .andExpect(status().isOk())
+                // 12.5 g/dL is inside the female interval and below the male one. With no sex
+                // recorded neither applies, so it carries no flag - rather than an L the report
+                // could not justify.
+                .andExpect(jsonPath("$[0].flag").value(""))
+                .andExpect(jsonPath("$[0].referenceRange").value(""));
+    }
+
+    @Test
+    @DisplayName("a morphology cut-off can be retuned by a pathologist and by nobody else")
+    void aMorphologyCutOffIsConfiguration() throws Exception {
+        // The third threshold tier, and the last to become writable: UpdateThresholdRequest sat in
+        // the DTO file referenced by nothing, the entity had no setter, and extensibility.md listed
+        // a GET in this row's "Extended by" column because there was nothing else to put there.
+        String thresholds = mockMvc.perform(get("/lab/morphology-thresholds").with(as("DOCTOR")))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        JsonNode target = objectMapper.readTree(thresholds).get(0);
+        String code = target.get("code").asString();
+        String original = target.get("threshold").asString();
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .patch("/lab/morphology-thresholds/" + code).with(as("LAB_TECH"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"threshold\": 71}"))
+                .andExpect(status().isForbidden());
+
+        try {
+            mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                            .patch("/lab/morphology-thresholds/" + code).with(as("PATHOLOGIST"))
+                            .contentType(MediaType.APPLICATION_JSON).content("{\"threshold\": 71}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.threshold").value(71))
+                    // The note is what the cells get called on a signed report, and is not
+                    // rewritable here: retuning a number and rewording a report are different acts.
+                    .andExpect(jsonPath("$.note").value(target.get("note").asString()));
+        } finally {
+            mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                    .patch("/lab/morphology-thresholds/" + code).with(as("PATHOLOGIST"))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"threshold\": " + original + "}"));
+        }
+    }
+
+    @Test
+    @DisplayName("a threshold with no value, and an unknown cut-off, are both refused")
+    void aMorphologyCutOffIsValidated() throws Exception {
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .patch("/lab/morphology-thresholds/MCV_MICROCYTIC").with(as("PATHOLOGIST"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isBadRequest());
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .patch("/lab/morphology-thresholds/NO_SUCH_CUTOFF").with(as("PATHOLOGIST"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"threshold\": 5}"))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    @DisplayName("an order raised from an encounter is listed against that encounter and no other")
+    void ordersAreTraceableToTheirEncounter() throws Exception {
+        UUID encounter = UUID.randomUUID();
+        UUID other = UUID.randomUUID();
+        String created = mockMvc.perform(post("/lab/orders").with(as("DOCTOR"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(java.util.Map.of(
+                                "patientId", UUID.randomUUID(), "patientMrn", "MRN-ENC-1",
+                                "patientSex", "F", "encounterId", encounter,
+                                "testCodes", java.util.List.of("CBC")))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.encounterId").value(encounter.toString()))
+                .andReturn().getResponse().getContentAsString();
+        String orderId = objectMapper.readTree(created).get("id").asString();
+
+        mockMvc.perform(get("/lab/encounters/" + encounter + "/orders").with(as("DOCTOR")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].id").value(orderId));
+
+        mockMvc.perform(get("/lab/encounters/" + other + "/orders").with(as("DOCTOR")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
+
+        // Chart content, so the front desk does not get it - unlike the patient-scoped list.
+        mockMvc.perform(get("/lab/encounters/" + encounter + "/orders").with(as("RECEPTIONIST")))
+                .andExpect(status().isForbidden());
     }
 
     @Test

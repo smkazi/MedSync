@@ -111,6 +111,24 @@ jobs:
         method: PATCH
         data: '{"active":false}'
         responseCode: 403
+      # Laboratory configuration: the three tiers of threshold that decide what a signed report
+      # says. Readable by a clinician, retunable only by a pathologist or an administrator, so a
+      # 200 on any of these as a DOCTOR is a finding. The morphology cut-off is the newest of the
+      # three and the reason these rows exist: it had no write endpoint at all until now.
+      - url: "${ZAP_TARGET}/lab/morphology-thresholds"
+        method: GET
+      - url: "${ZAP_TARGET}/lab/morphology-thresholds/MCV_MICROCYTIC"
+        method: PATCH
+        data: '{"threshold":1}'
+        responseCode: 403
+      - url: "${ZAP_TARGET}/lab/reference-ranges/00000000-0000-0000-0000-000000000000"
+        method: PATCH
+        data: '{"normalLow":0,"normalHigh":1}'
+        responseCode: 403
+      - url: "${ZAP_TARGET}/lab/interpretive-rules/ANISOCYTOSIS"
+        method: PATCH
+        data: '{"active":false}'
+        responseCode: 403
 
   - type: spider
     parameters:

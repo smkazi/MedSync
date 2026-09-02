@@ -14,7 +14,9 @@ import org.junit.jupiter.api.Test;
  */
 class ReferenceRangeFlaggingTest {
 
-    private final ReferenceRangeService service = new ReferenceRangeService(null);
+    // Both collaborators are null: every test here exercises pure comparison logic, and a test
+    // that needed a repository or an audit sink would be testing something else.
+    private final ReferenceRangeService service = new ReferenceRangeService(null, null);
 
     private static BigDecimal decimal(String value) {
         return new BigDecimal(value);
@@ -82,13 +84,24 @@ class ReferenceRangeFlaggingTest {
     }
 
     @Test
-    @DisplayName("sex normalises to the two scales the ranges are defined against")
+    @DisplayName("sex normalises to a scale, or to none at all")
     void sexNormalisation() {
         assertThat(ReferenceRangeService.normaliseSex("FEMALE")).isEqualTo("F");
         assertThat(ReferenceRangeService.normaliseSex("f")).isEqualTo("F");
         assertThat(ReferenceRangeService.normaliseSex("MALE")).isEqualTo("M");
-        assertThat(ReferenceRangeService.normaliseSex("OTHER")).isEqualTo("M");
-        assertThat(ReferenceRangeService.normaliseSex(null)).isEqualTo("M");
-        assertThat(ReferenceRangeService.normaliseSex("")).isEqualTo("M");
+    }
+
+    @Test
+    @DisplayName("an unknown or absent sex picks no scale rather than defaulting to male")
+    void unknownSexPicksNoScale() {
+        // These three asserted "M" until now, which is the behaviour rather than the intent:
+        // returning a scale that could not fail was convenient for the lookup and wrong for the
+        // patient. Reference intervals are sex-specific, so a haemoglobin of 12.5 g/dL reads
+        // normal for a woman and low for a man - and nothing on the report said which had been
+        // assumed. Null means "apply no interval", and `interpret` falls back to the instrument's
+        // own range, which is at least honest about whose range it is.
+        assertThat(ReferenceRangeService.normaliseSex("OTHER")).isNull();
+        assertThat(ReferenceRangeService.normaliseSex(null)).isNull();
+        assertThat(ReferenceRangeService.normaliseSex("")).isNull();
     }
 }

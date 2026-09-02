@@ -79,8 +79,13 @@ class ClinicalJourneyIT extends RequiresRunningStack {
         // The score is allowed to be absent - the circuit breaker returns null rather than
         // failing the booking when the AI service is down, and that is a designed outcome, not a
         // defect. What must hold is that when a score IS returned it is a sane one.
-        Double score = booked.getDouble("noShowRisk.score");
-        if (score != null) {
+        // Read through get() rather than getDouble(): the typed accessor unboxes, so it throws a
+        // NullPointerException on the very absence this block exists to tolerate. That is exactly
+        // what happened the first time the suite ran with the AI service down - a designed
+        // outcome reported as a test error.
+        Number scored = booked.get("noShowRisk.score");
+        if (scored != null) {
+            double score = scored.doubleValue();
             assertThat(score).isBetween(0.0d, 1.0d);
             assertThat(booked.getString("noShowRisk.band")).isIn("LOW", "MEDIUM", "HIGH");
         }

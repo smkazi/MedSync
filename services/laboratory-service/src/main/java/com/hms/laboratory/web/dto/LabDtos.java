@@ -1,9 +1,13 @@
 package com.hms.laboratory.web.dto;
 
 import com.hms.laboratory.domain.LabEnums;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -19,10 +23,21 @@ public final class LabDtos {
     public record CreateOrderRequest(
             @NotNull UUID patientId,
             @NotBlank @Size(max = 24) String patientMrn,
-            @Size(max = 1) String patientSex,
+            /**
+             * {@code M}, {@code F}, or absent. Constrained rather than merely sized: it was
+             * {@code @Size(max = 1)}, so any single character passed, and
+             * {@code ReferenceRangeService.normaliseSex} then coerced the unknown to {@code "M"}.
+             * An order for {@code "X"} was flagged against male reference intervals with no
+             * warning anywhere - a wrong clinical answer arrived at quietly. Blank stays legal: an
+             * order with no sex recorded is a real state, one with the wrong sex applied is not.
+             */
+            @Pattern(regexp = "^[MFmf]?$",
+                    message = "must be M or F, or left blank") String patientSex,
             @NotEmpty List<@NotBlank String> testCodes,
             LabEnums.Priority priority,
             @Size(max = 32) String department,
+            /** The encounter this was raised from, when a clinician raised it from a chart. */
+            UUID encounterId,
             @Size(max = 1000) String clinicalNotes) {
 
         public LabEnums.Priority priorityOrDefault() {
@@ -38,7 +53,16 @@ public final class LabDtos {
                                       @Size(max = 24) String unit) {
     }
 
-    public record ManualResultsRequest(@NotEmpty List<ManualResultRequest> results) {
+    /**
+     * A batch of hand-entered results.
+     *
+     * <p>{@code @Valid} on the element type, and it is load-bearing. Without it the list is not
+     * cascaded, so every constraint on {@link ManualResultRequest} - the {@code @NotBlank} on the
+     * parameter, the sizes on value and unit - was dead code: a blank or 10 KB parameter passed
+     * validation and a null one reached {@code LabResultService.recordManual} and threw on
+     * {@code .trim()}, which is a 500 where a 400 belonged.
+     */
+    public record ManualResultsRequest(@NotEmpty List<@Valid ManualResultRequest> results) {
     }
 
     /** Raw analyzer transmission. Text for ASTM, base64 for the binary K-DPS protocol. */
@@ -73,7 +97,8 @@ public final class LabDtos {
     }
 
     public record OrderResponse(UUID id, UUID patientId, String patientMrn, String patientSex, String orderedBy,
-                                String department, LabEnums.Priority priority, LabEnums.OrderStatus status,
+                                String department, UUID encounterId,
+                                LabEnums.Priority priority, LabEnums.OrderStatus status,
                                 String clinicalNotes, Instant orderedAt, List<OrderItemResponse> items,
                                 List<SpecimenResponse> specimens, List<ResultResponse> results,
                                 List<HistogramResponse> histograms, boolean hasAbnormalResults,
@@ -94,7 +119,21 @@ public final class LabDtos {
                                          String referenceRange) {
     }
 
-    public record UpdateReferenceRangeRequest(BigDecimal normalLow, BigDecimal normalHigh) {
+    /**
+     * Retunes a reference interval. Sparse: a null bound is left as it is.
+     *
+     * <p>This record carried no constraints at all and its controller omitted {@code @Valid}, so
+     * a negative bound, a fifteen-digit bound or an inverted pair were all accepted - and an
+     * inverted pair silently flags every subsequent result for that parameter as high. The bounds
+     * are the numbers a report's {@code L} and {@code H} flags are derived from, so they are worth
+     * the annotations. The low-versus-high comparison cannot live here: it needs the stored value
+     * of whichever bound the caller left out, so it is in {@code ReferenceRangeService.update}.
+     */
+    public record UpdateReferenceRangeRequest(
+            @DecimalMin(value = "0", message = "cannot be negative")
+            @Digits(integer = 8, fraction = 4) BigDecimal normalLow,
+            @DecimalMin(value = "0", message = "cannot be negative")
+            @Digits(integer = 8, fraction = 4) BigDecimal normalHigh) {
     }
 
     public record AnalyzerResponse(UUID id, String name, String model, LabEnums.Protocol protocol,

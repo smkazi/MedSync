@@ -36,7 +36,7 @@ services and a room code is cached on appointments, and none of them would learn
 | **Interpretive rules** and their ANDed conditions | `laboratory.interpretive_rules`, `.interpretive_rule_conditions` | `PATCH /lab/interpretive-rules/{code}` |
 | Histogram flag explanations | `laboratory.histogram_flag_notes` | migration or admin |
 | Parameter unit scales | `laboratory.parameter_scales` | migration or admin |
-| Morphology cut-offs | `laboratory.morphology_thresholds` | `GET /lab/morphology-thresholds` |
+| Morphology cut-offs | `laboratory.morphology_thresholds` | `PATCH /lab/morphology-thresholds/{code}` (the number, not the note) |
 | Analyzers | `laboratory.analyzers` | migration or admin |
 | Clinician schedules and blackouts | `scheduling.clinician_schedules`, `.schedule_blackouts` | `POST /schedules` |
 | ICD-10 subset | `services/ai-service/data/icd10_subset.json` | replace the file |
@@ -56,6 +56,13 @@ A report that printed a paragraph for every out-of-range number is a report nobo
 middle tier is deliberately wider than the first. And a red cell is called microcytic below MCV 76
 while the microcytosis *comment* fires below 70 and the reference interval starts at 80 — three
 numbers, three purposes.
+
+All three tiers are now retunable at runtime, each by its own endpoint, and each write is audited.
+The morphology tier was the last to become writable: two of three being editable and the third
+migration-only meant the number deciding whether a blood film reads "microcytic" was changeable by
+nobody. What stays read-only there is the **note** — the words the cells get called — because it
+appears verbatim on a signed report, and retuning a number is a different act from rewording what a
+pathologist has already put their name to.
 
 `LabApiIntegrationTest.twoTiersAreDistinct` pins the first two apart: a haemoglobin of 10.8 g/dL
 must flag `L` and must **not** produce a narrative.

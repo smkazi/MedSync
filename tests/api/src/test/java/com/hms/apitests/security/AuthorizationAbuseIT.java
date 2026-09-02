@@ -70,9 +70,21 @@ class AuthorizationAbuseIT extends RequiresRunningStack {
             "dr.rao,        PATCH,  /lab/reference-ranges/00000000-0000-0000-0000-000000000000",
             "lab.tech,      PATCH,  /lab/reference-ranges/00000000-0000-0000-0000-000000000000",
             "nurse.iqbal,   PATCH,  /lab/reference-ranges/00000000-0000-0000-0000-000000000000",
+            // The other two threshold tiers, same reasoning: an interpretive rule decides what a
+            // signed report says out loud, and a morphology cut-off decides what the cells get
+            // called on it. Neither is clinician- or technician-editable.
+            "dr.rao,        PATCH,  /lab/interpretive-rules/ANISOCYTOSIS",
+            "lab.tech,      PATCH,  /lab/interpretive-rules/ANISOCYTOSIS",
+            "dr.rao,        PATCH,  /lab/morphology-thresholds/MCV_MICROCYTIC",
+            "lab.tech,      PATCH,  /lab/morphology-thresholds/MCV_MICROCYTIC",
+            "nurse.iqbal,   PATCH,  /lab/morphology-thresholds/MCV_MICROCYTIC",
             // The front desk books and checks in; it does not write clinical content.
             "reception,     POST,   /encounters",
             "lab.tech,      POST,   /encounters",
+            // An encounter's orders are chart content, unlike the patient-scoped order list that
+            // the lab and the front desk both need.
+            "reception,     GET,    /lab/encounters/00000000-0000-0000-0000-000000000000/orders",
+            "lab.tech,      GET,    /lab/encounters/00000000-0000-0000-0000-000000000000/orders",
     })
     void roleIsEnforcedPerEndpoint(String username, String method, String path) {
         var request = given().spec(Api.as(username.trim()));
@@ -90,6 +102,28 @@ class AuthorizationAbuseIT extends RequiresRunningStack {
                 // is the action succeeding. 400 is only acceptable if authorization ran first,
                 // which the 403 rows above already establish for these roles.
                 org.hamcrest.Matchers.is(400)));
+    }
+
+    @Test
+    @DisplayName("retuning a laboratory threshold is refused even when the request is well-formed")
+    void aWellFormedThresholdWriteIsStillRefused() {
+        // The table above accepts 400 as a pass, because @Valid on a @RequestBody is resolved
+        // during argument binding - before the @PreAuthorize interceptor runs - so an empty body
+        // answers 400 whatever the caller's role. That proves the write did not happen; it does
+        // not prove authorization is what stopped it. These bodies are valid, so the only thing
+        // left to refuse them is the role.
+        given().spec(Api.as(Api.LAB_TECH))
+                .body(Map.of("threshold", 1))
+                .when().patch("/lab/morphology-thresholds/MCV_MICROCYTIC")
+                .then().statusCode(403);
+        given().spec(Api.as(Api.DOCTOR))
+                .body(Map.of("threshold", 1))
+                .when().patch("/lab/morphology-thresholds/MCV_MICROCYTIC")
+                .then().statusCode(403);
+        given().spec(Api.as(Api.LAB_TECH))
+                .body(Map.of("normalLow", 0, "normalHigh", 1))
+                .when().patch("/lab/reference-ranges/{id}", UUID.randomUUID())
+                .then().statusCode(403);
     }
 
     @Test

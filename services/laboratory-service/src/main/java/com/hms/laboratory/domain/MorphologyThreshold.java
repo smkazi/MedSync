@@ -68,6 +68,22 @@ public class MorphologyThreshold {
         return threshold;
     }
 
+    /**
+     * Retunes the cut-off.
+     *
+     * <p>The only mutator on this class, and the class Javadoc promised it years before it existed:
+     * a laboratory retunes these for its population without a deployment. Until now it could not —
+     * there was no setter, no service method and no endpoint, so the one number that decides
+     * whether a film reads "microcytic" was changeable by nobody short of a migration.
+     *
+     * <p>The note stays read-only on purpose. It is the word that appears verbatim on a signed
+     * report, so retuning a number and rewriting a report's wording are different acts, and only
+     * the first was asked for.
+     */
+    public void setThreshold(BigDecimal threshold) {
+        this.threshold = threshold;
+    }
+
     public String getNote() {
         return note;
     }

@@ -1,7 +1,6 @@
 package com.hms.laboratory.web;
 
 import com.hms.common.api.PageResponse;
-import com.hms.common.error.NotFoundException;
 import com.hms.common.security.Roles;
 import com.hms.laboratory.domain.LabEnums;
 import com.hms.laboratory.domain.Specimen;
@@ -40,7 +39,6 @@ import org.springframework.web.bind.annotation.RestController;
 import com.hms.laboratory.repo.AnalyzerRepository;
 import com.hms.laboratory.repo.DeviceMessageRepository;
 import com.hms.laboratory.repo.LabTestCatalogRepository;
-import com.hms.laboratory.repo.ReferenceRangeRepository;
 
 /** The laboratory API: ordering, collection, results, verification, catalog and device ingest. */
 @RestController
@@ -54,7 +52,6 @@ public class LabController {
     private final LabTestCatalogRepository catalog;
     private final AnalyzerRepository analyzers;
     private final DeviceMessageRepository messages;
-    private final ReferenceRangeRepository ranges;
     private final LabMapper mapper;
     private final SpecimenLabelRenderer labels;
     private final WorklistService worklists;
@@ -66,7 +63,7 @@ public class LabController {
                          LabTestCatalogRepository catalog,
                          AnalyzerRepository analyzers,
                          DeviceMessageRepository messages,
-                         ReferenceRangeRepository ranges, LabMapper mapper,
+                         LabMapper mapper,
                          SpecimenLabelRenderer labels, WorklistService worklists,
                          InterpretationService interpretations, LabReportService reports) {
         this.orderService = orderService;
@@ -76,7 +73,6 @@ public class LabController {
         this.catalog = catalog;
         this.analyzers = analyzers;
         this.messages = messages;
-        this.ranges = ranges;
         this.mapper = mapper;
         this.labels = labels;
         this.worklists = worklists;
@@ -116,12 +112,30 @@ public class LabController {
         return orderService.forPatient(patientId);
     }
 
+    /**
+     * The orders raised from one encounter.
+     *
+     * <p>{@code CHART_READ}, not {@code CLINICAL_READ} as the patient-scoped list beside it: this
+     * answers "what was ordered during this consultation", which is chart content, and the front
+     * desk has no need for it.
+     */
+    @GetMapping("/encounters/{encounterId}/orders")
+    @PreAuthorize(Roles.CHART_READ)
+    public List<LabDtos.OrderSummary> ordersForEncounter(@PathVariable UUID encounterId) {
+        return orderService.forEncounter(encounterId);
+    }
+
     /** Registers the tube and issues its accession number. */
     @PostMapping("/orders/{id}/specimens")
     @ResponseStatus(HttpStatus.CREATED)
     @PreAuthorize(Roles.LAB_WRITE)
     public LabDtos.SpecimenResponse collect(@PathVariable UUID id,
-                                            @RequestBody(required = false) LabDtos.CollectSpecimenRequest request) {
+                                            // @Valid, without which the request's own
+                                            // @Size(max = 32) was dead and an oversized specimen
+                                            // type reached a length-32 column as a database error
+                                            // instead of a message naming the field.
+                                            @Valid @RequestBody(required = false)
+                                            LabDtos.CollectSpecimenRequest request) {
         return orderService.collect(id, request);
     }
 
@@ -149,7 +163,7 @@ public class LabController {
      * audited.
      */
     @PatchMapping("/interpretive-rules/{code}")
-    @PreAuthorize("hasAnyRole('ADMIN','PATHOLOGIST')")
+    @PreAuthorize(Roles.LAB_CONFIG)
     public LabDtos.InterpretiveRuleResponse updateInterpretiveRule(
             @PathVariable String code,
             @Valid @RequestBody LabDtos.UpdateInterpretiveRuleRequest request) {
@@ -161,6 +175,21 @@ public class LabController {
     @PreAuthorize(Roles.CLINICAL_READ)
     public List<LabDtos.MorphologyThresholdResponse> morphologyThresholds() {
         return interpretations.allThresholds();
+    }
+
+    /**
+     * Retunes a morphology cut-off.
+     *
+     * <p>The third threshold tier, editable at last. A cut-off decides what the cells get
+     * <em>called</em> on a report - microcytic, hypochromic - so this is the same administrative
+     * act as retuning a rule, restricted the same way and audited the same way.
+     */
+    @PatchMapping("/morphology-thresholds/{code}")
+    @PreAuthorize(Roles.LAB_CONFIG)
+    public LabDtos.MorphologyThresholdResponse updateMorphologyThreshold(
+            @PathVariable String code,
+            @Valid @RequestBody LabDtos.UpdateThresholdRequest request) {
+        return interpretations.updateThreshold(code, request);
     }
 
     // ---- analyzer worklist: the host-query direction ---------------------------
@@ -329,19 +358,20 @@ public class LabController {
         return rangeService.findAll().stream().map(mapper::toResponse).toList();
     }
 
-    /** Ranges are lab-configurable; changing one is an administrative act. */
+    /**
+     * Ranges are lab-configurable; changing one is an administrative act.
+     *
+     * <p>The body of this used to live here, mutating the repository inline - the only write in
+     * this controller with no service method behind it, no validation on its request and no audit
+     * record. It is {@code ReferenceRangeService.update} now, which also refuses an inverted
+     * interval: the check needs whichever bound the caller left out, so it cannot be an annotation.
+     */
     @PatchMapping("/reference-ranges/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN','PATHOLOGIST')")
-    public LabDtos.ReferenceRangeResponse updateRange(@PathVariable UUID id,
-                                                      @RequestBody LabDtos.UpdateReferenceRangeRequest request) {
-        var range = ranges.findById(id).orElseThrow(() -> NotFoundException.of("ReferenceRange", id));
-        if (request.normalLow() != null) {
-            range.setNormalLow(request.normalLow());
-        }
-        if (request.normalHigh() != null) {
-            range.setNormalHigh(request.normalHigh());
-        }
-        return mapper.toResponse(ranges.save(range));
+    @PreAuthorize(Roles.LAB_CONFIG)
+    public LabDtos.ReferenceRangeResponse updateRange(
+            @PathVariable UUID id,
+            @Valid @RequestBody LabDtos.UpdateReferenceRangeRequest request) {
+        return mapper.toResponse(rangeService.update(id, request));
     }
 
     @GetMapping("/analyzers")

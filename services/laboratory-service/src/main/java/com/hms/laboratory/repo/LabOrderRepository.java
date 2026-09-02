@@ -49,6 +49,15 @@ public interface LabOrderRepository extends JpaRepository<LabOrder, UUID> {
     List<LabOrder> findByPatientIdOrderByOrderedAtDesc(UUID patientId);
 
     /**
+     * The orders raised from one encounter.
+     *
+     * <p>A separate query rather than a nullable filter threaded through {@link #search}: the chart
+     * asks this one question and nothing else asks it, and a worklist that could accidentally be
+     * narrowed to a single encounter is a worklist a technician can lose tubes in.
+     */
+    List<LabOrder> findByEncounterIdOrderByOrderedAtDesc(UUID encounterId);
+
+    /**
      * Finds the open order a device message belongs to, matched on the accession number the
      * lab labelled the tube with, newest first.
      */

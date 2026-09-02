@@ -49,6 +49,19 @@ public final class Roles {
     /** Only a pathologist (or admin) may verify and release a result. */
     public static final String LAB_VERIFY = "hasAnyRole('ADMIN','PATHOLOGIST')";
 
+    /**
+     * Retuning the laboratory's own numbers: reference intervals, interpretive rules, morphology
+     * cut-offs.
+     *
+     * <p>The same membership as {@link #LAB_VERIFY} today, and deliberately a separate name. Both
+     * configuration endpoints used to write that SpEL string out by hand, duplicating the constant
+     * character for character — which is precisely the failure this class exists to prevent, since
+     * a typo inside {@code @PreAuthorize} fails silently either open or closed. Naming it
+     * separately also means the next change to who may verify a result does not quietly move who
+     * may rewrite what a signed report says.
+     */
+    public static final String LAB_CONFIG = "hasAnyRole('ADMIN','PATHOLOGIST')";
+
     public static final String ADMIN_ONLY = "hasRole('ADMIN')";
 
     private Roles() {

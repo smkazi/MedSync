@@ -135,6 +135,33 @@ public class InterpretationService {
                 .toList();
     }
 
+    /**
+     * Retunes one morphology cut-off.
+     *
+     * <p>The third of three threshold tiers, and the last to become writable. {@code docs/
+     * extensibility.md} listed a {@code GET} in this row's "Extended by" column because there was
+     * nothing else to put there, while {@code UpdateThresholdRequest} sat in the DTO file
+     * referenced by nothing at all — the endpoint had been designed and never built.
+     *
+     * <p>Deliberately narrow: the threshold, not the note. The tiers stay separate for the reason
+     * {@code docs/extensibility.md} sets out — a reference interval answers "is this abnormal", a
+     * rule condition answers "is it worth saying", a cut-off answers "what do we call the cells" —
+     * and nothing here collapses one into another.
+     */
+    @Transactional
+    public LabDtos.MorphologyThresholdResponse updateThreshold(String code,
+                                                               LabDtos.UpdateThresholdRequest request) {
+        MorphologyThreshold threshold = thresholds.findById(code)
+                .orElseThrow(() -> new NotFoundException("No morphology cut-off '" + code + "'"));
+        threshold.setThreshold(request.threshold());
+        MorphologyThreshold saved = thresholds.save(threshold);
+        audit.record("MORPHOLOGY_THRESHOLD_UPDATED", "MorphologyThreshold", null,
+                "%s now %s".formatted(saved.getCode(),
+                        saved.getThreshold().stripTrailingZeros().toPlainString()));
+        return new LabDtos.MorphologyThresholdResponse(saved.getCode(), saved.getThreshold(),
+                saved.getNote());
+    }
+
     // ---- rules -----------------------------------------------------------------
 
     private List<String> ruleNotes(Map<String, BigDecimal> values) {
