@@ -1,25 +1,45 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { api, ApiError } from "@/lib/api";
-import type { Histogram, LabOrder } from "@/lib/types";
+import { load } from "@/lib/load";
+import { currentUser, hasRole } from "@/lib/session";
+import type { CatalogEntry, Histogram, LabOrder, ReferenceRange } from "@/lib/types";
 import {
   Badge,
   Card,
   Empty,
+  ErrorNote,
   Table,
   formatDateTime,
   statusTone,
 } from "@/components/ui";
+import { SPECIMEN_TYPES } from "../state";
+import { cancelOrder, collectSpecimen, verifyOrder } from "../actions";
+import { ResultsForm, type ResultRow } from "./ResultsForm";
 
 /**
- * A laboratory report.
+ * A laboratory report, and the chain of custody that produces it.
  *
  * Abnormal values are the only red on the page, and the reference range sits beside every result,
  * because a number without its range is not interpretable. Where the analyzer sent a distribution
  * curve it is drawn, with the indices derived from it.
+ *
+ * The write side is three acts owned by three roles, and each one is rendered only for the role
+ * that owns it: a technician collects the tube and enters what came off the analyzer, and only a
+ * pathologist verifies — which is the same act as releasing the report. The service enforces all
+ * three regardless of what this page renders; hiding a button nobody may press is a courtesy, not
+ * the control.
  */
-export default async function LabOrderPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function LabOrderPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ problem?: string; done?: string }>;
+}) {
   const { id } = await params;
+  const { problem, done } = await searchParams;
+  const user = await currentUser();
 
   let order: LabOrder;
   try {
@@ -30,6 +50,17 @@ export default async function LabOrderPage({ params }: { params: Promise<{ id: s
   }
 
   const specimen = order.specimens.at(-1);
+
+  const mayHandle = hasRole(user, "ADMIN", "LAB_TECH", "PATHOLOGIST");
+  const mayVerify = hasRole(user, "ADMIN", "PATHOLOGIST");
+  const mayOrder = hasRole(user, "ADMIN", "DOCTOR", "NURSE");
+  const settled = order.status === "VERIFIED" || order.status === "CANCELLED";
+
+  // The parameters to offer for hand entry come from the ordered tests' catalogue entries, and
+  // each row's unit and interval from the laboratory's configured reference range for this
+  // patient's sex. Both are only fetched when somebody may actually enter results - a doctor
+  // reading a report has no use for either, and this page is on the clinical read path.
+  const rows = mayHandle && !settled ? await resultRows(order) : [];
 
   return (
     <div className="space-y-6">
@@ -74,6 +105,16 @@ export default async function LabOrderPage({ params }: { params: Promise<{ id: s
         </div>
       </div>
 
+      {problem && <ErrorNote>{problem}</ErrorNote>}
+      {done && (
+        <p
+          role="status"
+          className="rounded-md border border-good/40 bg-good-soft px-3 py-2 text-sm text-good"
+        >
+          {done}
+        </p>
+      )}
+
       {order.clinicalNotes && (
         <Card title="Clinical details">
           <p className="text-sm">{order.clinicalNotes}</p>
@@ -82,7 +123,13 @@ export default async function LabOrderPage({ params }: { params: Promise<{ id: s
 
       <Card title="Results">
         {order.results.length === 0 ? (
-          <Empty>No results yet. Awaiting the analyzer or manual entry.</Empty>
+          <Empty>
+            {order.status === "CANCELLED"
+              ? "This order was cancelled before anything was recorded."
+              : mayHandle
+                ? "No results yet. Enter them below, or let the analyzer transmit them."
+                : "No results yet. Awaiting the analyzer or the bench."}
+          </Empty>
         ) : (
           <Table head={["Parameter", "Value", "Unit", "Reference", "Flag", "Source", "Status"]}>
             {order.results.map((result) => (
@@ -177,6 +224,104 @@ export default async function LabOrderPage({ params }: { params: Promise<{ id: s
         </Card>
       )}
 
+      {/*
+        The chain of custody, in the order it happens. Each section is gated on the role the
+        service gates the endpoint on, and each says what pressing the button actually does -
+        because "verify" reads like a check and is in fact the release.
+      */}
+      {mayHandle && !settled && (
+        <Card title={specimen ? "Collect another specimen" : "Collect the specimen"}>
+          <form action={collectSpecimen} className="flex flex-wrap items-end gap-3">
+            <input type="hidden" name="orderId" value={order.id} />
+            <div>
+              <label htmlFor="specimenType" className="block text-sm font-medium">
+                Specimen type
+              </label>
+              <select
+                id="specimenType"
+                name="specimenType"
+                defaultValue=""
+                className="mt-1 rounded-md border border-line bg-surface-raised px-3 py-2 text-sm"
+              >
+                {/* Blank is legal: the service falls back to the ordered test's own type. */}
+                <option value="">From the ordered test</option>
+                {SPECIMEN_TYPES.map((type) => (
+                  <option key={type.value} value={type.value}>
+                    {type.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <button
+              type="submit"
+              className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90"
+            >
+              Collect
+            </button>
+          </form>
+          <p className="mt-2 text-xs text-ink-muted">
+            Collecting issues an accession number from a database sequence and prints on the label
+            as a barcode a handheld reads. That number, not the patient&apos;s name, is what the
+            analyzer sends back.
+          </p>
+        </Card>
+      )}
+
+      {mayHandle && !settled && rows.length > 0 && (
+        <Card title="Enter results">
+          <ResultsForm orderId={order.id} rows={rows} />
+        </Card>
+      )}
+
+      {order.results.length > 0 && order.status !== "CANCELLED" && (
+        <Card title="Release">
+          {order.status === "VERIFIED" ? (
+            <p className="text-sm text-ink-muted">
+              Released. Every result carries who verified it and when, and the report PDF above is
+              the final one rather than a provisional.
+            </p>
+          ) : mayVerify ? (
+            <form action={verifyOrder}>
+              <input type="hidden" name="orderId" value={order.id} />
+              <button
+                type="submit"
+                className="rounded-md border border-good/50 px-3 py-2 text-sm font-medium text-good hover:bg-good-soft"
+              >
+                Verify and release {order.results.length} result(s)
+              </button>
+              <p className="mt-1.5 text-xs text-ink-muted">
+                One step, not two. Verifying <strong>is</strong> the release: the report stops being
+                watermarked provisional and becomes the thing another clinician treats from. Every
+                result is stamped with your name.
+              </p>
+            </form>
+          ) : (
+            <p className="text-sm text-ink-muted">
+              {order.results.length} result(s) are entered and provisional. A pathologist verifies
+              them, which releases the report — whoever ran the sample does not sign it off.
+            </p>
+          )}
+        </Card>
+      )}
+
+      {mayOrder && order.results.length === 0 && order.status !== "CANCELLED" && (
+        <Card title="Cancel this order">
+          <form action={cancelOrder}>
+            <input type="hidden" name="orderId" value={order.id} />
+            <button
+              type="submit"
+              className="rounded-md border border-critical/50 px-3 py-2 text-sm font-medium text-critical hover:bg-critical-soft"
+            >
+              Cancel the order
+            </button>
+            <p className="mt-1.5 text-xs text-ink-muted">
+              Only while nothing has been recorded. Once a result exists the service refuses —
+              a number that was produced cannot be made not to have been.
+            </p>
+          </form>
+        </Card>
+      )}
+
       {order.histograms.length > 0 && (
         <Card title="Analyzer distributions">
           <div className="grid gap-6 md:grid-cols-3">
@@ -188,6 +333,55 @@ export default async function LabOrderPage({ params }: { params: Promise<{ id: s
       )}
     </div>
   );
+}
+
+/**
+ * The rows the hand-entry form offers, and what each one is measured against.
+ *
+ * <p>Two reads, both of them configuration rather than patient data. The catalogue says which
+ * parameters an ordered test reports — a full blood count is not one number — and the reference
+ * ranges supply each row's unit and its interval for this patient's sex. Prefilling the unit is
+ * not cosmetic: a WBC typed as 7.36 and one typed as 7360 are the same measurement on two scales,
+ * and a threshold written against one never fires against the other.
+ *
+ * <p>An order whose patient has no sex recorded gets no interval, deliberately. The service
+ * applies none either, and a blank here is the honest rendering of that rather than a male one
+ * chosen by default.
+ */
+async function resultRows(order: LabOrder): Promise<ResultRow[]> {
+  const [{ data: catalog }, { data: ranges }] = await Promise.all([
+    load<CatalogEntry[]>("/lab/catalog"),
+    load<ReferenceRange[]>("/lab/reference-ranges"),
+  ]);
+
+  const ordered = new Set(order.items.map((item) => item.testCode));
+  const parameters = (catalog ?? [])
+    .filter((entry) => ordered.has(entry.code))
+    .flatMap((entry) => entry.parameters);
+
+  const sex = (order.patientSex ?? "").toUpperCase();
+  const interval = new Map(
+    (ranges ?? [])
+      .filter((range) => range.sex.toUpperCase() === sex)
+      .map((range) => [range.parameter.toUpperCase(), range]),
+  );
+  const recorded = new Map(
+    order.results.map((result) => [result.parameter.toUpperCase(), result]),
+  );
+
+  // Deduplicated: two ordered panels can report the same parameter, and the service keeps one
+  // current value per parameter, so two rows for it would be two inputs fighting over one row.
+  return [...new Set(parameters.map((parameter) => parameter.toUpperCase()))].map((parameter) => {
+    const range = interval.get(parameter);
+    const existing = recorded.get(parameter);
+    return {
+      parameter,
+      displayName: range?.displayName || existing?.displayName || parameter,
+      unit: existing?.unit || range?.unit || "",
+      referenceRange: range?.referenceRange ?? "",
+      existing: existing?.value ?? null,
+    };
+  });
 }
 
 /**

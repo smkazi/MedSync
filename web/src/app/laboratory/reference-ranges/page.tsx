@@ -1,6 +1,9 @@
 import { load } from "@/lib/load";
+import { currentUser, hasRole } from "@/lib/session";
 import type { ReferenceRange } from "@/lib/types";
 import { Card, Empty, ErrorNote, Table } from "@/components/ui";
+import { EditRow, RecordForm } from "@/components/RecordForm";
+import { updateReferenceRange } from "../actions";
 
 /**
  * Reference intervals, per parameter and sex.
@@ -18,6 +21,9 @@ export default async function ReferenceRangesPage({
 }) {
   const { q = "" } = await searchParams;
   const { data: ranges, error } = await load<ReferenceRange[]>("/lab/reference-ranges");
+  // The same membership the service checks with `Roles.LAB_CONFIG`. Rendering the form for
+  // somebody who would be refused is worse than not rendering it: they fill it in first.
+  const mayRetune = hasRole(await currentUser(), "ADMIN", "PATHOLOGIST");
 
   const needle = q.trim().toUpperCase();
   const shown = (ranges ?? []).filter(
@@ -67,7 +73,16 @@ export default async function ReferenceRangesPage({
           {shown.length === 0 ? (
             <Empty>No parameter matches.</Empty>
           ) : (
-            <Table head={["Parameter", "Display name", "Sex", "Interval", "Unit"]}>
+            <Table
+              head={[
+                "Parameter",
+                "Display name",
+                "Sex",
+                "Interval",
+                "Unit",
+                ...(mayRetune ? [""] : []),
+              ]}
+            >
               {shown.map((range) => (
                 <tr key={range.id}>
                   <td className="numeric px-3 py-2 font-medium">{range.parameter}</td>
@@ -75,6 +90,41 @@ export default async function ReferenceRangesPage({
                   <td className="px-3 py-2 text-ink-muted">{range.sex}</td>
                   <td className="numeric px-3 py-2">{range.referenceRange || "—"}</td>
                   <td className="px-3 py-2 text-ink-muted">{range.unit}</td>
+                  {mayRetune && (
+                    <td className="px-3 py-2">
+                      <EditRow label="Retune">
+                        <RecordForm
+                          action={updateReferenceRange}
+                          hidden={{ id: range.id }}
+                          columns={2}
+                          submitLabel="Save interval"
+                          fields={[
+                            {
+                              name: "normalLow",
+                              label: `Low (${range.unit || "no unit"})`,
+                              type: "number",
+                              step: "any",
+                              value: range.normalLow,
+                            },
+                            {
+                              name: "normalHigh",
+                              label: `High (${range.unit || "no unit"})`,
+                              type: "number",
+                              step: "any",
+                              value: range.normalHigh,
+                            },
+                          ]}
+                        />
+                        <p className="mt-2 text-xs text-ink-muted">
+                          Either bound alone is enough; the other is left as it is. The service
+                          checks the resulting pair, so patching one bound cannot invert the
+                          interval — which would flag every subsequent{" "}
+                          <span className="numeric">{range.parameter}</span> as high, on every
+                          report, until somebody noticed.
+                        </p>
+                      </EditRow>
+                    </td>
+                  )}
                 </tr>
               ))}
             </Table>
@@ -83,9 +133,9 @@ export default async function ReferenceRangesPage({
       )}
 
       <p className="text-sm text-ink-muted">
-        Editing an interval is restricted to an administrator or a pathologist and only the low and
-        high bounds are writable. The form for it is not built yet; the API accepts{" "}
-        <span className="numeric">PATCH /lab/reference-ranges/{"{id}"}</span> today.
+        {mayRetune
+          ? "Retuning an interval is audited: the change, who made it, and what the interval became. It is the number a report's H and L flags are derived from, so it changes what every future report for that parameter says."
+          : "Retuning an interval is restricted to an administrator or a pathologist. Only the low and high bounds are writable — a parameter's code, display name and unit are referenced elsewhere and are not editable here."}
       </p>
     </div>
   );

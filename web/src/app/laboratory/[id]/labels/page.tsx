@@ -54,7 +54,8 @@ export default async function SpecimenLabelsPage({ params }: { params: Promise<{
 
       {labels.length === 0 ? (
         <p className="rounded border border-line bg-surface p-4 text-sm text-ink-muted print:hidden">
-          Nothing to print yet — no specimen has been collected against this order.
+          Nothing to print yet — no specimen has been collected against this order. Collecting one
+          on the report page issues the accession number these labels carry.
         </p>
       ) : (
         <div className="flex flex-wrap gap-4">

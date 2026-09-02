@@ -10,9 +10,9 @@ haematology analyzer over its own wire protocol and released by a pathologist.
 
 > **Status:** the clinical core, the laboratory (including analyzer integration), the AI service
 > and the web UI are implemented and verified end to end against a real stack, and so are the
-> containerisation, TLS, security-testing and performance-testing layers. **606 tests pass** —
-> 315 Java unit and integration, 91 Python, 40 web unit, 91 black-box API and security abuse cases,
-> and 69 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
+> containerisation, TLS, security-testing and performance-testing layers. **629 tests pass** —
+> 327 Java unit and integration, 91 Python, 40 web unit, 99 black-box API and security abuse cases,
+> and 72 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
 > [Security](#security); what is left is in the [Roadmap](#roadmap).
 
 ---
@@ -137,6 +137,13 @@ numbers, results, histograms, and **analyzer integration**: the ASTM E1394 / LIS
 K-DPS parsers, ported to Java. Entry is separated from release — a technician's value is
 provisional and only a pathologist verifies.
 
+An order carries the encounter it was raised from, so a chart can show what a visit ordered rather
+than every test the patient has ever had. A patient's sex is optional on an order and **not
+defaulted**: reference intervals are sex-specific, so an order with no sex recorded gets no
+interval and the report falls back to the analyzer's own — a haemoglobin of 12.5 g/dL reads normal
+for a woman and low for a man, and picking a side by default is picking wrong half the time,
+silently, on the number a clinician treats from.
+
 ### `web` — Next.js 16, React 19
 The clinical interface. Server components call the gateway; **the browser never receives an access
 token** — the session lives in httpOnly cookies and every platform call is made server-side.
@@ -148,8 +155,8 @@ Nine top-level menus, defined once as data in `src/lib/menu.ts`:
 | Dashboard | today's board |
 | Patients | register (search), register a patient, edit a record, the allergy list |
 | Scheduling | appointment book, clinician availability, lapsed appointments, clinician schedules |
-| Clinical | triage intake, encounter charting — vitals, the SOAP note, signing, amendments, ICD-10 coding — with AI assistance beside the note |
-| Laboratory | worklist, scan a tube, test catalogue, reference ranges, interpretation rules, analyzers, device messages |
+| Clinical | triage intake, encounter charting — vitals, the SOAP note, signing, amendments, ICD-10 coding, laboratory ordering — with AI assistance beside the note |
+| Laboratory | worklist, an order's report with collection, result entry and release, specimen labels, scan a tube, test catalogue, reference ranges and interpretation rules — both retunable by a pathologist — analyzers, device messages |
 | Facility | room directory, rooms, floors, room types, beds, departments — all editable by an administrator |
 | Pharmacy, Billing | *not built* — see below |
 | Administration | staff directory, users (create, roles, reset a password), roles, audit trail |
@@ -552,12 +559,12 @@ make help          # everything else
 Or directly:
 
 ```bash
-mvn -q verify                                     # 315 Java unit and integration tests
+mvn -q verify                                     # 327 Java unit and integration tests
 cd services/ai-service && uv run pytest -q        # 91 Python tests
 cd web && npm run lint && npm run typecheck       # web static checks
 cd web && npm test                                # 40 web unit tests
-cd web && npx playwright test                     # 69 browser tests, no skips
-mvn -Pautomation -pl tests/api verify             # 91 API and security abuse cases
+cd web && npx playwright test                     # 72 browser tests, no skips
+mvn -Pautomation -pl tests/api verify             # 99 API and security abuse cases
 ```
 
 | Layer | What runs | Where |
@@ -788,10 +795,14 @@ and performance profiles. Dependency scanning covers Python (`pip-audit`) and th
 
 **Not built:**
 
-- **Screens for the remaining write endpoints.** Registration, booking, charting, patient edit,
-  the allergy list and the change-password flow have them. Facility and administration CRUD, and
-  laboratory ordering and result entry, do not: those endpoints work and are tested, but only an
-  API client can reach them.
+- **A handful of laboratory endpoints and states deliberately have no screen**, because they have
+  no caller either: `IN_PROGRESS` is unreachable by any code path, `Specimen.reject()` has no
+  endpoint, and the test catalogue and analyzer tables have no write endpoints at all — their
+  pages say so, and their menu entries are marked read-only. An interpretive rule's *conditions*,
+  label and display order are migration-level rather than form-level, and rules can be neither
+  created nor deleted; a morphology cut-off's **note** is likewise read-only, since it appears
+  verbatim on signed reports. There is no critical-value concept anywhere in the service — no
+  column, field, flag or notification — so there is no critical-range editor to build yet.
 - **Further clinical modules** — billing and claims, pharmacy and inventory, imaging/PACS.
 - **Analyzer transport** — the RS-232/TCP device gateway. The ported parsers are
   transport-agnostic, exactly as they are in the source project, and `POST /lab/device-messages`

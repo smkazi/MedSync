@@ -1,6 +1,9 @@
 import { load } from "@/lib/load";
+import { currentUser, hasRole } from "@/lib/session";
 import type { InterpretiveRule, MorphologyThreshold } from "@/lib/types";
 import { Badge, Card, Empty, ErrorNote, Table } from "@/components/ui";
+import { EditRow, RecordForm } from "@/components/RecordForm";
+import { updateInterpretiveRule, updateMorphologyThreshold } from "../actions";
 
 /**
  * The rules behind the narrative on a report.
@@ -14,6 +17,7 @@ export default async function InterpretationPage() {
     load<InterpretiveRule[]>("/lab/interpretive-rules"),
     load<MorphologyThreshold[]>("/lab/morphology-thresholds"),
   ]);
+  const mayRetune = hasRole(await currentUser(), "ADMIN", "PATHOLOGIST");
 
   return (
     <div className="space-y-6">
@@ -57,7 +61,7 @@ export default async function InterpretationPage() {
           {rules.length === 0 ? (
             <Empty>No rules are configured.</Empty>
           ) : (
-            <Table head={["Rule", "Fires when", "Comment", ""]}>
+            <Table head={["Rule", "Fires when", "Comment", "", ""]}>
               {rules.map((rule) => (
                 <tr key={rule.id} className={rule.active ? "" : "opacity-60"}>
                   <td className="px-3 py-2 font-medium">{rule.label}</td>
@@ -79,6 +83,41 @@ export default async function InterpretationPage() {
                   <td className="px-3 py-2">
                     {rule.active ? null : <Badge tone="neutral">off</Badge>}
                   </td>
+                  <td className="px-3 py-2">
+                    {mayRetune && (
+                      <EditRow label="Reword">
+                        <RecordForm
+                          action={updateInterpretiveRule}
+                          hidden={{ code: rule.code }}
+                          columns={1}
+                          submitLabel="Save rule"
+                          fields={[
+                            {
+                              name: "message",
+                              label: "Comment printed on the report",
+                              type: "textarea",
+                              value: rule.message,
+                            },
+                            { name: "active", label: "Rule fires", type: "checkbox", value: rule.active },
+                          ]}
+                        />
+                        <p className="mt-2 text-xs text-ink-muted">
+                          The wording and whether it fires — not the conditions. What makes the rule
+                          trigger is{" "}
+                          {rule.conditions.length === 0
+                            ? "not condition-driven"
+                            : rule.conditions
+                                .map(
+                                  (condition) =>
+                                    `${condition.parameters.join(" / ")} ${condition.operator} ${condition.threshold}`,
+                                )
+                                .join(" AND ")}
+                          , and changing that is a migration rather than a form: a condition is what
+                          the rule <em>means</em>, and rewording a sentence is not.
+                        </p>
+                      </EditRow>
+                    )}
+                  </td>
                 </tr>
               ))}
             </Table>
@@ -91,12 +130,41 @@ export default async function InterpretationPage() {
           {thresholds.length === 0 ? (
             <Empty>No thresholds are configured.</Empty>
           ) : (
-            <Table head={["Code", "Threshold", "What it decides"]}>
+            <Table
+              head={["Code", "Threshold", "What it decides", ...(mayRetune ? [""] : [])]}
+            >
               {thresholds.map((threshold) => (
                 <tr key={threshold.code}>
                   <td className="numeric px-3 py-2 font-medium">{threshold.code}</td>
                   <td className="numeric px-3 py-2">{threshold.threshold}</td>
                   <td className="px-3 py-2 text-ink-muted">{threshold.note}</td>
+                  {mayRetune && (
+                    <td className="px-3 py-2">
+                      <EditRow label="Retune">
+                        <RecordForm
+                          action={updateMorphologyThreshold}
+                          hidden={{ code: threshold.code }}
+                          columns={1}
+                          submitLabel="Save cut-off"
+                          fields={[
+                            {
+                              name: "threshold",
+                              label: "Cut-off",
+                              type: "number",
+                              step: "any",
+                              required: true,
+                              value: threshold.threshold,
+                            },
+                          ]}
+                        />
+                        <p className="mt-2 text-xs text-ink-muted">
+                          The number, not the note. &ldquo;{threshold.note}&rdquo; appears verbatim
+                          on signed reports, so rewording it is a different act from moving the
+                          threshold and the service has no setter for it.
+                        </p>
+                      </EditRow>
+                    </td>
+                  )}
                 </tr>
               ))}
             </Table>
@@ -105,10 +173,9 @@ export default async function InterpretationPage() {
       )}
 
       <p className="text-sm text-ink-muted">
-        A rule&apos;s wording can be retuned and a rule switched off through{" "}
-        <span className="numeric">PATCH /lab/interpretive-rules/{"{code}"}</span>, restricted to an
-        administrator or a pathologist and audited — this changes what appears on signed reports. The
-        form is not built yet. Morphology cut-offs are read-only in the API.
+        {mayRetune
+          ? "Every change here is audited, and every one of them changes what appears on reports a pathologist signs. A rule's conditions, its label and its display order are migration-level: they are what the rule means, rather than how it is worded. Rules cannot be created or deleted from the API at all."
+          : "Retuning a rule's wording, switching a rule off, or moving a morphology cut-off is restricted to an administrator or a pathologist, and audited — these change what appears on signed reports. A rule's conditions are migration-level either way."}
       </p>
     </div>
   );

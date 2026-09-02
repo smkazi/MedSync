@@ -1,8 +1,11 @@
 import Link from "next/link";
 import { load } from "@/lib/load";
 import { currentUser, hasRole } from "@/lib/session";
-import type { Encounter } from "@/lib/types";
+import type { CatalogEntry, Encounter, LabOrderSummary, Patient } from "@/lib/types";
 import { AiAssist } from "@/components/AiAssist";
+import { RecordForm } from "@/components/RecordForm";
+import { orderTests } from "@/app/laboratory/actions";
+import { PRIORITIES } from "@/app/laboratory/state";
 import { closeEncounter, recordVitals, signNote } from "./actions";
 import { DiagnosisForm } from "./DiagnosisForm";
 import { NoteEditor } from "./NoteEditor";
@@ -54,6 +57,21 @@ export default async function EncounterPage({
   // Signing is a doctor's act. A nurse may write the note; only a clinician who can put their name
   // to it may sign, and the service enforces that with hasAnyRole('ADMIN','DOCTOR').
   const maySign = hasRole(user, "ADMIN", "DOCTOR");
+
+  // The laboratory orders raised from this visit, and the catalogue to raise more from. Both are
+  // only fetched for somebody who may chart: an encounter's order list is chart content, and the
+  // service gates `GET /lab/encounters/{id}/orders` on CHART_READ for exactly that reason.
+  const [labOrders, catalog, patient] = mayChart
+    ? await Promise.all([
+        load<LabOrderSummary[]>(`/lab/encounters/${id}/orders`),
+        load<CatalogEntry[]>("/lab/catalog"),
+        load<Patient>(`/patients/${encounter.patientId}`),
+      ])
+    : [
+        { data: null, error: null },
+        { data: null, error: null },
+        { data: null, error: null },
+      ];
   const latestVitals = encounter.vitals.at(0) ?? null;
   const noteText = current
     ? [current.subjective, current.objective, current.assessment, current.plan]
@@ -197,6 +215,107 @@ export default async function EncounterPage({
               </div>
             )}
           </Card>
+
+          {/*
+            Computerised provider order entry, on the chart rather than in the laboratory. That is
+            what CPOE means and it is not incidental: a clinician ordering a test is already looking
+            at the assessment that justifies it, and the order carries the encounter so the visit
+            can show what it raised. The laboratory worklist owns everything after this - the tube,
+            the numbers, the release.
+          */}
+          {mayChart && (
+            <Card title="Laboratory orders">
+              {labOrders.error && <ErrorNote>{labOrders.error}</ErrorNote>}
+
+              {(labOrders.data ?? []).length === 0 ? (
+                <Empty>No tests ordered on this visit.</Empty>
+              ) : (
+                <Table head={["Ordered", "Tests", "Results", "Status", ""]}>
+                  {(labOrders.data ?? []).map((order) => (
+                    <tr key={order.id}>
+                      <td className="numeric px-3 py-2 text-ink-muted">
+                        {formatDateTime(order.orderedAt)}
+                      </td>
+                      <td className="numeric px-3 py-2">
+                        {order.testCount} test{order.testCount === 1 ? "" : "s"}
+                        {order.priority !== "ROUTINE" && (
+                          <Badge tone={statusTone(order.priority)}>{order.priority}</Badge>
+                        )}
+                      </td>
+                      <td className="numeric px-3 py-2">
+                        {order.resultCount}
+                        {order.hasAbnormalResults && (
+                          <span className="ml-2">
+                            <Badge tone="critical">abnormal</Badge>
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2">
+                        <Badge tone={statusTone(order.status)}>{order.status}</Badge>
+                      </td>
+                      <td className="px-3 py-2">
+                        <Link
+                          href={`/laboratory/${order.id}`}
+                          className="text-xs text-accent hover:underline"
+                        >
+                          Open
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </Table>
+              )}
+
+              {open && catalog.data && catalog.data.length > 0 && (
+                <div className="mt-4 border-t border-line pt-4">
+                  <RecordForm
+                    action={orderTests}
+                    columns={2}
+                    submitLabel="Order tests"
+                    busyLabel="Ordering…"
+                    hidden={{
+                      encounterId: encounter.id,
+                      patientId: encounter.patientId,
+                      patientMrn: encounter.patientMrn,
+                      // Translated, not copied. The patient record's vocabulary is
+                      // MALE/FEMALE/OTHER/UNKNOWN and the laboratory's reference intervals are
+                      // scaled M or F, so OTHER and UNKNOWN map to blank and the order gets no
+                      // sex-specific interval - rather than the male one applied by default,
+                      // which is what happened silently until laboratory V5.
+                      patientSex: labSex(patient.data?.sex),
+                      department: encounter.departmentCode,
+                    }}
+                    fields={[
+                      {
+                        name: "testCodes",
+                        label: "Tests",
+                        type: "multicheck",
+                        required: true,
+                        options: catalog.data.map((entry) => ({
+                          value: entry.code,
+                          label: `${entry.name} (${entry.code})`,
+                        })),
+                        hint: "From the laboratory's catalogue. A retired test is refused by name rather than hidden, so an order copied from an old note says why it failed.",
+                      },
+                      {
+                        name: "priority",
+                        label: "Priority",
+                        type: "select",
+                        options: PRIORITIES,
+                        value: "ROUTINE",
+                      },
+                      {
+                        name: "clinicalNotes",
+                        label: "Clinical details for the laboratory",
+                        type: "textarea",
+                        hint: "Travels with the order. This is the clinical context a pathologist reads, and it is the reason the lab does not need the chart.",
+                      },
+                    ]}
+                  />
+                </div>
+              )}
+            </Card>
+          )}
         </div>
 
         <div className="space-y-6">
@@ -299,6 +418,22 @@ export default async function EncounterPage({
       </div>
     </div>
   );
+}
+
+/**
+ * The patient record's sex, as the laboratory's reference intervals are scaled.
+ *
+ * <p>Two vocabularies, deliberately not merged. A patient record carries administrative gender and
+ * needs MALE, FEMALE, OTHER and UNKNOWN to record people honestly; a haemoglobin reference interval
+ * is scaled on one of two physiological ranges and has nothing to say about the other two. So the
+ * translation is explicit and lossy in one direction only: what the laboratory cannot scale for it
+ * declines to scale for, and the report then carries the analyzer's own range rather than an
+ * interval picked by default.
+ */
+function labSex(sex: string | undefined): string {
+  if (sex === "MALE") return "M";
+  if (sex === "FEMALE") return "F";
+  return "";
 }
 
 function NoteSection({ label, text }: { label: string; text: string | null }) {

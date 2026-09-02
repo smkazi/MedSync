@@ -204,9 +204,14 @@ export type Histogram = {
 };
 
 export type LabOrder = LabOrderSummary & {
-  patientSex: string;
+  /** M, F, or null. Nullable since laboratory V5: "not recorded" is a real state, and an order
+   *  carrying it gets no sex-specific reference interval rather than the male one by default. */
+  patientSex: string | null;
   orderedBy: string;
-  departmentCode: string;
+  /** The service names this `department`, not `departmentCode`, and this said the latter. */
+  department: string | null;
+  /** The encounter it was raised from, when a clinician ordered it from a chart. */
+  encounterId: string | null;
   clinicalNotes: string | null;
   items: { id: string; testCode: string; testName: string }[];
   specimens: { id: string; accessionNo: string; specimenType: string; status: string }[];
