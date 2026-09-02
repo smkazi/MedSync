@@ -175,6 +175,14 @@ test.describe("the menu works from a keyboard alone", () => {
     await signIn(page, "admin");
     await page.getByRole("button", { name: "Administration", exact: true }).focus();
     await page.keyboard.press("Enter");
+
+    // Asserted before the arrows, because the failure this test found was a lost keystroke:
+    // opening deferred the focus to the next paint, so an ArrowDown arriving inside that frame
+    // landed on the trigger instead of the list and did nothing. Three downs then reached the
+    // third item rather than the fourth. Opening now commits synchronously, and this is the line
+    // that says so.
+    await expect(page.locator("a:focus")).toHaveText(/Staff directory/);
+
     await page.keyboard.press("ArrowDown");
     await page.keyboard.press("ArrowDown");
     await page.keyboard.press("ArrowDown");

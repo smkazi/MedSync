@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import type { Menu } from "@/lib/menu";
 
 /**
@@ -93,16 +94,40 @@ export function MenuBar({ menus }: { menus: Menu[] }) {
     items[(index + items.length) % items.length]?.focus();
   }
 
+  /**
+   * Opens a menu and puts focus on one of its items, in one keystroke.
+   *
+   * <p>{@code flushSync} rather than a {@code requestAnimationFrame} callback, and that is a bug
+   * fix rather than a preference. The panel's items do not exist in the DOM on the frame the key
+   * fires, so the first version deferred the focus call to the next paint - which meant a keyboard
+   * user who pressed Enter and then ArrowDown faster than one frame had the ArrowDown land on the
+   * trigger, where it re-opened the already-opening menu and scheduled the same focus again. One
+   * keystroke silently vanished: Enter, ArrowDown, ArrowDown, ArrowDown reached the third item
+   * instead of the fourth. It went unnoticed locally, where a frame is quick, and failed twice in a
+   row in CI, where it is not - which is the same machine class as the wall-mounted terminals this
+   * is meant to run on.
+   *
+   * <p>Committing synchronously means the panel is in the document before this function returns, so
+   * the focus is settled before the browser dispatches the next key. Nothing is deferred and there
+   * is no frame to lose the race against.
+   */
+  function openAndFocus(label: string, index: number) {
+    if (openLabel === label) {
+      // Already open, so the items are already in the document.
+      focusItem(label, index);
+      return;
+    }
+    flushSync(() => setOpenLabel(label));
+    focusItem(label, index);
+  }
+
   function onTriggerKeyDown(event: React.KeyboardEvent<HTMLButtonElement>, label: string) {
     if (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") {
       event.preventDefault();
-      setOpenLabel(label);
-      // The menu has not rendered its items yet on the frame this fires, so focus moves after paint.
-      requestAnimationFrame(() => focusItem(label, 0));
+      openAndFocus(label, 0);
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
-      setOpenLabel(label);
-      requestAnimationFrame(() => focusItem(label, -1));
+      openAndFocus(label, -1);
     } else if (event.key === "Escape") {
       close();
     }
