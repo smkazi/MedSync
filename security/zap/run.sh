@@ -26,6 +26,18 @@ ZAP_FAIL_ON="${ZAP_FAIL_ON:-medium}"
 HOST_REPORT_DIR="${ZAP_REPORT_DIR:-$ROOT/build/zap}"
 mkdir -p "$HOST_REPORT_DIR"
 
+# ZAP needs a writable HOME, and under `-u $(id -u)` it does not get one by default.
+# The container image has no /etc/passwd entry for an arbitrary host uid, so the JVM cannot resolve
+# a user name and ZAP tries to create its config under a literal question mark:
+#
+#   Unable to create home directory: /zap/?/.ZAP/
+#
+# That is what killed every ZAP run on the CI runner (uid 1001). Giving it an explicit HOME on a
+# directory we own fixes it without running the container as root, which would leave root-owned
+# reports on the host.
+HOST_ZAP_HOME="${ZAP_HOME_DIR:-$HOST_REPORT_DIR/.zaphome}"
+mkdir -p "$HOST_ZAP_HOME"
+
 PLANS=("${@:-baseline authenticated}")
 read -r -a PLANS <<< "${PLANS[*]}"
 
@@ -52,8 +64,10 @@ run_plan() {
       -e "ZAP_USERNAME=$ZAP_USERNAME" \
       -e "ZAP_PASSWORD=$ZAP_PASSWORD" \
       -e "ZAP_REPORT_DIR=/zap/reports" \
+      -e "HOME=/zaphome" \
       -v "$ROOT/security/zap:/zap/plans:ro" \
       -v "$HOST_REPORT_DIR:/zap/reports" \
+      -v "$HOST_ZAP_HOME:/zaphome" \
       -u "$(id -u):$(id -g)" \
       ghcr.io/zaproxy/zaproxy:stable \
       zap.sh -cmd -autorun "/zap/plans/$plan.yaml"
@@ -81,7 +95,9 @@ MIN_CODE="$(threshold_code "$ZAP_FAIL_ON")"
 
 summarise() {
   local report="$1"
-  [[ -f "$report" ]] || { echo "   (no JSON report at $report)"; return 0; }
+  # Not `return 0`. A missing report used to read as "clean at or above high", which is the same
+  # silent pass as a scan that never ran reporting success.
+  [[ -f "$report" ]] || { echo "!! no JSON report at $report - nothing was scanned." >&2; exit 2; }
   python3 - "$report" "$MIN_CODE" <<'PY'
 import json, sys
 report, min_code = sys.argv[1], int(sys.argv[2])
@@ -105,8 +121,22 @@ PY
 status=0
 for plan in "${PLANS[@]}"; do
   echo "== ZAP plan: $plan  ->  $ZAP_TARGET"
-  run_plan "$plan"
+  # `set -e` would abort here on any non-zero exit from ZAP itself, and the script would then leave
+  # with status 1 - which this script documents as "findings at or above ZAP_FAIL_ON". It is not:
+  # ZAP failing to start is "could not run", which is 2. Conflating them is how a container that
+  # never scanned anything reported itself as a High-severity finding.
+  if ! run_plan "$plan"; then
+    echo "!! ZAP could not complete the '$plan' plan - see the output above." >&2
+    echo "   This is a run failure, not a finding. Nothing was scanned." >&2
+    exit 2
+  fi
   echo "== findings ($plan), gate at $ZAP_FAIL_ON and above:"
+  # A plan that produced no JSON report also did not scan, whatever its exit status said.
+  if [[ ! -f "$HOST_REPORT_DIR/zap-$plan.json" ]]; then
+    echo "!! no JSON report at $HOST_REPORT_DIR/zap-$plan.json - the plan did not produce one." >&2
+    echo "   Treating as could-not-run rather than clean." >&2
+    exit 2
+  fi
   summarise "$HOST_REPORT_DIR/zap-$plan.json" || status=1
 done
 

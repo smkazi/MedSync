@@ -573,8 +573,19 @@ which is why the version here is held at 12.2.2.
 
 The same first nightly run turned up two more failures, both worth naming rather than tidying away:
 the container and IaC scan had never run either, because `aquasecurity/trivy-action` was pinned to a
-tag that does not exist (`0.28.0` — the action's tags carry a `v` prefix), and the ZAP job failed at
-its scan step. The action pin is fixed. That a whole workflow's first run had three of six jobs
+tag that does not exist (`0.28.0` — the action's tags carry a `v` prefix), and the ZAP job died on
+startup with `Unable to create home directory: /zap/?/.ZAP/` — the ZAP image has no `/etc/passwd`
+entry for the runner's uid, so under `docker run -u $(id -u)` the JVM could not resolve a user name
+and `$HOME` interpolated as a literal `?`. Both are fixed: the action pin, and an explicit writable
+`HOME` mounted into the container.
+
+Chasing that turned up something worse in the same script, and it is the reason to state it here
+rather than in a changelog. `security/zap/run.sh` documents `0 clean, 1 findings, 2 could not run` —
+but a plan that produced no JSON report printed *"clean at or above 'medium'"* and **exited 0**. A
+scan that never happened reported itself as passing. And ZAP failing to start exited 1, the code
+reserved for real findings, so a container that never scanned anything was indistinguishable from a
+High-severity result. Both now exit 2 with an explicit "nothing was scanned", verified by running
+the script against both failure modes. That a whole workflow's first run had three of six jobs
 failing is the argument for putting checks where people look: `ci.yml` runs on every push and gets
 read, and the dependency gate now lives there.
 
