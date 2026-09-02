@@ -41,7 +41,25 @@ jobs:
       - url: "${ZAP_TARGET}/.well-known/jwks.json"
         method: GET
         responseCode: 200
+      # The corridor display: the one path on the platform that is *meant* to answer 200 without
+      # a token, and the reason it is safe is what comes back — a room code, the number being
+      # called, and the next few waiting. The scan records it so the active pass exercises it, and
+      # `tests/api` greps the body for anything name- or MRN-shaped.
+      #
+      # A 401 here would be a regression too: it would mean somebody tightened
+      # `hms.security.public-paths` and left a sign-in form on every wall in the building.
+      - url: "${ZAP_TARGET}/public/queue/GF-GEN"
+        method: GET
+        responseCode: 200
+      # And nothing else under /public/ exists. A prefix that is allowlisted by pattern is a
+      # prefix somebody adds a second endpoint to, so the absence is asserted rather than assumed.
+      - url: "${ZAP_TARGET}/public/patients"
+        method: GET
+        responseCode: 404
       # Every one of these must be 401 without a token. If any returns 200 the scan fails.
+      - url: "${ZAP_TARGET}/queue/GF-GEN"
+        method: GET
+        responseCode: 401
       - url: "${ZAP_TARGET}/patients"
         method: GET
         responseCode: 401

@@ -51,7 +51,14 @@ function owesAPasswordChange(request: NextRequest): boolean {
 export function middleware(request: NextRequest): NextResponse {
   const { pathname } = request.nextUrl;
   const isPublic =
-    pathname === "/login" || pathname.startsWith("/api/auth") || pathname.startsWith("/_next");
+    pathname === "/login"
+    || pathname.startsWith("/api/auth")
+    || pathname.startsWith("/_next")
+    // The waiting-room display. A kiosk browser in a corridor has no clinician signed in and never
+    // will, so bouncing it to /login would leave a sign-in form on the wall. What it renders comes
+    // from the platform's one unauthenticated endpoint, which returns a room code and some numbers
+    // - there is nothing behind this exemption to protect.
+    || pathname.startsWith("/display/");
 
   /*
    * A request with no session cookie is redirected to sign-in before any page renders. This is a

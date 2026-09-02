@@ -12,7 +12,7 @@
 
 import { sleep } from 'k6';
 import { CORRECTNESS, LATENCY, USERS } from './lib/config.js';
-import { login, setupJourney, readJourney, bookingJourney } from './lib/journey.js';
+import { login, setupJourney, readJourney, bookingJourney, displayJourney } from './lib/journey.js';
 
 const DURATION = __ENV.PERF_SOAK_DURATION || '1h';
 const VUS = Number(__ENV.PERF_SOAK_VUS || 15);
@@ -61,6 +61,9 @@ export function reads(data) {
   // long run. Argon2id makes this the most expensive call in the profile - that is the trade.
   const token = login(USERS.doctor);
   readJourney(token, data);
+  // The corridor display, with no token. Its own rate-limit bucket at the gateway is
+  // sized for screens rather than for people, and this is what exercises it.
+  displayJourney(data);
   sleep(Math.random() * 3 + 2);
 }
 

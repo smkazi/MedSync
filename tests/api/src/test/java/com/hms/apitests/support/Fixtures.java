@@ -23,6 +23,10 @@ public final class Fixtures {
     public record Clinician(String id, String fullName, String departmentCode) {
     }
 
+    /** A bookable consulting room created for this run. */
+    public record ConsultingRoom(String id, String code) {
+    }
+
     public static Patient registerPatient(String actor, String surname) {
         var body = given().spec(Api.as(actor))
                 .body(Map.of(
@@ -68,5 +72,42 @@ public final class Fixtures {
     public static Instant slot(int minutesFromBase) {
         return LocalDate.now().plusDays(45).atStartOfDay(java.time.ZoneOffset.UTC)
                 .toInstant().plus(9, ChronoUnit.HOURS).plus(minutesFromBase, ChronoUnit.MINUTES);
+    }
+
+    /**
+     * A bookable consulting room, created for this run.
+     *
+     * <p>Deliberately not a seeded one, and the reason is the same as for {@link #clinician()}: a
+     * room booking is guarded by an exclusion constraint over (room_id, time range), so two runs
+     * sharing a room collide on the second and every one after. The queue makes this sharper still
+     * — a token queue is per room per day and the numbering does not reset, so a shared room means
+     * a test cannot say anything about which number it was given.
+     *
+     * <p>Left behind rather than cleaned up, like the clinician: it is inactive to nobody and the
+     * facility screens show it as a real room, which is the honest state of a development database
+     * that has had tests run against it.
+     */
+    public static ConsultingRoom consultingRoom() {
+        String floor = given().spec(Api.as(Api.ADMIN))
+                .when().get("/floors")
+                .then().statusCode(200)
+                .extract().jsonPath().getString("find { it.active == true }.code");
+
+        var body = given().spec(Api.as(Api.ADMIN))
+                .body(Map.of(
+                        // Sixteen characters is the column, and the run key is five, so the prefix
+                        // has to stay short.
+                        "code", "QRT-" + RUN,
+                        "name", "API Queue Room " + RUN,
+                        // A schedulable, clinical type: the booking service refuses a room whose
+                        // type cannot take appointments, which is the point of that flag.
+                        "roomTypeCode", "CONSULTATION",
+                        "floorCode", floor,
+                        "capacity", 1,
+                        "bookable", true))
+                .when().post("/rooms")
+                .then().statusCode(201)
+                .extract().jsonPath();
+        return new ConsultingRoom(body.getString("id"), body.getString("code"));
     }
 }

@@ -48,6 +48,14 @@ hms:
     base-url: ${HMS_PATIENT_URI:http://localhost:8082}
   security:
     mode: resource-server
+    # The corridor display, and the only unauthenticated path in the platform.
+    #
+    # `hms.security.public-paths` has existed since hms-common was written and had no user until
+    # now, which is the right order: the allowlist was built before anything needed it, so nothing
+    # had to be loosened to add this. What sits behind it returns a room code and some numbers -
+    # there is no name, MRN or id in `PublicQueueBoard` to return - and the ZAP baseline asserts a
+    # 200 here without a token *and* that nothing name-shaped comes back with it.
+    public-paths: /public/**
   events:
     transport: ${HMS_EVENTS_TRANSPORT:log}
   scheduling:

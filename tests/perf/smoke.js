@@ -6,7 +6,7 @@
 
 import { sleep } from 'k6';
 import { CORRECTNESS, USERS } from './lib/config.js';
-import { login, setupJourney, readJourney, bookingJourney } from './lib/journey.js';
+import { login, setupJourney, readJourney, bookingJourney, displayJourney } from './lib/journey.js';
 
 export const options = {
   scenarios: {
@@ -25,5 +25,8 @@ export default function (data) {
   const token = login(USERS.doctor);
   readJourney(token, data);
   bookingJourney(token, data);
+  // No token: the corridor display is the platform's one unauthenticated path, and a smoke run
+  // that never touched it would leave the allowlist unexercised.
+  displayJourney(data);
   sleep(1);
 }

@@ -15,7 +15,7 @@
 
 import { sleep } from 'k6';
 import { CORRECTNESS, USERS } from './lib/config.js';
-import { login, setupJourney, readJourney, bookingJourney } from './lib/journey.js';
+import { login, setupJourney, readJourney, bookingJourney, displayJourney } from './lib/journey.js';
 
 const PEAK = Number(__ENV.PERF_PEAK_VUS || 200);
 
@@ -60,6 +60,9 @@ export function mixed(data) {
     bookingJourney(token, data);
   } else {
     readJourney(token, data);
+    // The corridor display, with no token. Its own rate-limit bucket at the gateway is
+    // sized for screens rather than for people, and this is what exercises it.
+    displayJourney(data);
   }
   sleep(0.5);
 }

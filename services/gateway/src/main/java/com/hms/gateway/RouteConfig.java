@@ -35,8 +35,15 @@ public class RouteConfig {
                               "/floors/**", "/rooms/**", "/room-types/**", "/beds/**")
                         .uri(services.patient()))
                 // Appointments, encounters, clinical notes, vitals and clinician availability.
+                //
+                // `/queue/**` is the outpatient token board, which is scheduling's because a token
+                // is issued by the check-in transition. `/public/**` is the corridor display and is
+                // the one prefix on the platform reachable without a token: it is routed
+                // explicitly rather than by a wildcard so that adding a second public path is a
+                // visible act here as well as in the service's allowlist.
                 .route("scheduling", r -> r
-                        .path("/appointments/**", "/encounters/**", "/schedules/**")
+                        .path("/appointments/**", "/encounters/**", "/schedules/**",
+                              "/queue/**", "/public/queue/**")
                         .uri(services.scheduling()))
                 // Laboratory: orders, specimens, results, catalog and analyzer message ingest.
                 .route("laboratory", r -> r

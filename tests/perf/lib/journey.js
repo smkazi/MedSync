@@ -109,7 +109,34 @@ export function setupJourney() {
     patients.push({ id: res.json('id'), mrn: res.json('mrn') });
   }
 
-  return { runTag, patients, clinicianId: clinician.id, clinicianName: clinician.fullName, departmentCode };
+  // A room of its own, for the same reason as the clinician: room bookings are guarded by an
+  // exclusion constraint over (room_id, tstzrange), so a shared room turns the deterministic slot
+  // choice into a collision with the previous run. It also gives the display profile a queue that
+  // belongs to this run, since a token queue is per room per day and does not reset.
+  const roomRes = http.post(
+    `${BASE_URL}/rooms`,
+    JSON.stringify({
+      code: `PR-${runTag}`.slice(0, 16),
+      name: `Perf Room ${runTag}`,
+      roomTypeCode: 'CONSULTATION',
+      floorCode: 'GF',
+      capacity: 1,
+      bookable: true,
+    }),
+    params('room_create', admin),
+  );
+  if (roomRes.status !== 201 && roomRes.status !== 200) {
+    fail(`could not provision the run's room: ${roomRes.status} ${roomRes.body}`);
+  }
+
+  return {
+    runTag,
+    patients,
+    clinicianId: clinician.id,
+    clinicianName: clinician.fullName,
+    departmentCode,
+    roomCode: roomRes.json('code'),
+  };
 }
 
 /** Reads only. This is the shape of most real traffic and it is safe to run at any rate. */
@@ -197,6 +224,12 @@ export function bookingJourney(token, data) {
     departmentCode: data.departmentCode,
     startsAt: base.toISOString(),
     durationMinutes: 5,
+    // The run's own room. The room exclusion constraint is over (room_id, tstzrange) just as the
+    // clinician one is, and the slot allocation above already gives every iteration a slot nobody
+    // else will touch - so booking into a room costs nothing here and makes the second constraint
+    // part of what the profile exercises. Sharing a seeded room instead would have produced
+    // cross-run conflicts exactly as a shared clinician once did.
+    roomCode: data.roomCode,
     priority: 'ROUTINE',
     reason: 'performance profile',
     travelDistanceKm: 12,
@@ -215,4 +248,33 @@ export function bookingJourney(token, data) {
   if (res.status === 201 && res.json('noShowRisk')) {
     noShowScored.add(1);
   }
+}
+
+/**
+ * The corridor display: the platform's one unauthenticated endpoint.
+ *
+ * <p>Worth measuring on its own rather than folding into {@link readJourney}, because its traffic
+ * shape is unlike anything else here. A wall screen polls on a timer forever, there is one per
+ * corridor, and none of them signs in — so this is the only path where the offered rate is set by
+ * how many screens are mounted rather than by how many people are working. It has its own
+ * rate-limit bucket at the gateway for that reason, and this is what proves the bucket is sized
+ * for it.
+ *
+ * <p>No token, deliberately, and no `Authorization` header is constructed: a request that
+ * accidentally carried one would be measuring the authenticated path.
+ */
+export function displayJourney(data) {
+  const res = http.get(
+    `${BASE_URL}/public/queue/${encodeURIComponent(data.roomCode)}`,
+    params('public_queue'),
+  );
+  check(res, {
+    'the display answers 200 with no token': (r) => r.status === 200,
+    // Structural, and it is the assertion that matters: if a field ever appears here that names a
+    // person, it appears on every screen in the building at once.
+    'the display carries only a room code and numbers': (r) => {
+      const body = r.json() || {};
+      return Object.keys(body).sort().join(',') === 'nowServing,roomCode,upcoming';
+    },
+  });
 }

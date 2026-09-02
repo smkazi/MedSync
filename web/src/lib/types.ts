@@ -506,3 +506,36 @@ export type MessageTemplate = {
   body: string;
   active: boolean;
 };
+
+// ---- the outpatient token queue ---------------------------------------------
+
+export type TokenStatus = "WAITING" | "CALLED" | "DONE";
+
+export type QueueEntry = {
+  tokenNumber: number;
+  status: TokenStatus;
+  issuedAt: string;
+  calledAt: string | null;
+  /** How the desk gets from a number to a patient. Absent from the public board by design. */
+  appointmentId: string;
+};
+
+export type QueueBoard = {
+  roomCode: string;
+  serviceDate: string;
+  nowServing: number | null;
+  tokens: QueueEntry[];
+};
+
+/**
+ * The corridor display's data.
+ *
+ * A separate type from {@link QueueBoard} rather than a subset, mirroring the service: this shape
+ * has nowhere to put a name, an MRN or an id, so the PHI-free rendering is a property of the type
+ * rather than of a component staying careful.
+ */
+export type PublicQueueBoard = {
+  roomCode: string;
+  nowServing: number | null;
+  upcoming: number[];
+};

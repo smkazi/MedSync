@@ -32,6 +32,10 @@ hms:
     # spraying - one password against many usernames - impractical; per-account lockout in
     # identity-service handles the other shape of the attack.
     auth-requests-per-minute: ${HMS_RATE_LIMIT_AUTH_RPM:20}
+    # Its own bucket, and generous: a wall display polls, and the corridor board is a room code
+    # and a handful of numbers. Sharing the general bucket would let one waiting-room screen
+    # exhaust the allowance for every clinician behind the same NAT address.
+    public-requests-per-minute: ${HMS_RATE_LIMIT_PUBLIC_RPM:3000}
   services:
     identity: ${HMS_IDENTITY_URI:http://localhost:8081}
     patient: ${HMS_PATIENT_URI:http://localhost:8082}

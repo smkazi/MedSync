@@ -50,10 +50,14 @@ public class RateLimitConfig {
     private final int generalPerMinute;
     private final int authPerMinute;
 
+    private final int publicPerMinute;
+
     public RateLimitConfig(@Value("${hms.rate-limit.requests-per-minute:600}") int generalPerMinute,
-                           @Value("${hms.rate-limit.auth-requests-per-minute:20}") int authPerMinute) {
+                           @Value("${hms.rate-limit.auth-requests-per-minute:20}") int authPerMinute,
+                           @Value("${hms.rate-limit.public-requests-per-minute:3000}") int publicPerMinute) {
         this.generalPerMinute = generalPerMinute;
         this.authPerMinute = authPerMinute;
+        this.publicPerMinute = publicPerMinute;
     }
 
     /**
@@ -100,6 +104,7 @@ public class RateLimitConfig {
 
     private final Map<String, Window> generalWindows = new ConcurrentHashMap<>();
     private final Map<String, Window> authWindows = new ConcurrentHashMap<>();
+    private final Map<String, Window> publicWindows = new ConcurrentHashMap<>();
 
     /**
      * Ordered just after {@link SecurityHeadersConfig}, so a 429 goes out carrying the same
@@ -108,8 +113,8 @@ public class RateLimitConfig {
     @Bean
     @Order(Ordered.HIGHEST_PRECEDENCE + 10)
     public WebFilter rateLimitFilter() {
-        log.info("Rate limiting: {}/min general, {}/min on /auth (per client, in-process)",
-                generalPerMinute, authPerMinute);
+        log.info("Rate limiting: {}/min general, {}/min on /auth, {}/min on /public (per client, in-process)",
+                generalPerMinute, authPerMinute, publicPerMinute);
 
         return (exchange, chain) -> {
             ServerHttpRequest request = exchange.getRequest();
@@ -121,9 +126,20 @@ public class RateLimitConfig {
                 return chain.filter(exchange);
             }
 
+            // Three buckets, because they defend against three different things. The general one
+            // stops a client exhausting the pool; the auth one makes password spraying
+            // impractical; this one exists so a wall display can poll.
+            //
+            // The public bucket is the loosest of the three on purpose, and that is safe precisely
+            // because of what is behind it: the corridor board returns a room code and some
+            // numbers, so the worst a flood achieves is reading numbers faster. Counting it in the
+            // general bucket would have meant one waiting-room screen refreshing every two seconds
+            // spending its whole minute's allowance and then locking out every clinician sharing
+            // that address behind a NAT.
             boolean isAuth = path.startsWith("/auth/");
-            Map<String, Window> windows = isAuth ? authWindows : generalWindows;
-            int limit = isAuth ? authPerMinute : generalPerMinute;
+            boolean isPublic = path.startsWith("/public/");
+            Map<String, Window> windows = isAuth ? authWindows : isPublic ? publicWindows : generalWindows;
+            int limit = isAuth ? authPerMinute : isPublic ? publicPerMinute : generalPerMinute;
 
             if (windows.size() > MAX_TRACKED_CLIENTS) {
                 log.warn("Rate-limit table exceeded {} keys; clearing. Client keys are likely spoofed.",
@@ -145,7 +161,7 @@ public class RateLimitConfig {
                 // Logged at the key, never the credential: a rate-limit log line that carried the
                 // attempted username would put a list of guessed usernames in the log file.
                 log.warn("Rate limit exceeded on {} for client {} ({} in the last minute, limit {})",
-                        isAuth ? "/auth" : "the API", key, used, limit);
+                        isAuth ? "/auth" : isPublic ? "/public" : "the API", key, used, limit);
                 exchange.getResponse().setStatusCode(HttpStatus.TOO_MANY_REQUESTS);
                 exchange.getResponse().getHeaders().set("Retry-After", String.valueOf(retryAfter));
                 return exchange.getResponse().setComplete();

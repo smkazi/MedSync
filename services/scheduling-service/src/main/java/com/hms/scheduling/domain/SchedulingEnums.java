@@ -38,4 +38,17 @@ public final class SchedulingEnums {
     public enum DiagnosisCategory {
         PRIMARY, SECONDARY, PROVISIONAL
     }
+
+    /**
+     * Where a queue token is in its short life.
+     *
+     * <p>Three states and no more. {@code WAITING} is issued at check-in, {@code CALLED} when the
+     * consultation begins, {@code DONE} when it ends. There is no SKIPPED: a patient who does not
+     * answer their number is a no-show on the appointment, which the appointment's own state
+     * machine already records — a second place to say the same thing is a second place for the two
+     * to disagree.
+     */
+    public enum TokenStatus {
+        WAITING, CALLED, DONE
+    }
 }

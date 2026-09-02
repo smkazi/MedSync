@@ -10,7 +10,7 @@
 
 import { sleep } from 'k6';
 import { thresholds, USERS } from './lib/config.js';
-import { login, setupJourney, readJourney, bookingJourney } from './lib/journey.js';
+import { login, setupJourney, readJourney, bookingJourney, displayJourney } from './lib/journey.js';
 
 const READ_VUS = Number(__ENV.PERF_READ_VUS || 30);
 const BOOK_RATE = Number(__ENV.PERF_BOOK_RATE || 6); // bookings per second
@@ -56,6 +56,9 @@ export function setup() {
 export function reads(data) {
   const token = login(USERS.doctor);
   readJourney(token, data);
+  // The corridor display, with no token. Its own rate-limit bucket at the gateway is
+  // sized for screens rather than for people, and this is what exercises it.
+  displayJourney(data);
   sleep(Math.random() * 2 + 1); // a human reading a chart, not a benchmark loop
 }
 

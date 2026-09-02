@@ -60,12 +60,13 @@ public class AppointmentService {
     private final RoomDirectoryClient roomDirectory;
     private final EventPublisher events;
     private final AuditService audit;
+    private final QueueService queue;
     private final ZoneId zone;
 
     public AppointmentService(AppointmentRepository appointments, ClinicianScheduleRepository schedules,
                              ScheduleBlackoutRepository blackouts, EncounterRepository encounters,
                              NoShowRiskClient riskClient, RoomDirectoryClient roomDirectory,
-                             EventPublisher events, AuditService audit,
+                             EventPublisher events, AuditService audit, QueueService queue,
                              @Value("${hms.scheduling.zone:UTC}") String zone) {
         this.appointments = appointments;
         this.schedules = schedules;
@@ -75,6 +76,7 @@ public class AppointmentService {
         this.roomDirectory = roomDirectory;
         this.events = events;
         this.audit = audit;
+        this.queue = queue;
         this.zone = ZoneId.of(zone);
     }
 
@@ -249,9 +251,22 @@ public class AppointmentService {
                     + " to " + target);
         }
         switch (target) {
-            case CHECKED_IN -> appointment.checkIn();
-            case IN_PROGRESS -> appointment.begin();
-            case COMPLETED -> appointment.complete();
+            case CHECKED_IN -> {
+                appointment.checkIn();
+                // The token is issued here rather than by anything the desk has to remember,
+                // because a queue somebody maintains alongside the appointment book is a queue
+                // that has drifted out of step with it by mid-morning. Inside this transaction on
+                // purpose: a rolled-back check-in must not leave a number that nobody holds.
+                queue.issueFor(appointment);
+            }
+            case IN_PROGRESS -> {
+                appointment.begin();
+                queue.markCalled(id);
+            }
+            case COMPLETED -> {
+                appointment.complete();
+                queue.markFinished(id);
+            }
             case NO_SHOW -> {
                 if (appointment.getEndsAt().isAfter(Instant.now())) {
                     // Marking a patient absent before their slot has ended would be a false record.
@@ -259,6 +274,9 @@ public class AppointmentService {
                             "This appointment has not finished yet; it cannot be marked as a no-show");
                 }
                 appointment.markNoShow();
+                // Off the board. A number that stays lit for somebody who is not coming is how a
+                // corridor stops believing the display.
+                queue.markFinished(id);
             }
             default -> throw new BadRequestException("Unsupported transition to " + target);
         }

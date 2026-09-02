@@ -132,6 +132,37 @@ Clinician weekly patterns and blackouts, slot generation, appointments with a fu
 encounters, SOAP clinical notes, vitals (with derived BMI) and coded diagnoses. Booking asks
 `ai-service` for a no-show score through a circuit breaker.
 
+Also the **OPD token queue**. An appointment is a time; a queue is an order, and a clinic running
+forty minutes late still has a defensible order of service. A number is issued when a patient
+checks in and called when their consultation starts, so the queue is a by-product of the
+appointment lifecycle rather than something anybody maintains alongside it — which matters, because
+a queue somebody has to keep in step with the appointment book has drifted out of step with it by
+mid-morning.
+
+**Issuing a number is one SQL statement**, and it has to be. `SELECT max(token_number) + 1`
+followed by an insert is a lost update that hands two patients the same number, and when 14 is
+called two people stand up and neither is wrong. So:
+
+```sql
+INSERT INTO queue_counters (room_code, service_date, next_token) VALUES (:room, :date, 2)
+ON CONFLICT (room_code, service_date) DO UPDATE SET next_token = queue_counters.next_token + 1
+RETURNING next_token - 1
+```
+
+Fifty simultaneous check-ins produce fifty distinct consecutive numbers with no gaps, which
+`QueueTokenIssuanceTest` asserts on fifty real threads against a real PostgreSQL — false for every
+read-then-write implementation and true for this one.
+
+**`GET /public/queue/{roomCode}` is the platform's only unauthenticated endpoint.** It is the
+corridor display, mounted where every visitor, delivery driver and passer-by in the building can
+read it, so what it returns is a room code, the number being called and the next few waiting. No
+name, no MRN, no appointment id, no patient id — and no count of how many people are waiting, since
+"you are fourteenth" plus a visible arrival order is enough for a stranger to work out who is who.
+That is enforced by the response type having nowhere to put any of it rather than by a query being
+careful, and `queue_tokens` itself holds no patient identity at all. It is allowlisted through
+`hms.security.public-paths`, which had existed since hms-common was written and had no user until
+now — so nothing had to be loosened to add it.
+
 ### `laboratory-service` — schema `laboratory`
 Test catalog, sex-specific reference ranges, orders, specimens with sequence-issued accession
 numbers, results, histograms, and **analyzer integration**: the ASTM E1394 / LIS2-A2 and Sysmex
@@ -201,7 +232,7 @@ Nine top-level menus, defined once as data in `src/lib/menu.ts`:
 | --- | --- |
 | Dashboard | today's board |
 | Patients | register (search), register a patient, edit a record, the allergy list |
-| Scheduling | appointment book, clinician availability, lapsed appointments, clinician schedules |
+| Scheduling | appointment book, clinician availability, lapsed appointments, clinician schedules, the OPD token queue, and a link to the corridor display |
 | Clinical | triage intake, encounter charting — vitals, the SOAP note, signing, amendments, ICD-10 coding, laboratory ordering — with AI assistance beside the note |
 | Laboratory | worklist, an order's report with collection, result entry and release, specimen labels, scan a tube, test catalogue, reference ranges and interpretation rules — both retunable by a pathologist — analyzers, device messages |
 | Facility | room directory, rooms, floors, room types, beds, departments — all editable by an administrator |
@@ -608,12 +639,12 @@ make help          # everything else
 Or directly:
 
 ```bash
-mvn -q verify                                     # 354 Java unit and integration tests
+mvn -q verify                                     # 366 Java unit and integration tests
 cd services/ai-service && uv run pytest -q        # 91 Python tests
 cd web && npm run lint && npm run typecheck       # web static checks
 cd web && npm test                                # 40 web unit tests
 cd web && npx playwright test                     # 77 browser tests, no skips
-mvn -Pautomation -pl tests/api verify             # 115 API and security abuse cases
+mvn -Pautomation -pl tests/api verify             # 121 API and security abuse cases
 ```
 
 | Layer | What runs | Where |
@@ -853,6 +884,10 @@ SAST/DAST tooling, and performance profiles. Dependency scanning covers Python (
   verbatim on signed reports. There is no critical-value concept anywhere in the service — no
   column, field, flag or notification — so there is no critical-range editor to build yet.
 - **Further clinical modules** — billing and claims, pharmacy and inventory, imaging/PACS.
+- **A named waiting-room display route.** The corridor screen is `/display/{roomCode}` and a
+  kiosk has to be pointed at it by hand once; there is no per-screen configuration, no rotation
+  between rooms, and no "this floor's clinics" view. A hospital with twenty screens would want
+  one, and it is a page rather than a platform gap.
 - **A patient portal.** Every outbound message ends in a link to one, and the link currently
   points at the clinical web app's origin. The messages are built the way they are *because* there
   is meant to be somewhere behind a sign-in to say the specific thing — until the portal exists,

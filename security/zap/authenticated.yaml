@@ -148,6 +148,10 @@ jobs:
       - url: "${ZAP_TARGET}/patients/00000000-0000-4000-8000-000000000000/contact"
         method: GET
         responseCode: 403
+      # The OPD token board: readable by everybody clinical, and it carries a room code, some
+      # numbers and an appointment id - less than the appointment book they can already read.
+      - url: "${ZAP_TARGET}/queue/GF-GEN"
+        method: GET
 
   - type: spider
     parameters:

@@ -98,8 +98,16 @@ export const MENUS: Menu[] = [
         note: "Booked, slot passed, never checked in",
       },
       { label: "Clinician schedules", href: "/scheduling/schedules", roles: ADMIN_ONLY },
-      { label: "OPD token queue", href: "/not-built/opd-queue", notBuilt: true },
-      { label: "Waiting-room display", href: "/not-built/waiting-display", notBuilt: true },
+      { label: "OPD token queue", href: "/scheduling/queue", roles: CLINICAL_READ },
+      {
+        label: "Waiting-room display",
+        href: "/display/GF-GEN",
+        roles: CLINICAL_READ,
+        // The only menu item that leads somewhere unauthenticated, and it is here so somebody can
+        // find the URL to type into a kiosk once. The room code in the link is the seeded general
+        // OPD room; the display takes any room code.
+        note: "Opens the corridor screen for GF-GEN",
+      },
     ],
   },
 
