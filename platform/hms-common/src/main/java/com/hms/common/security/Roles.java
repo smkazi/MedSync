@@ -14,6 +14,21 @@ public final class Roles {
     public static final String PATHOLOGIST = "PATHOLOGIST";
 
     /**
+     * A service account, not a person.
+     *
+     * <p>Held by work that is triggered by an event rather than a request and therefore has no
+     * caller's token to forward — today, notification-service deciding where to send "your report
+     * is ready". Deliberately the narrowest role on the platform: it reads a patient's phone
+     * number and email address and nothing else, so a leaked service password buys an attacker a
+     * contact list rather than a chart.
+     *
+     * <p>Never granted to a human account, and it is not in {@link #CLINICAL_READ}: a service that
+     * could read what {@code reception} can read would make the whole point of a separate role
+     * disappear.
+     */
+    public static final String SERVICE = "SERVICE";
+
+    /**
      * Everyone who may look up a patient: demographics, contact details, allergies, appointments,
      * lab orders. Broad on purpose - the front desk books, the lab needs to know whose sample it
      * is holding, and an allergy that nobody can see protects nobody.
@@ -61,6 +76,33 @@ public final class Roles {
      * may rewrite what a signed report says.
      */
     public static final String LAB_CONFIG = "hasAnyRole('ADMIN','PATHOLOGIST')";
+
+    /**
+     * Who may read a patient's contact details on their own, without the rest of the record.
+     *
+     * <p>The narrow endpoint exists so that a service which needs to address a message does not
+     * have to be given {@link #CLINICAL_READ}, which would hand it demographics, allergies and
+     * every appointment. The same line {@link #CHART_READ} draws between "can look a patient up"
+     * and "can read their chart", drawn once more a level lower.
+     *
+     * <p>ADMIN is in because an administrator diagnosing why a message was not delivered needs to
+     * see what address it would have gone to.
+     */
+    public static final String CONTACT_READ = "hasAnyRole('ADMIN','SERVICE')";
+
+    /**
+     * Who may ask the platform to send a message.
+     *
+     * <p>Broad on the clinical side and closed to the laboratory: the front desk tells a patient
+     * their appointment moved, a clinician tells them to come in, and neither the bench nor a
+     * pathologist has a reason to originate one. The event-driven path does not come through here
+     * at all — it is a consumer, and consumers are not authorised, they are wired.
+     */
+    public static final String NOTIFY_SEND = "hasAnyRole('ADMIN','DOCTOR','NURSE','RECEPTIONIST')";
+
+    /** Who may read the delivery log: what was sent, to which address, and whether it arrived. */
+    public static final String NOTIFY_READ =
+            "hasAnyRole('ADMIN','DOCTOR','NURSE','RECEPTIONIST')";
 
     public static final String ADMIN_ONLY = "hasRole('ADMIN')";
 

@@ -13,6 +13,7 @@ SERVICES=(
   "patient-service:8082"
   "scheduling-service:8083"
   "laboratory-service:8084"
+  "notification-service:8085"
   "gateway:8080"
 )
 

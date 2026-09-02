@@ -83,7 +83,18 @@ public class DevDataSeeder implements ApplicationRunner {
             // The fixture for the initial-password gate: signs in, holds a real role in the
             // database, and can still do nothing until the password is changed.
             new SeedUser("33333333-0000-4000-8000-000000000007", "new.starter", "starter@hms.local",
-                    "Priya Nair", Set.of("RECEPTIONIST"), true));
+                    "Priya Nair", Set.of("RECEPTIONIST"), true),
+            // Not a person. notification-service signs in as this to look up where to send "your
+            // report is ready", because the work is triggered by a Kafka message and a message
+            // carries no caller's token. It holds SERVICE and nothing else, which reads a phone
+            // number and an email address and no part of a chart.
+            //
+            // Never flagged must-change-password: the flag issues a token with no roles, so a
+            // flagged service account would sign in successfully and then 403 on every call with
+            // nothing in the logs saying why. A deployment sets this account's password itself and
+            // the flag would be a trap rather than a control.
+            new SeedUser("33333333-0000-4000-8000-000000000008", "svc.notification",
+                    "notification@hms.local", "Notification Service", Set.of("SERVICE")));
 
     private final UserRepository users;
     private final RoleRepository roles;

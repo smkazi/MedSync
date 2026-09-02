@@ -97,6 +97,20 @@ public final class PatientDtos {
     public record PatientIdentifiers(UUID id, String mrn, String nationalId, String insurancePolicyNo) {
     }
 
+    /**
+     * Where a patient can be reached, and nothing else.
+     *
+     * <p>No name, no MRN, no date of birth. The caller is a service deciding which phone number a
+     * message goes to, and every field it does not need is a field a leak would carry. The
+     * patient id is echoed only so a caller batching lookups can tell the answers apart.
+     *
+     * <p>{@code active} is here because it changes what should be sent: messaging an archived
+     * record is at best useless and at worst a message to somebody who has died, so the decision
+     * belongs to the caller and needs the fact.
+     */
+    public record PatientContact(UUID id, String phone, String email, boolean active) {
+    }
+
     public record AddAllergyRequest(@NotBlank @Size(max = 120) String substance,
                                     @Size(max = 255) String reaction,
                                     @NotNull AllergySeverity severity) {

@@ -25,6 +25,7 @@
     <module>services/patient-service</module>
     <module>services/laboratory-service</module>
     <module>services/scheduling-service</module>
+    <module>services/notification-service</module>
   </modules>
 
   <properties>

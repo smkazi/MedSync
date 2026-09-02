@@ -27,6 +27,7 @@ const EXPECTED_TOP_LEVEL: Record<RoleName, string[]> = {
     "Facility",
     "Pharmacy",
     "Billing",
+    "Messaging",
     "Administration",
   ],
   DOCTOR: [
@@ -38,6 +39,7 @@ const EXPECTED_TOP_LEVEL: Record<RoleName, string[]> = {
     "Facility",
     "Pharmacy",
     "Billing",
+    "Messaging",
   ],
   NURSE: [
     "Dashboard",
@@ -48,6 +50,7 @@ const EXPECTED_TOP_LEVEL: Record<RoleName, string[]> = {
     "Facility",
     "Pharmacy",
     "Billing",
+    "Messaging",
   ],
   RECEPTIONIST: [
     "Dashboard",
@@ -57,6 +60,7 @@ const EXPECTED_TOP_LEVEL: Record<RoleName, string[]> = {
     "Facility",
     "Pharmacy",
     "Billing",
+    "Messaging",
   ],
   LAB_TECH: [
     "Dashboard",

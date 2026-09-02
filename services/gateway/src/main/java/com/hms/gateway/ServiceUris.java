@@ -7,5 +7,6 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * Kubernetes service names in a cluster — so no service registry is needed.
  */
 @ConfigurationProperties(prefix = "hms.services")
-public record ServiceUris(String identity, String patient, String scheduling, String laboratory, String ai) {
+public record ServiceUris(String identity, String patient, String scheduling, String laboratory,
+                          String notification, String ai) {
 }

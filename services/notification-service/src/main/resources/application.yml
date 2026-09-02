@@ -1,0 +1,104 @@
+spring:
+  application:
+    name: notification-service
+  datasource:
+    url: ${HMS_DB_URL:jdbc:postgresql://localhost:5432/hms}
+    username: ${HMS_DB_USER:hms}
+    password: ${HMS_DB_PASSWORD:hms}
+    hikari:
+      schema: notification
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: notification
+        jdbc:
+          time_zone: UTC
+  flyway:
+    enabled: true
+    schemas: notification
+    default-schema: notification
+    create-schemas: true
+  kafka:
+    bootstrap-servers: ${HMS_KAFKA:localhost:9092}
+  # No mail host by default, so SmtpChannel does not exist and the platform falls back to the
+  # delivery log. A deployment with a mail server sets HMS_SMTP_HOST and the channel appears.
+  mail:
+    host: ${HMS_SMTP_HOST:}
+    port: ${HMS_SMTP_PORT:587}
+    username: ${HMS_SMTP_USER:}
+    password: ${HMS_SMTP_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: ${HMS_SMTP_AUTH:true}
+          starttls:
+            enable: ${HMS_SMTP_STARTTLS:true}
+
+server:
+  port: ${HMS_NOTIFICATION_PORT:8085}
+  error:
+    include-message: never
+    include-stacktrace: never
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  health:
+    # Off deliberately, and not to hide a problem. Boot's mail health indicator opens a
+    # connection to the SMTP server, so a mail outage - or, with no host configured, an empty
+    # host - makes /actuator/health report DOWN and takes the service out of the load balancer.
+    # That is exactly backwards: this module is built to degrade one message at a time and record
+    # why, so a mail server being unreachable is a fact about a delivery rather than about whether
+    # notification-service is working. Found by the service failing to come up at all on a
+    # deployment with no mail server.
+    mail:
+      enabled: false
+
+hms:
+  security:
+    mode: resource-server
+  events:
+    transport: ${HMS_EVENTS_TRANSPORT:log}
+  patient:
+    base-url: ${HMS_PATIENT_URI:http://localhost:8082}
+  identity:
+    base-url: ${HMS_IDENTITY_URI:http://localhost:8081}
+  # The service account this module signs in as to look up where to send a message. Absent by
+  # default: no username means no ServiceTokenProvider bean, which means no contact lookup, which
+  # means every event-driven message is recorded SUPPRESSED with the reason. A working, inspectable
+  # deployment that has simply not been told how to reach anybody.
+  #
+  # There is deliberately no default password. A credential in a repository is a credential in a
+  # repository however it is spelled.
+  service-account:
+    username: ${HMS_NOTIFICATION_ACCOUNT:}
+    password: ${HMS_NOTIFICATION_PASSWORD:}
+  notification:
+    # Where a message tells the patient to go. Every template ends in this and nothing else.
+    portal-url: ${HMS_PORTAL_URL:http://localhost:3000}
+    from: ${HMS_NOTIFICATION_FROM:no-reply@localhost}
+    # What the event-driven path asks for. LOG until a deployment has somewhere real to send.
+    default-channel: ${HMS_NOTIFICATION_CHANNEL:LOG}
+    sms:
+      # Generic on purpose: every SMS gateway takes a different body, so the field names are
+      # configuration. Unset means HttpGatewayChannel does not exist at all.
+      url: ${HMS_SMS_URL:}
+      to-field: ${HMS_SMS_TO_FIELD:to}
+      text-field: ${HMS_SMS_TEXT_FIELD:text}
+      auth-header: ${HMS_SMS_AUTH_HEADER:Authorization}
+      auth-value: ${HMS_SMS_AUTH_VALUE:}
+
+spring.security.oauth2.resourceserver.jwt.jwk-set-uri: ${HMS_JWKS_URI:http://localhost:8081/.well-known/jwks.json}
+
+logging:
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level [%X{correlationId:-}] %logger{36} - %msg%n"

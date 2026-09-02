@@ -10,9 +10,9 @@ haematology analyzer over its own wire protocol and released by a pathologist.
 
 > **Status:** the clinical core, the laboratory (including analyzer integration), the AI service
 > and the web UI are implemented and verified end to end against a real stack, and so are the
-> containerisation, TLS, security-testing and performance-testing layers. **629 tests pass** —
-> 327 Java unit and integration, 91 Python, 40 web unit, 99 black-box API and security abuse cases,
-> and 72 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
+> containerisation, TLS, security-testing and performance-testing layers. **677 tests pass** —
+> 354 Java unit and integration, 91 Python, 40 web unit, 115 black-box API and security abuse cases,
+> and 77 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
 > [Security](#security); what is left is in the [Roadmap](#roadmap).
 
 ---
@@ -45,15 +45,15 @@ haematology analyzer over its own wire protocol and released by a pathologist.
                           └──┬──────┬──────┬──────┬──────┬───┘
              ┌───────────────┘      │      │      │      │
              ▼                      ▼      ▼      ▼      ▼
-      identity :8081        patient :8082  scheduling :8083  laboratory :8084   ai :8000
-      users · roles         patients       appointments      lab orders         FastAPI
-      RS256 + JWKS          staff          encounters        ASTM + K-DPS       4 capabilities
-      audit trail           departments    notes · vitals    results            (Claude + models)
-             │                      │            │                │                 │
-             └──── Kafka: hms.patient · hms.appointment · hms.lab · hms.audit ───────┘
+      identity :8081   patient :8082  scheduling :8083  laboratory :8084  notification :8085  ai :8000
+      users · roles    patients       appointments      lab orders        delivery log        FastAPI
+      RS256 + JWKS     staff          encounters        ASTM + K-DPS      SMTP · HTTP SMS     4 capabilities
+      audit trail      departments    notes · vitals    results           no PHI outbound     (Claude + models)
+             │                 │            │                │                  │                 │
+             └──── Kafka: hms.patient · hms.appointment · hms.lab · hms.audit ──────────────────────┘
                                      │
                     PostgreSQL 16 — one schema per service
-              identity · patient · scheduling · laboratory
+         identity · patient · scheduling · laboratory · notification
 ```
 
 **Authentication.** `identity-service` is the only holder of passwords and the only issuer of
@@ -79,7 +79,7 @@ order) are plain columns, not foreign keys, so a service survives another's outa
 .
 ├── pom.xml                      Maven aggregator; -Pquality / -Psecurity / -Pmutation / -Pautomation
 ├── Makefile                     every task, one place. `make help`
-├── docker-compose.yml           postgres, kafka (KRaft), five services, ai-service, web
+├── docker-compose.yml           postgres, kafka (KRaft), six services, ai-service, web
 ├── Dockerfile.java              shared multi-stage build, ARG SERVICE, non-root
 ├── config/                      SpotBugs exclusions and Dependency-Check suppressions, each with a reason
 ├── platform/hms-common/         security, errors, events, audit, crypto, pagination
@@ -89,6 +89,7 @@ order) are plain columns, not foreign keys, so a service survives another's outa
 │   ├── patient-service/         patients, staff, departments, allergies, PHI encryption
 │   ├── scheduling-service/      appointments, encounters, notes, vitals, diagnoses
 │   ├── laboratory-service/      orders, results, reference ranges, ASTM + K-DPS parsers
+│   ├── notification-service/    channels, delivery log, message templates
 │   └── ai-service/              FastAPI: summarisation, no-show risk, triage, ICD-10
 ├── web/                         Next.js 16 app, Playwright suite in e2e/
 ├── tests/
@@ -144,6 +145,52 @@ interval and the report falls back to the analyzer's own — a haemoglobin of 12
 for a woman and low for a man, and picking a side by default is picking wrong half the time,
 silently, on the number a clinician treats from.
 
+### `notification-service` — schema `notification`
+Outbound messaging: a delivery log, the wording behind it, and three channels — a logging channel
+(the default, and not a stub), plain SMTP for email, and a **generic HTTP gateway** for SMS.
+
+Generic on purpose. Every SMS and WhatsApp gateway takes a different POST body, a different
+authentication header and a different success shape, so hard-coding one would pick a vendor for
+every deployment, add a paid dependency, and make the module untestable without that vendor's
+sandbox. Instead the URL, the field names and the header are configuration — which means a
+deployment can point it at whichever provider it already pays, or at an open-source SMS gateway on
+a SIM modem, which is what a small hospital actually runs. Same reasoning for SMTP over a mail
+vendor's SDK: every hospital already has a mail server, and SMTP is what all of them speak.
+
+**No outbound message carries protected health information.** Not a value, not a flag, not a
+diagnosis, not a name, not an MRN. A phone number is often stale, is frequently shared within a
+family, and SMS is plaintext to the handset — so "your haemoglobin is 9.6, which is low" is a
+disclosure to whoever happens to be holding the phone, while "a report is ready, sign in to view
+it" is not. A released-report message reads the same whether the report is entirely normal or
+entirely not, because a notification whose *existence* implied bad news would be as much of a
+disclosure as one that said so.
+
+That rule is enforced by construction rather than stated in prose. Callers supply **no text at
+all** — they choose a category, and the words come from a template — and a template may interpolate
+only two values, `{portalUrl}` and `{when}`. Anything else is refused when the template is saved
+and again when it is rendered. Rewording a message therefore cannot introduce a clinical value, and
+it is checked in the service's own suite, in `tests/api` against the deployed gateway, and in the
+browser suite on the screen where somebody would try to work around it.
+
+Every attempt is a row: what was said, which address it went to, and whether it arrived. It is a
+delivery log first and a queue second, because the question asked afterwards is almost always "was
+the patient told?" and a queue that deletes what it has processed cannot answer it. `SUPPRESSED` is
+a real outcome — nothing was sent, on purpose, because there was nowhere to send it or the record is
+archived — recorded rather than skipped, so "the patient was never told" has evidence behind it.
+Replaying the same event produces one message: the idempotency key is a unique index, not a check
+in application code, because two consumers handling a redelivery both pass a check and only one can
+win an insert.
+
+**A service account, because a consumer has no caller.** Every cross-service call elsewhere in the
+platform forwards the caller's own token, which is the right default. A Kafka consumer has nobody
+to forward: the trigger is an event, and an event deliberately carries no credential. So this
+module signs in as `svc.notification`, holding the platform's narrowest role — `SERVICE`, which
+reads `GET /patients/{id}/contact` (a phone number, an email address, and whether the record is
+active) and nothing else. If that password leaks, what leaks with it is a contact list rather than
+a chart, and the access appears in the audit trail in the same place as every other. Unset by
+default, and that is a working configuration: with no service account the module composes and
+records every message and sends none, saying so in the row.
+
 ### `web` — Next.js 16, React 19
 The clinical interface. Server components call the gateway; **the browser never receives an access
 token** — the session lives in httpOnly cookies and every platform call is made server-side.
@@ -158,6 +205,7 @@ Nine top-level menus, defined once as data in `src/lib/menu.ts`:
 | Clinical | triage intake, encounter charting — vitals, the SOAP note, signing, amendments, ICD-10 coding, laboratory ordering — with AI assistance beside the note |
 | Laboratory | worklist, an order's report with collection, result entry and release, specimen labels, scan a tube, test catalogue, reference ranges and interpretation rules — both retunable by a pathologist — analyzers, device messages |
 | Facility | room directory, rooms, floors, room types, beds, departments — all editable by an administrator |
+| Messaging | delivery log with the send form, message wording — readable by anybody who may send, editable by an administrator |
 | Pharmacy, Billing | *not built* — see below |
 | Administration | staff directory, users (create, roles, reset a password), roles, audit trail |
 
@@ -280,7 +328,7 @@ cp .env.example .env        # then edit it
 docker compose up --build -d
 ```
 
-That brings up PostgreSQL, Kafka in KRaft mode, all five Java services, the AI service and the web
+That brings up PostgreSQL, Kafka in KRaft mode, all six Java services, the AI service and the web
 app. Open http://localhost:3000. `make up` and `make down` are the same thing with less typing;
 `make help` lists every target.
 
@@ -346,7 +394,7 @@ uv run uvicorn app.main:app --port 8000
 
 ### 5. Sign in
 
-The dev profile seeds one account per role, all flagged must-change-password:
+The dev profile seeds one account per role:
 
 | Username | Role |
 | --- | --- |
@@ -357,6 +405,7 @@ The dev profile seeds one account per role, all flagged must-change-password:
 | `lab.tech` | LAB_TECH |
 | `dr.pathan` | PATHOLOGIST |
 | `new.starter` | RECEPTIONIST — **still on its initial password**, so it can do nothing but change it |
+| `svc.notification` | SERVICE — **not a person.** notification-service signs in as this to find out where to send a message, because the work is triggered by an event and an event carries no caller's token. It holds the platform's narrowest role: a phone number, an email address, and no part of a chart. |
 
 The seed password comes from `HMS_SEED_PASSWORD` and defaults to `ChangeMe!Dev2026`.
 
@@ -378,7 +427,7 @@ a session that can do exactly one useful thing: change it. The mechanism is a to
 
 - It is *structural*, not a list of blocked paths. Every endpoint outside `/auth/**` sits behind a
   `@PreAuthorize` naming at least one role, so a role-less token is refused by the authorisation
-  rules that already exist — in all five services, and in any service written later, without any of
+  rules that already exist — in all six services, and in any service written later, without any of
   them knowing the flag exists. `/auth/me`, `/auth/logout` and `/auth/change-password` carry no role
   requirement, which is how the account fixes itself and signs out.
 - Refusing the login outright would be simpler and useless: `POST /auth/change-password` needs a
@@ -559,12 +608,12 @@ make help          # everything else
 Or directly:
 
 ```bash
-mvn -q verify                                     # 327 Java unit and integration tests
+mvn -q verify                                     # 354 Java unit and integration tests
 cd services/ai-service && uv run pytest -q        # 91 Python tests
 cd web && npm run lint && npm run typecheck       # web static checks
 cd web && npm test                                # 40 web unit tests
-cd web && npx playwright test                     # 72 browser tests, no skips
-mvn -Pautomation -pl tests/api verify             # 99 API and security abuse cases
+cd web && npx playwright test                     # 77 browser tests, no skips
+mvn -Pautomation -pl tests/api verify             # 115 API and security abuse cases
 ```
 
 | Layer | What runs | Where |
@@ -778,8 +827,8 @@ Worth writing down, because it is the argument for having built them:
 ## Roadmap
 
 **Implemented and verified against a running stack:** clinical core, laboratory with analyzer
-integration, AI service, web UI, containerisation, TLS, the full test pyramid, SAST/DAST tooling,
-and performance profiles. Dependency scanning covers Python (`pip-audit`) and the web app
+integration, outbound messaging, AI service, web UI, containerisation, TLS, the full test pyramid,
+SAST/DAST tooling, and performance profiles. Dependency scanning covers Python (`pip-audit`) and the web app
 (`npm audit`) on every run, and Java through Trivy over the SBOM.
 
 **Shipped but not verified here:**
@@ -804,6 +853,20 @@ and performance profiles. Dependency scanning covers Python (`pip-audit`) and th
   verbatim on signed reports. There is no critical-value concept anywhere in the service — no
   column, field, flag or notification — so there is no critical-range editor to build yet.
 - **Further clinical modules** — billing and claims, pharmacy and inventory, imaging/PACS.
+- **A patient portal.** Every outbound message ends in a link to one, and the link currently
+  points at the clinical web app's origin. The messages are built the way they are *because* there
+  is meant to be somewhere behind a sign-in to say the specific thing — until the portal exists,
+  the platform is telling patients to go somewhere that is not built yet, and that is named here
+  rather than hidden by making the messages say more.
+- **Delivery receipts.** The HTTP gateway channel records a non-2xx as a failure and the response
+  body verbatim; it does not consume a provider's delivery-report callback, so "accepted by the
+  gateway" is as far as the log goes. That is the cost of being provider-neutral and it is the
+  right trade for a module whose job is one sentence and a link.
+- **Retries.** A failed message is recorded once with the channel's reason and is not retried. A
+  retry loop needs a scheduler, a backoff policy and a decision about how long a "your report is
+  ready" stays worth sending, and guessing at those would be worse than the honest log.
+- **Notification preferences.** A patient cannot yet say "email, not SMS" or opt out. The channel
+  is chosen by the sender or by configuration.
 - **Analyzer transport** — the RS-232/TCP device gateway. The ported parsers are
   transport-agnostic, exactly as they are in the source project, and `POST /lab/device-messages`
   is the seam a device gateway plugs into.

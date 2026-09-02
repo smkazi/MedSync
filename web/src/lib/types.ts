@@ -457,3 +457,52 @@ export type AuditEntry = {
   correlationId: string | null;
   occurredAt: string;
 };
+
+// ---- outbound messaging -----------------------------------------------------
+
+export type NotificationChannel = "LOG" | "EMAIL" | "SMS";
+
+export type NotificationCategory =
+  | "LAB_REPORT_READY"
+  | "APPOINTMENT_CONFIRMED"
+  | "APPOINTMENT_REMINDER"
+  | "APPOINTMENT_CANCELLED"
+  | "PORTAL_MESSAGE";
+
+/**
+ * One attempt to tell somebody something.
+ *
+ * `SUPPRESSED` is a real outcome rather than a failure: nothing was sent, on purpose, because
+ * there was nowhere to send it or the record says not to. `failedReason` carries the platform's
+ * own words either way.
+ */
+export type Notification = {
+  id: string;
+  channel: NotificationChannel;
+  category: NotificationCategory;
+  recipient: string | null;
+  subject: string | null;
+  body: string;
+  status: "SENT" | "FAILED" | "SUPPRESSED";
+  attempts: number;
+  patientId: string | null;
+  reference: string | null;
+  createdAt: string;
+  sentAt: string | null;
+  failedReason: string | null;
+};
+
+/** What this deployment can actually send with, so a screen does not offer what does not exist. */
+export type MessagingCapabilities = {
+  channels: NotificationChannel[];
+  contactLookupConfigured: boolean;
+};
+
+export type MessageTemplate = {
+  id: string;
+  category: NotificationCategory;
+  channel: NotificationChannel;
+  subject: string | null;
+  body: string;
+  active: boolean;
+};

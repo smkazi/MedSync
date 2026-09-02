@@ -15,7 +15,7 @@ PASSWORD="${CERT_PASSWORD:-changeit}"
 
 # Every name the certificate must be valid for: localhost for a laptop, the compose service names
 # for container-to-container calls.
-SANS="DNS:localhost,DNS:gateway,DNS:identity-service,DNS:patient-service,DNS:scheduling-service,DNS:laboratory-service,DNS:ai-service,DNS:web,IP:127.0.0.1"
+SANS="DNS:localhost,DNS:gateway,DNS:identity-service,DNS:patient-service,DNS:scheduling-service,DNS:laboratory-service,DNS:notification-service,DNS:ai-service,DNS:web,IP:127.0.0.1"
 
 mkdir -p "$CERT_DIR"
 cd "$CERT_DIR"

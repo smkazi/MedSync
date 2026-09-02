@@ -129,6 +129,25 @@ jobs:
         method: PATCH
         data: '{"active":false}'
         responseCode: 403
+      # Outbound messaging. A clinician originates a message and reads the delivery log; the
+      # wording templates are the platform's voice to a patient and are administrative, so a 200
+      # on that PATCH as a DOCTOR is a finding.
+      - url: "${ZAP_TARGET}/notifications?size=20"
+        method: GET
+      - url: "${ZAP_TARGET}/notifications/capabilities"
+        method: GET
+      - url: "${ZAP_TARGET}/notifications/templates"
+        method: GET
+      - url: "${ZAP_TARGET}/notifications/templates/00000000-0000-0000-0000-000000000000"
+        method: PATCH
+        data: '{"body":"x {portalUrl}"}'
+        responseCode: 403
+      # The narrow contact endpoint exists so a service need not hold CLINICAL_READ. A doctor
+      # already has the chart, so this is deliberately closed to them too - and a 200 here would
+      # mean the narrowing had been quietly undone.
+      - url: "${ZAP_TARGET}/patients/00000000-0000-4000-8000-000000000000/contact"
+        method: GET
+        responseCode: 403
 
   - type: spider
     parameters:

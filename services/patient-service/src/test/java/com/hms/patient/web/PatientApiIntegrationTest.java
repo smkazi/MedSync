@@ -265,6 +265,59 @@ class PatientApiIntegrationTest {
     }
 
     @Test
+    @DisplayName("the contact endpoint releases a phone and an email and no part of the record")
+    void contactIsNarrow() throws Exception {
+        JsonNode patient = register(uniqueSurname());
+        String id = patient.get("id").asString();
+
+        mockMvc.perform(get("/patients/" + id + "/contact").with(as("SERVICE")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(id))
+                .andExpect(jsonPath("$.phone").exists())
+                .andExpect(jsonPath("$.active").value(true))
+                // The whole point of a separate endpoint: a service that needs somewhere to send a
+                // message must not receive the chart. If any of these ever appear here, the
+                // narrowing has been undone and CLINICAL_READ may as well have been granted.
+                .andExpect(jsonPath("$.fullName").doesNotExist())
+                .andExpect(jsonPath("$.mrn").doesNotExist())
+                .andExpect(jsonPath("$.dateOfBirth").doesNotExist())
+                .andExpect(jsonPath("$.allergies").doesNotExist())
+                .andExpect(jsonPath("$.nationalId").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("a service account can read a contact and nothing else at all")
+    void serviceAccountReachesOnlyTheContact() throws Exception {
+        String id = register(uniqueSurname()).get("id").asString();
+
+        mockMvc.perform(get("/patients/" + id + "/contact").with(as("SERVICE")))
+                .andExpect(status().isOk());
+        // SERVICE is deliberately not in CLINICAL_READ. A service that could read what the front
+        // desk can read would make a separate role pointless, and the password for an unattended
+        // account is the one most likely to end up in a deployment file somebody can read.
+        mockMvc.perform(get("/patients/" + id).with(as("SERVICE"))).andExpect(status().isForbidden());
+        mockMvc.perform(get("/patients").with(as("SERVICE"))).andExpect(status().isForbidden());
+        mockMvc.perform(get("/patients/" + id + "/identifiers").with(as("SERVICE")))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("a clinician who can read the whole chart cannot read the contact endpoint")
+    void contactIsNotClinicalRead() throws Exception {
+        String id = register(uniqueSurname()).get("id").asString();
+
+        // Not a gap. A doctor gets the phone number from the chart, where it belongs in context;
+        // this endpoint exists only to avoid granting the chart, so widening it to everyone who
+        // already has the chart would add a second, narrower door to the same room for no reason.
+        mockMvc.perform(get("/patients/" + id + "/contact").with(as("DOCTOR")))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/patients/" + id + "/contact").with(as("RECEPTIONIST")))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/patients/" + id + "/contact").with(as("ADMIN")))
+                .andExpect(status().isOk());
+    }
+
+    @Test
     @DisplayName("a receptionist may register but not record clinical data")
     void receptionistCannotRecordAllergies() throws Exception {
         String id = register(uniqueSurname()).get("id").asString();

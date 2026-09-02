@@ -16,6 +16,7 @@ COPY services/identity-service/pom.xml services/identity-service/
 COPY services/patient-service/pom.xml services/patient-service/
 COPY services/scheduling-service/pom.xml services/scheduling-service/
 COPY services/laboratory-service/pom.xml services/laboratory-service/
+COPY services/notification-service/pom.xml services/notification-service/
 RUN mvn -B -q dependency:go-offline -DskipTests || true
 
 COPY platform platform

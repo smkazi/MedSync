@@ -61,6 +61,10 @@ const FRONT_DESK: RoleName[] = ["ADMIN", "RECEPTIONIST", "DOCTOR", "NURSE"];
 const LAB: RoleName[] = ["ADMIN", "DOCTOR", "NURSE", "LAB_TECH", "PATHOLOGIST"];
 const LAB_WRITE: RoleName[] = ["ADMIN", "LAB_TECH", "PATHOLOGIST"];
 const TRIAGE: RoleName[] = ["ADMIN", "DOCTOR", "NURSE", "RECEPTIONIST"];
+// Who may tell a patient something, and read what they were told. Closed to the laboratory on
+// purpose: releasing a report triggers a message through the event, not by anybody pressing a
+// button, and the bench has no reason to originate one.
+const NOTIFY: RoleName[] = ["ADMIN", "DOCTOR", "NURSE", "RECEPTIONIST"];
 const ADMIN_ONLY: RoleName[] = ["ADMIN"];
 
 /**
@@ -157,6 +161,25 @@ export const MENUS: Menu[] = [
       { label: "Payers & tariffs", href: "/not-built/payers", notBuilt: true },
       { label: "Claims", href: "/not-built/claims", notBuilt: true },
       { label: "Receivables", href: "/not-built/receivables", notBuilt: true },
+    ],
+  },
+
+  {
+    label: "Messaging",
+    roles: NOTIFY,
+    items: [
+      {
+        label: "Delivery log",
+        href: "/messaging",
+        roles: NOTIFY,
+        note: "What was sent, and whether it arrived",
+      },
+      {
+        label: "Message wording",
+        href: "/messaging/templates",
+        roles: NOTIFY,
+        note: "Editable by an administrator",
+      },
     ],
   },
 

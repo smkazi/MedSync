@@ -39,6 +39,7 @@ services and a room code is cached on appointments, and none of them would learn
 | Morphology cut-offs | `laboratory.morphology_thresholds` | `PATCH /lab/morphology-thresholds/{code}` (the number, not the note) |
 | Analyzers | `laboratory.analyzers` | migration or admin |
 | Clinician schedules and blackouts | `scheduling.clinician_schedules`, `.schedule_blackouts` | `POST /schedules` |
+| **Message wording** | `notification.message_templates` | `PATCH /notifications/templates/{id}` — with one limit, below |
 | ICD-10 subset | `services/ai-service/data/icd10_subset.json` | replace the file |
 
 ### Three tiers of threshold, and why none of them collapses into another
@@ -66,6 +67,28 @@ pathologist has already put their name to.
 
 `LabApiIntegrationTest.twoTiersAreDistinct` pins the first two apart: a haemoglobin of 10.8 g/dL
 must flag `L` and must **not** produce a narrative.
+
+### Message wording is configuration; the values it may interpolate are not
+
+The words a patient reads are rows: a hospital rewrites them, translates them, and the legal team
+has opinions about them. What a template may *interpolate* is a closed set two entries wide —
+`{portalUrl}` and `{when}` — and `MessageComposer` refuses anything else, both when a template is
+saved and again when it is rendered.
+
+That refusal is where the platform's no-PHI-in-outbound-messages rule actually lives. Without it the
+rule would be prose, and prose erodes: adding `{value}` to a template would be enough to put a
+laboratory result into an SMS, and nobody would have written a line of code to do it. A phone number
+is often stale, is frequently shared within a family, and SMS is plaintext to the handset — so a
+message says that something is ready and where to sign in, and never what it says.
+
+`{when}` is allowed because a date is not a clinical finding: somebody reading a shared handset
+learns that this person has an appointment, which the message's existence already told them, and not
+what it is for or who it is with. Adding a third placeholder is the one change that could break the
+rule, so it should not happen without deciding in writing that the new value is not a clinical fact.
+
+The same reasoning makes a released-report message identical whether the report is entirely normal
+or entirely not. A notification whose *existence* implied bad news would be as much of a disclosure
+as one that said so.
 
 ### `parameter_scales` is the one that fails silently
 
@@ -114,6 +137,8 @@ cannot act on.
 | `AllergySeverity` | `SEVERE` and `LIFE_THREATENING` will refuse a dispense outright (pharmacy, planned). A configurable list means someone adds "VERY SEVERE" and it silently stops blocking. This one is a patient-safety rule wearing a taxonomy's clothes. |
 | `OrderStatus`, `ResultStatus` | Encode separation of duties: a lab technician enters, a pathologist releases. The permitted transitions are the control. |
 | `Protocol` (`ASTM`, `KDPS`) | Each value maps to a parser class. A configured value with no parser behind it is a runtime failure at the worst moment — an analyzer transmitting a real sample. |
+| `NotificationCategory` | Each value is the key to a template *and* the thing a caller is allowed to choose instead of writing text. A configurable list would let somebody add a category with no wording behind it, which the platform records as "no active template" rather than sending — visible, but still a message a patient did not get. |
+| `NotificationChannel` | Each value maps to an adapter. A configured channel with no adapter is a message that silently becomes a log line. The *presence* of an adapter is configuration — no mail host means no email channel — and `GET /notifications/capabilities` reports which really exist so a screen does not offer one that does not. |
 | Roles | Named in `@PreAuthorize` expressions, which are compiled. The `identity.roles` table is data, but granting a role a capability is a code change. |
 | The navigation menu (`web/src/lib/menu.ts`) | A menu item needs a route, a page and a role gate that matches what the API enforces. All three are code, so a configurable menu would let somebody add an item that leads nowhere — or, worse, one whose role list is more generous than the `@PreAuthorize` behind it, which reads as a permission and is not one. It is *data* in the sense that it is one list rather than markup scattered through a layout; it is not configuration. |
 

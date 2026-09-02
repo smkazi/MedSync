@@ -3,6 +3,7 @@ package com.hms.apitests.security;
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.notNullValue;
 
 import com.hms.apitests.support.Api;
 import com.hms.apitests.support.Fixtures;
@@ -85,6 +86,15 @@ class AuthorizationAbuseIT extends RequiresRunningStack {
             // the lab and the front desk both need.
             "reception,     GET,    /lab/encounters/00000000-0000-0000-0000-000000000000/orders",
             "lab.tech,      GET,    /lab/encounters/00000000-0000-0000-0000-000000000000/orders",
+            // The bench does not tell patients things. A pathologist releasing a report triggers
+            // a message through the event, not by originating one.
+            "lab.tech,      POST,   /notifications",
+            "dr.pathan,     POST,   /notifications",
+            "lab.tech,      GET,    /notifications",
+            "dr.pathan,     GET,    /notifications",
+            // The platform's voice to a patient is administrative.
+            "dr.rao,        PATCH,  /notifications/templates/00000000-0000-0000-0000-000000000000",
+            "reception,     PATCH,  /notifications/templates/00000000-0000-0000-0000-000000000000",
     })
     void roleIsEnforcedPerEndpoint(String username, String method, String path) {
         var request = given().spec(Api.as(username.trim()));
@@ -123,6 +133,47 @@ class AuthorizationAbuseIT extends RequiresRunningStack {
         given().spec(Api.as(Api.LAB_TECH))
                 .body(Map.of("normalLow", 0, "normalHigh", 1))
                 .when().patch("/lab/reference-ranges/{id}", UUID.randomUUID())
+                .then().statusCode(403);
+    }
+
+    @Test
+    @DisplayName("the service account reaches a patient's contact details and nothing else at all")
+    void theServiceAccountIsAsNarrowAsItLooks() {
+        // The narrowest role on the platform, and the one whose password is most likely to end up
+        // in a deployment file: it exists because a Kafka consumer has no caller's token to
+        // forward, and it is worth proving that what it bought is a contact list rather than a
+        // chart. Every row below is a 403 or the whole point of a separate role has gone.
+        given().spec(Api.as(Api.SERVICE_ACCOUNT))
+                .when().get("/patients/{id}/contact", patientId)
+                .then().statusCode(200)
+                .body("phone", notNullValue())
+                // Not the chart, not even the name.
+                .body("fullName", org.hamcrest.Matchers.nullValue())
+                .body("mrn", org.hamcrest.Matchers.nullValue());
+
+        for (String path : List.of("/patients", "/patients/" + patientId,
+                "/patients/" + patientId + "/identifiers", "/encounters/patients/" + patientId,
+                "/lab/orders", "/appointments?from=2026-01-01&to=2026-12-31", "/staff",
+                "/notifications", "/admin/users")) {
+            given().spec(Api.as(Api.SERVICE_ACCOUNT))
+                    .when().get(path)
+                    .then().statusCode(org.hamcrest.Matchers.anyOf(
+                            org.hamcrest.Matchers.is(403), org.hamcrest.Matchers.is(405)));
+        }
+    }
+
+    @Test
+    @DisplayName("a clinician who can read the whole chart is not given the contact endpoint")
+    void theContactEndpointIsNotASecondDoorToTheChart() {
+        // Deliberate, not an oversight. A doctor reads the phone number from the chart, in
+        // context; this endpoint exists only so a service need not be granted the chart, and
+        // widening it to everyone who already has the chart would add a narrower door to the same
+        // room for nothing.
+        given().spec(Api.as(Api.DOCTOR))
+                .when().get("/patients/{id}/contact", patientId)
+                .then().statusCode(403);
+        given().spec(Api.as(Api.LAB_TECH))
+                .when().get("/patients/{id}/contact", patientId)
                 .then().statusCode(403);
     }
 

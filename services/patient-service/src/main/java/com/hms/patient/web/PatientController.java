@@ -73,6 +73,20 @@ public class PatientController {
         return service.readIdentifiers(id);
     }
 
+    /**
+     * Where the patient can be reached, and nothing else.
+     *
+     * <p>Its own endpoint rather than a field on the chart, because the caller is a service that
+     * needs a phone number and giving it {@code CLINICAL_READ} to get one would hand it the rest
+     * of the record. The same line {@code CHART_READ} draws between looking a patient up and
+     * reading their chart, drawn once more a level lower.
+     */
+    @GetMapping("/{id}/contact")
+    @PreAuthorize(Roles.CONTACT_READ)
+    public PatientDtos.PatientContact contact(@PathVariable UUID id) {
+        return service.readContact(id);
+    }
+
     @PatchMapping("/{id}")
     @PreAuthorize(Roles.FRONT_DESK)
     public PatientDtos.PatientResponse update(@PathVariable UUID id,

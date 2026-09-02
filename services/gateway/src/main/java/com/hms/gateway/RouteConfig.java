@@ -42,6 +42,10 @@ public class RouteConfig {
                 .route("laboratory", r -> r
                         .path("/lab/**")
                         .uri(services.laboratory()))
+                // Outbound messaging: the delivery log, and the wording templates behind it.
+                .route("notification", r -> r
+                        .path("/notifications/**")
+                        .uri(services.notification()))
                 // Clinical decision support: summarisation, triage, no-show risk, coding.
                 .route("ai", r -> r
                         .path("/ai/**")

@@ -1,0 +1,19 @@
+# Integration tests run against a real PostgreSQL: the delivery log's uniqueness guarantee is a
+# unique index, and the whole point of the idempotency test is that the database enforces it.
+spring:
+  datasource:
+    url: ${HMS_TEST_DB_URL:jdbc:postgresql://localhost:5432/hms_test}
+    username: ${HMS_TEST_DB_USER:hms}
+    password: ${HMS_TEST_DB_PASSWORD:hms}
+    hikari:
+      schema: notification
+  flyway:
+    enabled: true
+hms:
+  events:
+    transport: log
+  notification:
+    portal-url: https://portal.test.invalid/reports
+logging:
+  level:
+    org.flywaydb: WARN

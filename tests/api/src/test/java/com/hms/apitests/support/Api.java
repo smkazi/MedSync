@@ -35,6 +35,15 @@ public final class Api {
     public static final String LAB_TECH = "lab.tech";
     public static final String PATHOLOGIST = "dr.pathan";
 
+    /**
+     * The notification service's own account. Not a person.
+     *
+     * <p>Here so the abuse suite can prove the narrowest role on the platform really is narrow:
+     * an unattended account's password is the one most likely to end up in a deployment file
+     * somebody can read, so what it can reach matters more than what it is for.
+     */
+    public static final String SERVICE_ACCOUNT = "svc.notification";
+
     private static final Map<String, String> TOKEN_CACHE = new HashMap<>();
 
     private Api() {

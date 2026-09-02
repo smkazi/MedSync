@@ -142,6 +142,23 @@ public class PatientService {
                 patient.getInsurancePolicyNo());
     }
 
+    /**
+     * Releases a patient's contact details on their own.
+     *
+     * <p>Exists so a service that needs somewhere to send a message does not have to be given
+     * {@code CLINICAL_READ} and with it demographics, allergies and every appointment. Audited
+     * like the identifiers endpoint, and for the same reason: "which principal read this
+     * patient's phone number" must have an answer.
+     */
+    @Transactional
+    public PatientDtos.PatientContact readContact(UUID id) {
+        Patient patient = require(id);
+        audit.record("PATIENT_CONTACT_READ", "Patient", id,
+                "contact details released to " + CurrentUser.usernameOrSystem());
+        return new PatientDtos.PatientContact(patient.getId(), patient.getPhone(), patient.getEmail(),
+                patient.isActive());
+    }
+
     @Transactional
     public PatientDtos.AllergyResponse addAllergy(UUID patientId, PatientDtos.AddAllergyRequest request) {
         Patient patient = require(patientId);
