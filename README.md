@@ -589,6 +589,11 @@ the script against both failure modes. That a whole workflow's first run had thr
 failing is the argument for putting checks where people look: `ci.yml` runs on every push and gets
 read, and the dependency gate now lives there.
 
+The gate is HIGH/CRITICAL **and fixable**, and it takes two inputs to mean that, not one: without
+`limit-severities-for-sarif` the action announces "Building SARIF report with all severities" and
+quietly ignores `severity` for the SARIF pass, so the exit code gets decided over every severity
+including LOW and UNKNOWN. That is a gate failing on findings its own name excludes.
+
 It found something on its first real run, which is the point: `bcprov-jdk18on` was pinned at 1.82 in
 identity-service and carried CVE-2025-14813 (CRITICAL) and CVE-2026-5598 (HIGH — private-key leakage
 through non-constant-time comparison). The pin is gone; the version now comes from the imported

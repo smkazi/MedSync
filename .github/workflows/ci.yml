@@ -236,6 +236,11 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
+          # Without this the action prints "Building SARIF report with all severities" and ignores
+          # `severity` for this pass, so the exit code is decided over every severity including
+          # LOW and UNKNOWN. The step then fails on findings its own name says it does not gate on -
+          # which is exactly what happened once the HIGH/CRITICAL ones were actually fixed.
+          limit-severities-for-sarif: true
 
       - name: Upload the SBOM scan SARIF
         # hashFiles guards the silent pass: a missing report under continue-on-error looks exactly
