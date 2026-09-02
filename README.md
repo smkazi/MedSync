@@ -517,7 +517,8 @@ make perf-soak     # modest load held for an hour (PERF_SOAK_DURATION=8h for ove
 | SAST (Java) | SpotBugs + FindSecBugs | `mvn -Pquality verify`, gates on Medium and above |
 | SAST (Python) | Bandit + Ruff `S` rules | `uv run bandit`, `uv run ruff check` |
 | SAST (multi-language) | Semgrep — OWASP Top Ten, JWT, secrets, Dockerfile | nightly workflow, SARIF |
-| Dependencies | Trivy over a CycloneDX SBOM (fixable HIGH/CRITICAL fails), `pip-audit`, `npm audit` | `make sca` |
+| Dependencies | Trivy over a CycloneDX SBOM (fixable HIGH/CRITICAL fails) | `make sca` |
+| Dependencies, Python and web | `pip-audit`, `npm audit` — advisory on every push, blocking nightly | `make sca` |
 | Dependencies, second opinion | OWASP Dependency-Check (CVSS ≥ 7 fails) — **needs an NVD API key**, see below | `mvn -Psecurity verify -DnvdApiKey=…` |
 | Secrets | gitleaks over full history | CI, every push |
 | Containers / IaC | Trivy on a built image and the compose file | nightly workflow, SARIF |

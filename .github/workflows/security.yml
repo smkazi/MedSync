@@ -127,6 +127,29 @@ jobs:
       - name: pip-audit (blocking here, advisory in CI)
         run: uv run --with pip-audit pip-audit
 
+  web-audit:
+    # The counterpart python-audit has had since it was written, and the web app has not.
+    # `npm audit` in ci.yml carries continue-on-error, which is the same deliberate choice made for
+    # pip-audit - an advisory database that moves under you should not turn a build red for
+    # something nobody changed. But pip-audit is gated here nightly and npm audit was gated
+    # nowhere, so a HIGH advisory against a web dependency could not fail anything at all.
+    name: Web dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - name: npm audit (blocking here, advisory in CI)
+        run: npm audit --audit-level=high
+
   semgrep:
     name: Semgrep (OWASP Top Ten, JWT, secrets)
     runs-on: ubuntu-latest

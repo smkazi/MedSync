@@ -169,6 +169,9 @@ jobs:
         run: npm test
 
       - name: Dependency audit
+        # Advisory here for the same reason pip-audit is: an advisory database that moves under you
+        # should not turn a build red for something nobody changed. Gated nightly in
+        # security.yml's web-audit job, which it was not until now.
         continue-on-error: true
         run: npm audit --audit-level=high
 
