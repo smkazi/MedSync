@@ -3,6 +3,7 @@ import { api } from "@/lib/api";
 import { currentUser, hasRole } from "@/lib/session";
 import type { Appointment, Page } from "@/lib/types";
 import { advanceAppointment, cancelAppointment } from "./actions";
+import { openEncounter } from "../encounters/[id]/actions";
 import {
   Badge,
   ButtonLink,
@@ -214,6 +215,28 @@ export default async function AppointmentsPage({
                     >
                       Encounter
                     </Link>
+                  ) : mayChart && appointment.status === "IN_PROGRESS" ? (
+                    // Nothing opens an encounter on its own - starting an appointment moves its
+                    // status and no more - so a consultation that has begun needs this to be
+                    // chartable at all.
+                    <form action={openEncounter}>
+                      <input type="hidden" name="appointmentId" value={appointment.id} />
+                      <input type="hidden" name="patientId" value={appointment.patientId} />
+                      <input type="hidden" name="patientMrn" value={appointment.patientMrn} />
+                      <input type="hidden" name="clinicianId" value={appointment.clinicianId} />
+                      <input
+                        type="hidden"
+                        name="departmentCode"
+                        value={appointment.departmentCode}
+                      />
+                      <input type="hidden" name="back" value={back.toString()} />
+                      <button
+                        type="submit"
+                        className="rounded border border-accent/40 px-2 py-1 text-xs font-medium text-accent hover:bg-accent-soft"
+                      >
+                        Open chart
+                      </button>
+                    </form>
                   ) : (
                     <Link
                       href={`/patients/${appointment.patientId}`}

@@ -1,13 +1,16 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
-import { api, ApiError } from "@/lib/api";
+import { load } from "@/lib/load";
 import { currentUser, hasRole } from "@/lib/session";
 import type { Encounter } from "@/lib/types";
 import { AiAssist } from "@/components/AiAssist";
+import { closeEncounter, recordVitals, signNote } from "./actions";
+import { DiagnosisForm } from "./DiagnosisForm";
+import { NoteEditor } from "./NoteEditor";
 import {
   Badge,
   Card,
   Empty,
+  ErrorNote,
   Table,
   formatDateTime,
   statusTone,
@@ -19,19 +22,38 @@ import {
  * A note's revision history is shown, not just its current text: an addendum only means something
  * if you can read what it amended. AI assistance sits beside the note, never inside it.
  */
-export default async function EncounterPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function EncounterPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ problem?: string; done?: string }>;
+}) {
   const { id } = await params;
+  const { problem, done } = await searchParams;
   const user = await currentUser();
 
-  let encounter: Encounter;
-  try {
-    encounter = await api<Encounter>(`/encounters/${id}`);
-  } catch (error) {
-    if (error instanceof ApiError && error.status === 404) notFound();
-    throw error;
+  // `load` rather than a bare `api` call. Reading a chart needs CHART_READ, so the front desk
+  // reaches this path and gets a 403 — and rethrowing that rendered the error boundary, which told
+  // a receptionist "A server error occurred" for a permission decision that is not an error at
+  // all. This keeps the chrome, shows the service's own wording, and a mistyped id says not found.
+  const chart = await load<Encounter>(`/encounters/${id}`);
+  if (!chart.data) {
+    return (
+      <div className="space-y-6">
+        <h1 className="text-xl font-semibold tracking-tight">Encounter</h1>
+        <ErrorNote>{chart.error ?? "This chart could not be loaded."}</ErrorNote>
+      </div>
+    );
   }
+  const encounter = chart.data;
 
   const current = encounter.notes.at(-1) ?? null;
+  const open = encounter.status === "OPEN";
+  const mayChart = hasRole(user, "ADMIN", "DOCTOR", "NURSE");
+  // Signing is a doctor's act. A nurse may write the note; only a clinician who can put their name
+  // to it may sign, and the service enforces that with hasAnyRole('ADMIN','DOCTOR').
+  const maySign = hasRole(user, "ADMIN", "DOCTOR");
   const latestVitals = encounter.vitals.at(0) ?? null;
   const noteText = current
     ? [current.subjective, current.objective, current.assessment, current.plan]
@@ -62,6 +84,16 @@ export default async function EncounterPage({ params }: { params: Promise<{ id: 
         </div>
       </div>
 
+      {problem && <ErrorNote>{problem}</ErrorNote>}
+      {done && (
+        <p
+          role="status"
+          className="rounded-md border border-good/40 bg-good-soft px-3 py-2 text-sm text-good"
+        >
+          {done}
+        </p>
+      )}
+
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
           <Card title="Clinical note">
@@ -80,6 +112,36 @@ export default async function EncounterPage({ params }: { params: Promise<{ id: 
                     : " · unsigned"}
                   {current.amendsId ? " · amends an earlier signed revision" : ""}
                 </p>
+              </div>
+            )}
+
+            {mayChart && (
+              <div className="mt-4 border-t border-line pt-4">
+                <NoteEditor encounterId={encounter.id} current={current} editable={open} />
+              </div>
+            )}
+
+            {open && current && !current.signed && (
+              <div className="mt-4 border-t border-line pt-4">
+                {maySign ? (
+                  <form action={signNote}>
+                    <input type="hidden" name="encounterId" value={encounter.id} />
+                    <button
+                      type="submit"
+                      className="rounded-md border border-good/50 px-3 py-2 text-sm font-medium text-good hover:bg-good-soft"
+                    >
+                      Sign revision {current.revision}
+                    </button>
+                    <p className="mt-1.5 text-xs text-ink-muted">
+                      Signing is one-way. After it, a correction becomes an amendment rather than an
+                      edit, and the signed text stays in the record.
+                    </p>
+                  </form>
+                ) : (
+                  <p className="text-xs text-ink-muted">
+                    Revision {current.revision} is unsigned. A doctor signs it.
+                  </p>
+                )}
               </div>
             )}
           </Card>
@@ -128,6 +190,12 @@ export default async function EncounterPage({ params }: { params: Promise<{ id: 
                 ))}
               </Table>
             )}
+
+            {mayChart && open && (
+              <div className="mt-4 border-t border-line pt-4">
+                <DiagnosisForm encounterId={encounter.id} noteText={noteText} />
+              </div>
+            )}
           </Card>
         </div>
 
@@ -157,11 +225,74 @@ export default async function EncounterPage({ params }: { params: Promise<{ id: 
                 </p>
               </dl>
             )}
+
+            {mayChart && open && (
+              <form action={recordVitals} className="mt-4 space-y-3 border-t border-line pt-4">
+                <input type="hidden" name="encounterId" value={encounter.id} />
+                <p className="text-xs text-ink-muted">
+                  Leave anything unmeasured blank. A blank field is not recorded at all — an
+                  unrecorded observation and a measured zero are different facts, and a pain score
+                  is the one where that matters most.
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  <Obs name="heartRate" label="Heart rate" unit="bpm" />
+                  <Obs name="respiratoryRate" label="Resp. rate" unit="/min" />
+                  <Obs name="systolicBp" label="Systolic" unit="mmHg" />
+                  <Obs name="diastolicBp" label="Diastolic" unit="mmHg" />
+                  <Obs name="temperatureC" label="Temp" unit="°C" step="0.1" />
+                  <Obs name="oxygenSaturation" label="SpO2" unit="%" />
+                  <Obs name="weightKg" label="Weight" unit="kg" step="0.1" />
+                  <Obs name="heightCm" label="Height" unit="cm" step="0.1" />
+                  <Obs name="painScore" label="Pain" unit="/10" />
+                  <div>
+                    <label htmlFor="consciousness" className="block text-xs font-medium">
+                      Consciousness
+                    </label>
+                    <select
+                      id="consciousness"
+                      name="consciousness"
+                      defaultValue=""
+                      className="mt-1 w-full rounded border border-line bg-surface-raised px-2 py-1.5 text-sm"
+                    >
+                      <option value="">—</option>
+                      <option value="ALERT">Alert</option>
+                      <option value="VOICE">Voice</option>
+                      <option value="PAIN">Pain</option>
+                      <option value="UNRESPONSIVE">Unresponsive</option>
+                    </select>
+                  </div>
+                </div>
+                <button
+                  type="submit"
+                  className="rounded-md border border-line px-3 py-2 text-sm font-medium hover:bg-surface"
+                >
+                  Record observations
+                </button>
+              </form>
+            )}
           </Card>
 
-          {hasRole(user, "ADMIN", "DOCTOR", "NURSE") && (
+          {mayChart && (
             <Card title="Decision support">
               <AiAssist noteText={noteText} />
+            </Card>
+          )}
+
+          {mayChart && open && (
+            <Card title="Finish">
+              <form action={closeEncounter}>
+                <input type="hidden" name="encounterId" value={encounter.id} />
+                <button
+                  type="submit"
+                  className="w-full rounded-md border border-line px-3 py-2 text-sm font-medium hover:bg-surface"
+                >
+                  Close this encounter
+                </button>
+              </form>
+              <p className="mt-2 text-xs text-ink-muted">
+                Closing needs a signed note; the service refuses otherwise and says which revision
+                is outstanding. It also completes the linked appointment.
+              </p>
             </Card>
           )}
         </div>
@@ -195,6 +326,35 @@ function Vital({
       <dd className="numeric">
         {value === null ? "—" : `${value}${unit ? ` ${unit}` : ""}`}
       </dd>
+    </div>
+  );
+}
+
+/** One observation input. Number-typed so a phone shows a numeric keypad at a bedside. */
+function Obs({
+  name,
+  label,
+  unit,
+  step,
+}: {
+  name: string;
+  label: string;
+  unit: string;
+  step?: string;
+}) {
+  return (
+    <div>
+      <label htmlFor={name} className="block text-xs font-medium">
+        {label} <span className="text-ink-muted">{unit}</span>
+      </label>
+      <input
+        id={name}
+        name={name}
+        type="number"
+        step={step}
+        inputMode="decimal"
+        className="numeric mt-1 w-full rounded border border-line bg-surface-raised px-2 py-1.5 text-sm"
+      />
     </div>
   );
 }

@@ -10,9 +10,9 @@ haematology analyzer over its own wire protocol and released by a pathologist.
 
 > **Status:** the clinical core, the laboratory (including analyzer integration), the AI service
 > and the web UI are implemented and verified end to end against a real stack, and so are the
-> containerisation, TLS, security-testing and performance-testing layers. **540 tests pass** —
+> containerisation, TLS, security-testing and performance-testing layers. **545 tests pass** —
 > 299 Java unit and integration, 91 Python, 34 web unit, 72 black-box API and security abuse cases,
-> and 44 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
+> and 49 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
 > [Security](#security); what is left is in the [Roadmap](#roadmap).
 
 ---
@@ -148,7 +148,7 @@ Nine top-level menus, defined once as data in `src/lib/menu.ts`:
 | Dashboard | today's board |
 | Patients | register (search), register a patient |
 | Scheduling | appointment book, clinician availability, lapsed appointments, clinician schedules |
-| Clinical | triage intake, encounter charting with AI assistance beside the note |
+| Clinical | triage intake, encounter charting — vitals, the SOAP note, signing, amendments, ICD-10 coding — with AI assistance beside the note |
 | Laboratory | worklist, scan a tube, test catalogue, reference ranges, interpretation rules, analyzers, device messages |
 | Facility | room directory, rooms, floors, room types, beds, departments |
 | Pharmacy, Billing | *not built* — see below |
@@ -185,6 +185,23 @@ blackout's own reason). The form submits the chosen instant unmodified. Nothing 
 builds a timestamp: a `datetime-local` input yields a wall-clock string with no zone, and the
 browser's zone is not necessarily the platform's, so a booking assembled from one is a timezone bug
 waiting for the first clinician who travels.
+
+**The charting screen reports the note's lifecycle rather than owning it.** `PUT
+/encounters/{id}/note` does three different things depending on state the service holds: it creates
+revision 1, edits the current revision in place while it is unsigned, or — once a revision is
+signed — creates an **amendment**, a new revision carrying `amendsId`. The button looks identical
+in all three cases, so the screen says which is about to happen: amending a signed clinical note is
+a different act from correcting a draft, and it warns before the click, not after. Signing is
+one-way and the sign button disappears; closing is refused while the latest revision is unsigned,
+and the refusal is the service's own sentence naming that revision. Revision history is rendered in
+full, because an amendment only means something if what it amended is still readable.
+
+Two smaller decisions on that screen are worth naming. A blank observation is **omitted from the
+request**, not sent as zero — an unrecorded pain score and a recorded zero are different clinical
+facts — and submitting an empty vitals form is refused rather than written. And ICD-10 suggestion
+lives in exactly one place, beside the diagnosis field, where a suggestion can be picked into an
+input the clinician can still edit; the decision-support panel summarises the note and no longer
+offers codes of its own, because a suggestion you cannot act on is the worse of two.
 
 ### `services/ai-service` — Python, FastAPI
 Four clinical decision-support capabilities. Details in
@@ -459,7 +476,7 @@ mvn -q verify                                     # 299 Java unit and integratio
 cd services/ai-service && uv run pytest -q        # 91 Python tests
 cd web && npm run lint && npm run typecheck       # web static checks
 cd web && npm test                                # 34 web unit tests
-cd web && npx playwright test                     # 36 browser tests, no skips
+cd web && npx playwright test                     # 49 browser tests, no skips
 mvn -Pautomation -pl tests/api verify             # 72 API and security abuse cases
 ```
 
@@ -671,6 +688,12 @@ and performance profiles. Dependency scanning covers Python (`pip-audit`) and th
 
 **Not built:**
 
+- **Screens for the remaining write endpoints.** Registration, booking and charting have them.
+  Patient edit and the allergy list, facility and administration CRUD, laboratory ordering and
+  result entry, and the change-password flow behind `mustChangePassword` do not: those endpoints
+  work and are tested, but only an API client can reach them. `mustChangePassword` in particular is
+  set on the seeded accounts and enforced nowhere yet — a banner says so, and a banner is not a
+  gate.
 - **Further clinical modules** — billing and claims, pharmacy and inventory, imaging/PACS.
 - **Analyzer transport** — the RS-232/TCP device gateway. The ported parsers are
   transport-agnostic, exactly as they are in the source project, and `POST /lab/device-messages`
