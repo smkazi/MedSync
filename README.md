@@ -10,9 +10,9 @@ haematology analyzer over its own wire protocol and released by a pathologist.
 
 > **Status:** the clinical core, the laboratory (including analyzer integration), the AI service
 > and the web UI are implemented and verified end to end against a real stack, and so are the
-> containerisation, TLS, security-testing and performance-testing layers. **575 tests pass** —
-> 304 Java unit and integration, 91 Python, 34 web unit, 87 black-box API and security abuse cases,
-> and 59 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
+> containerisation, TLS, security-testing and performance-testing layers. **606 tests pass** —
+> 315 Java unit and integration, 91 Python, 40 web unit, 91 black-box API and security abuse cases,
+> and 69 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
 > [Security](#security); what is left is in the [Roadmap](#roadmap).
 
 ---
@@ -150,9 +150,9 @@ Nine top-level menus, defined once as data in `src/lib/menu.ts`:
 | Scheduling | appointment book, clinician availability, lapsed appointments, clinician schedules |
 | Clinical | triage intake, encounter charting — vitals, the SOAP note, signing, amendments, ICD-10 coding — with AI assistance beside the note |
 | Laboratory | worklist, scan a tube, test catalogue, reference ranges, interpretation rules, analyzers, device messages |
-| Facility | room directory, rooms, floors, room types, beds, departments |
+| Facility | room directory, rooms, floors, room types, beds, departments — all editable by an administrator |
 | Pharmacy, Billing | *not built* — see below |
-| Administration | staff directory, users, roles, audit trail |
+| Administration | staff directory, users (create, roles, reset a password), roles, audit trail |
 
 Three rules hold in the navigation, and each is asserted in `web/e2e/navigation.spec.ts` against a
 real browser for all six seeded roles:
@@ -185,6 +185,40 @@ blackout's own reason). The form submits the chosen instant unmodified. Nothing 
 builds a timestamp: a `datetime-local` input yields a wall-clock string with no zone, and the
 browser's zone is not necessarily the platform's, so a booking assembled from one is a timezone bug
 waiting for the first clinician who travels.
+
+**The seven administrative CRUD screens share one form component, and the clinical ones deliberately
+do not.** Floors, room types, rooms, beds, departments, staff and accounts are flat sets of fields
+that post and re-read a list; written out seven times that is seven places for the same three
+mistakes — a field error rendered nowhere, a value not echoed after a refusal, a checkbox that
+submits nothing when unticked. Registration, charting and the allergy list each carry a rule the
+generic form cannot express, and a component grown to cover those would be worse than both.
+
+Four rules distinguish those screens from each other, and each is asserted in `web/e2e/admin-write.spec.ts`:
+
+- **A room is read by `code` and written by `id`.** `GET /rooms/{code}` and `PATCH /rooms/{id}` are
+  deliberately asymmetric — a code is what people say out loud, an id is what survives a rename —
+  so every table row carries both.
+- **An unticked checkbox posts nothing at all**, which for a sparse `PATCH` reads as "leave it
+  alone" rather than "set it false". Each is paired with a hidden `false` so the field is always
+  present — and the *order* is load-bearing, which cost a debugging session: `FormData.get()`
+  returns the first value for a repeated name, not the last, so with the twin written above the
+  checkbox every flag read as false however it was set. A room type ticked clinical and schedulable
+  was created as neither, and the screen showed the truth while looking like it had ignored the
+  form. `readForm` now has a test that pins first-wins, because the failure is silent and global.
+- **An empty role set means "unchanged", never "remove every role".** Removing an account's access
+  is done by disabling it, which says what it means; a screen that stripped roles by accident would
+  look exactly like one that did nothing.
+- **Everything here is `ADMIN_ONLY`, so the form is absent rather than present and refused.** A
+  screen that looks usable and is not is worse than one that is honest about it.
+
+Two endpoints were added to make those screens honest rather than half-built: a department and a
+bed could each be created and never corrected or retired. `PATCH /departments/{code}` and
+`PATCH /beds/{id}` close that, and both retire by setting `active` false rather than deleting —
+the encounters recorded under a department and the admissions that happened in a bed are still
+real. Neither takes a code: three services store a department code and admissions-service will
+reference a bed by its own, and none of them would learn it had changed. `GET /beds` gained
+`includeInactive` for the administration screen alone; a bed out of service must never reach
+anything that allocates one, so the type filter that bed allocation uses ignores the flag entirely.
 
 **An allergy is a rule, not a remark, and the form treats it as one.** Its severity is read by the
 platform: a LIFE_THREATENING entry puts the red banner on the chart and will make a dispense refuse
@@ -518,12 +552,12 @@ make help          # everything else
 Or directly:
 
 ```bash
-mvn -q verify                                     # 304 Java unit and integration tests
+mvn -q verify                                     # 315 Java unit and integration tests
 cd services/ai-service && uv run pytest -q        # 91 Python tests
 cd web && npm run lint && npm run typecheck       # web static checks
-cd web && npm test                                # 34 web unit tests
-cd web && npx playwright test                     # 59 browser tests, no skips
-mvn -Pautomation -pl tests/api verify             # 87 API and security abuse cases
+cd web && npm test                                # 40 web unit tests
+cd web && npx playwright test                     # 69 browser tests, no skips
+mvn -Pautomation -pl tests/api verify             # 91 API and security abuse cases
 ```
 
 | Layer | What runs | Where |
@@ -700,6 +734,26 @@ Worth writing down, because it is the argument for having built them:
 - **Filtering users by role returned every role-less account too.** The left join leaves `r.code`
   null for a user with no roles, and the predicate admitted nulls — so asking for pathologists
   matched every account that had no role at all.
+- **Room search had never returned a room without a clinic.** The same predicate, one join short:
+  written as the JPQL path `r.department.code`, the department filter became an *inner* join, and
+  the `:departmentCode = '%' or …` guard in front of it cannot rescue a row the join has already
+  dropped. So every lobby, corridor, store, ward and pharmacy was invisible to the rooms screen
+  whether a clinic was filtered on or not — 27 active rooms in the database, 11 returned. The
+  repository comment above the query described the opposite behaviour, confidently, and cited the
+  role-filter bug above as the reason for the shape. Found by a browser test looking for a ward it
+  had just created and being told there were no rooms at all. `StaffRepository` had the same shape,
+  latent because every seeded staff row has a department — and the staff form built in the same
+  slice makes one optional, which is what a visiting consultant has. Both are explicit
+  `left join`s now, with a test on each asserting both halves: the row is findable, and a clinic
+  filter still does not sweep it up.
+- **`includeInactive` was accepted and discarded by `/floors` and `/room-types`.** Both screens
+  asked for it and rendered an "inactive" badge that could never appear, so retiring either was a
+  one-way door: the row left the only screen that could bring it back. Floors had a sharper edge —
+  `uq_floor_level` counts a closed floor, so its level looked free, the create was refused, and
+  nothing anywhere said what held it.
+- **Staff search matched the full name only**, while the search box has always said "name, employee
+  number, specialty". Looking somebody up by the number on their badge returned nothing at all: the
+  promise lived in the placeholder text and nowhere else.
 - **Case conversion used the default locale in twelve identifier-normalisation sites.** On a JVM
   started with `tr_TR`, Turkish lower-casing of "I" means a patient named IQBAL stops matching a
   search for "iqbal". Found by SpotBugs.

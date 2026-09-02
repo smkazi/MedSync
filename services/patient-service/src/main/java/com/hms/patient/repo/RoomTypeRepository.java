@@ -10,6 +10,8 @@ public interface RoomTypeRepository extends JpaRepository<RoomType, String> {
     /** Ordered for a pick-list: display_order first, so the clinical types lead. */
     List<RoomType> findByActiveTrueOrderByDisplayOrderAscCodeAsc();
 
+    List<RoomType> findAllByOrderByDisplayOrderAscCodeAsc();
+
     Optional<RoomType> findByCodeIgnoreCase(String code);
 
     /**

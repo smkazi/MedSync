@@ -15,14 +15,22 @@ person can tell a decision from an oversight.
 
 ## Configurable: rows, not code
 
-Change these through the API or a migration. No recompile, no deployment.
+Change these through the API or a migration. No recompile, no deployment. Every one of them is
+editable from a browser as well, by an administrator — a vocabulary that can only be extended by
+someone with `curl` is configurable in principle and fixed in practice.
+
+**Nothing here is deleted; it is retired.** Setting `active` false takes a department, room, bed or
+staff record out of the pick-lists and leaves every row that references it intact, because the
+encounters recorded under a department and the admissions that happened in a bed are still real.
+For the same reason a *code* is never editable once created: a department code is stored by three
+services and a room code is cached on appointments, and none of them would learn it had changed.
 
 | Vocabulary | Where | Extended by |
 | --- | --- | --- |
 | **Room types** | `patient.room_types` | `POST /room-types` |
-| Floors, rooms, bed positions | `patient.floors`, `.rooms`, `.beds` | `POST /floors`, `/rooms`, `/rooms/{code}/beds` |
-| Departments | `patient.departments` | `POST /departments` |
-| Staff, designations, specialties | `patient.staff` | `POST /staff` |
+| Floors, rooms, bed positions | `patient.floors`, `.rooms`, `.beds` | `POST` / `PATCH` `/floors`, `/rooms`, `/rooms/{code}/beds` and `/beds/{id}` |
+| Departments | `patient.departments` | `POST /departments`, `PATCH /departments/{code}` |
+| Staff, designations, specialties | `patient.staff` | `POST /staff`, `PATCH /staff/{id}` |
 | Laboratory test catalogue | `laboratory.lab_test_catalog` | migration or admin |
 | Reference ranges | `laboratory.reference_ranges` | `PATCH /lab/reference-ranges/{id}` |
 | **Interpretive rules** and their ANDed conditions | `laboratory.interpretive_rules`, `.interpretive_rule_conditions` | `PATCH /lab/interpretive-rules/{code}` |

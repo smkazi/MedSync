@@ -101,6 +101,16 @@ jobs:
       - url: "${ZAP_TARGET}/patients/00000000-0000-4000-8000-000000000000"
         method: GET
         responseCode: 404
+      # Facility and department master data: readable by a clinician, writable by nobody but an
+      # administrator. A 200 on either of these writes is a finding.
+      - url: "${ZAP_TARGET}/departments/CARD"
+        method: PATCH
+        data: '{"active":false}'
+        responseCode: 403
+      - url: "${ZAP_TARGET}/beds/00000000-0000-0000-0000-000000000000"
+        method: PATCH
+        data: '{"active":false}'
+        responseCode: 403
 
   - type: spider
     parameters:

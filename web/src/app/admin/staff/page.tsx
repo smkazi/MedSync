@@ -1,6 +1,9 @@
 import { load } from "@/lib/load";
-import type { Department, Page, Staff } from "@/lib/types";
+import { currentUser, hasRole } from "@/lib/session";
+import type { AdminUser, Department, Page, Staff } from "@/lib/types";
 import { Badge, Card, Empty, ErrorNote, Table } from "@/components/ui";
+import { EditRow, RecordForm, type Field } from "@/components/RecordForm";
+import { createStaff, updateStaff } from "../actions";
 
 /** The staff directory — who works here, in which department, under what licence. */
 export default async function StaffPage({
@@ -14,10 +17,72 @@ export default async function StaffPage({
   if (department) params.set("department", department);
   if (includeInactive === "on") params.set("includeInactive", "true");
 
-  const [{ data: staff, error }, { data: departments }] = await Promise.all([
+  const mayEdit = hasRole(await currentUser(), "ADMIN");
+  const [{ data: staff, error }, { data: departments }, { data: accounts }] = await Promise.all([
     load<Page<Staff>>(`/staff?${params}`),
     load<Department[]>("/departments"),
+    // Only an administrator may read accounts, and only they can link one, so nobody else asks.
+    mayEdit ? load<Page<AdminUser>>("/admin/users?size=200") : Promise.resolve({ data: null, error: null }),
   ]);
+
+  const departmentOptions = (departments ?? []).map((entry) => ({
+    value: entry.code,
+    label: entry.name,
+  }));
+
+  /**
+   * The accounts that could be linked, plus whichever one this record already has.
+   *
+   * <p>A staff record and a login are separate things and `userId` is the link. Offering an
+   * account that is already linked elsewhere would invite two staff rows claiming one login, and
+   * the clinician pick-list on the booking screen reads this directory - so a doctor who can sign
+   * in but has no staff row cannot be booked, which is the reason this field exists at all.
+   */
+  const linkable = (current: string | null): { value: string; label: string }[] => {
+    const taken = new Set(
+      (staff?.content ?? []).map((member) => member.userId).filter((id): id is string => id !== null),
+    );
+    return (accounts?.content ?? [])
+      .filter((account) => account.id === current || !taken.has(account.id))
+      .map((account) => ({ value: account.id, label: `${account.fullName} (${account.username})` }));
+  };
+
+  const staffFields = (member?: Staff): Field[] => [
+    ...(member
+      ? []
+      : [
+          {
+            name: "employeeNo",
+            label: "Employee no",
+            required: true,
+            hint: "Fixed once created.",
+          } as Field,
+        ]),
+    { name: "fullName", label: "Full name", required: !member, value: member?.fullName },
+    { name: "designation", label: "Designation", required: !member, value: member?.designation },
+    {
+      name: "departmentCode",
+      label: "Department",
+      type: "select",
+      options: departmentOptions,
+      value: member?.departmentCode,
+    },
+    { name: "specialty", label: "Specialty", value: member?.specialty },
+    { name: "licenseNo", label: "Licence no", value: member?.licenseNo },
+    { name: "phone", label: "Phone", value: member?.phone },
+    { name: "email", label: "Email", value: member?.email },
+    {
+      name: "userId",
+      label: "Platform login",
+      type: "select",
+      options: linkable(member?.userId ?? null),
+      value: member?.userId,
+      hint: "Optional. A visiting consultant has none.",
+    },
+    ...(member
+      ? [{ name: "active", label: "In post", type: "checkbox", value: member.active } as Field]
+      : []),
+  ];
 
   return (
     <div className="space-y-6">
@@ -79,7 +144,10 @@ export default async function StaffPage({
             <Empty>No staff match.</Empty>
           ) : (
             <Table
-              head={["Employee no", "Name", "Designation", "Department", "Specialty", "Licence", ""]}
+              head={[
+                "Employee no", "Name", "Designation", "Department", "Specialty", "Licence", "",
+                ...(mayEdit ? [""] : []),
+              ]}
             >
               {staff.content.map((member) => (
                 <tr key={member.id} className={member.active ? "" : "opacity-60"}>
@@ -97,10 +165,38 @@ export default async function StaffPage({
                       )}
                     </span>
                   </td>
+                  {mayEdit && (
+                    <td className="px-3 py-2">
+                      <EditRow label="Edit">
+                        <RecordForm
+                          action={updateStaff}
+                          hidden={{ id: member.id }}
+                          columns={3}
+                          submitLabel="Save"
+                          fields={staffFields(member)}
+                        />
+                      </EditRow>
+                    </td>
+                  )}
                 </tr>
               ))}
             </Table>
           )}
+        </Card>
+      )}
+
+      {mayEdit && (
+        <Card title="Add a staff record">
+          <RecordForm
+            action={createStaff}
+            columns={3}
+            submitLabel="Add to the directory"
+            fields={staffFields()}
+          />
+          <p className="mt-3 text-xs text-ink-muted">
+            A clinician has to be here to be bookable: the pick-list on the booking screen reads
+            this directory, not the account list. Linking a login is optional and separate.
+          </p>
         </Card>
       )}
     </div>

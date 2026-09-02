@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -12,6 +13,7 @@ import com.hms.patient.domain.Patient;
 import com.hms.patient.domain.Sex;
 import com.hms.patient.repo.PatientRepository;
 import java.time.LocalDate;
+import com.hms.patient.web.dto.PatientDtos;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -346,5 +348,107 @@ class PatientApiIntegrationTest {
                         .content(objectMapper.writeValueAsString(Map.of("employeeNo", "EMP-X",
                                 "fullName", "X", "designation", "Y"))))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("a department can be corrected and retired, and retiring it keeps its history")
+    void aDepartmentCanBeRetired() throws Exception {
+        String code = "DPT" + Long.toString(System.nanoTime(), 36).toUpperCase(java.util.Locale.ROOT)
+                .substring(0, 6);
+        mockMvc.perform(post("/departments").with(as("ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "code", code, "name", "Temporary Clinic"))))
+                .andExpect(status().isCreated());
+
+        // It could be created and never touched again, which for a vocabulary that staff rows,
+        // appointments and encounters all reference is a gap rather than a simplification.
+        mockMvc.perform(patch("/departments/" + code).with(as("ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "name", "Seasonal Clinic", "active", false))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("Seasonal Clinic"))
+                .andExpect(jsonPath("$.active").value(false));
+
+        // Gone from the pick-list, still in the record: encounters recorded under it are real.
+        assertThat(mockMvc.perform(get("/departments").with(as("NURSE")))
+                .andReturn().getResponse().getContentAsString()).doesNotContain(code);
+        assertThat(mockMvc.perform(get("/departments?includeInactive=true").with(as("NURSE")))
+                .andReturn().getResponse().getContentAsString()).contains(code);
+    }
+
+    @Test
+    @DisplayName("the department code itself cannot be rewritten")
+    void aDepartmentCodeIsNotEditable() throws Exception {
+        // Three services store the code and none of them would learn it had changed. Retiring is
+        // what active is for, so the request shape simply has no code field to send.
+        assertThat(PatientDtos.UpdateDepartmentRequest.class.getRecordComponents())
+                .extracting(java.lang.reflect.RecordComponent::getName)
+                .doesNotContain("code");
+    }
+
+    @Test
+    @DisplayName("only an administrator may change a department")
+    void departmentUpdatesAreAdminOnly() throws Exception {
+        mockMvc.perform(patch("/departments/CARD").with(as("DOCTOR"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("active", false))))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("a staff member with no department is still in the directory")
+    void staffWithoutADepartmentAreSearchable() throws Exception {
+        // Latent rather than live when it was found - every seeded staff row has a department -
+        // but the staff form makes one optional, and a visiting consultant has none. The same
+        // implicit-path inner join that hid two thirds of the rooms was here too.
+        String employeeNo = "VISIT" + Long.toString(System.nanoTime(), 36)
+                .toUpperCase(java.util.Locale.ROOT).substring(0, 6);
+        mockMvc.perform(post("/staff").with(as("ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "employeeNo", employeeNo,
+                                "fullName", "Visiting Consultant " + employeeNo,
+                                "designation", "Visiting Consultant"))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.departmentCode").value(org.hamcrest.Matchers.nullValue()));
+
+        assertThat(mockMvc.perform(get("/staff").param("q", employeeNo).with(as("RECEPTIONIST")))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString())
+                .contains(employeeNo);
+
+        assertThat(mockMvc.perform(get("/staff")
+                        .param("q", employeeNo).param("department", "CARD")
+                        .with(as("RECEPTIONIST")))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString())
+                .doesNotContain(employeeNo);
+    }
+
+    @Test
+    @DisplayName("staff are found by employee number and specialty, not only by name")
+    void staffSearchCoversWhatTheScreenPromises() throws Exception {
+        // The search screen's placeholder has always said "name, employee number, specialty" and
+        // the query matched the full name alone, so looking somebody up by the number on their
+        // badge returned nothing.
+        String employeeNo = "BADGE" + Long.toString(System.nanoTime(), 36)
+                .toUpperCase(java.util.Locale.ROOT).substring(0, 6);
+        String specialty = "Interventional Radiology " + employeeNo;
+        mockMvc.perform(post("/staff").with(as("ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "employeeNo", employeeNo, "fullName", "Searchable Person",
+                                "designation", "Consultant", "specialty", specialty))))
+                .andExpect(status().isCreated());
+
+        for (String term : java.util.List.of(employeeNo, specialty, "Searchable Person")) {
+            assertThat(mockMvc.perform(get("/staff").param("q", term).with(as("RECEPTIONIST")))
+                    .andExpect(status().isOk())
+                    .andReturn().getResponse().getContentAsString())
+                    .as("searching for '%s' must find the record", term)
+                    .contains(employeeNo);
+        }
     }
 }

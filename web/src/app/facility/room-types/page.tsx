@@ -1,6 +1,9 @@
 import { load } from "@/lib/load";
+import { currentUser, hasRole } from "@/lib/session";
 import type { RoomType } from "@/lib/types";
 import { Badge, Card, Empty, ErrorNote, Table } from "@/components/ui";
+import { EditRow, RecordForm } from "@/components/RecordForm";
+import { createRoomType, updateRoomType } from "../actions";
 
 /**
  * The room-type vocabulary — the platform's worked example of configuration over code.
@@ -13,6 +16,7 @@ import { Badge, Card, Empty, ErrorNote, Table } from "@/components/ui";
  */
 export default async function RoomTypesPage() {
   const { data: types, error } = await load<RoomType[]>("/room-types?includeInactive=true");
+  const mayEdit = hasRole(await currentUser(), "ADMIN");
 
   return (
     <div className="space-y-6">
@@ -33,7 +37,10 @@ export default async function RoomTypesPage() {
               <Empty>No room types are configured.</Empty>
             ) : (
               <Table
-                head={["Code", "Name", "Clinical", "Bed-allocated", "Schedulable", "Description", ""]}
+                head={[
+                  "Code", "Name", "Clinical", "Bed-allocated", "Schedulable", "Description", "",
+                  ...(mayEdit ? [""] : []),
+                ]}
               >
                 {types.map((type) => (
                   <tr key={type.code} className={type.active ? "" : "opacity-60"}>
@@ -48,6 +55,47 @@ export default async function RoomTypesPage() {
                     <td className="px-3 py-2">
                       {!type.active && <Badge tone="neutral">inactive</Badge>}
                     </td>
+                    {mayEdit && (
+                      <td className="px-3 py-2">
+                        <EditRow label="Edit">
+                          <RecordForm
+                            action={updateRoomType}
+                            hidden={{ code: type.code }}
+                            columns={3}
+                            submitLabel="Save"
+                            fields={[
+                              { name: "name", label: "Name", value: type.name },
+                              {
+                                name: "description",
+                                label: "Description",
+                                type: "textarea",
+                                value: type.description,
+                              },
+                              {
+                                name: "displayOrder",
+                                label: "Order",
+                                type: "number",
+                                value: type.displayOrder,
+                              },
+                              { name: "clinical", label: "Clinical", type: "checkbox", value: type.clinical },
+                              {
+                                name: "bedAllocated",
+                                label: "Bed-allocated",
+                                type: "checkbox",
+                                value: type.bedAllocated,
+                              },
+                              {
+                                name: "schedulable",
+                                label: "Schedulable",
+                                type: "checkbox",
+                                value: type.schedulable,
+                              },
+                              { name: "active", label: "In use", type: "checkbox", value: type.active },
+                            ]}
+                          />
+                        </EditRow>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </Table>
@@ -79,6 +127,30 @@ export default async function RoomTypesPage() {
               </div>
             </dl>
           </Card>
+
+          {mayEdit && (
+            <Card title="Add a room type">
+              <p className="mb-3 text-xs text-ink-muted">
+                Nothing needs deploying. The moment the row exists the same rules govern it — and
+                the database refuses schedulable and bed-allocated together, so a mistake here is a
+                409 rather than an outpatient sent to a resuscitation position.
+              </p>
+              <RecordForm
+                action={createRoomType}
+                columns={3}
+                submitLabel="Add room type"
+                fields={[
+                  { name: "code", label: "Code", required: true, placeholder: "DAY_UNIT" },
+                  { name: "name", label: "Name", required: true, placeholder: "Day unit" },
+                  { name: "displayOrder", label: "Order", type: "number", hint: "Where it sits in a pick-list." },
+                  { name: "description", label: "Description", type: "textarea" },
+                  { name: "clinical", label: "Clinical", type: "checkbox" },
+                  { name: "bedAllocated", label: "Bed-allocated", type: "checkbox" },
+                  { name: "schedulable", label: "Schedulable", type: "checkbox" },
+                ]}
+              />
+            </Card>
+          )}
         </>
       )}
     </div>

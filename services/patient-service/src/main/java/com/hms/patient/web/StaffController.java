@@ -69,6 +69,13 @@ public class StaffController {
         return service.listDepartments(includeInactive);
     }
 
+    @PatchMapping("/departments/{code}")
+    @PreAuthorize(Roles.ADMIN_ONLY)
+    public PatientDtos.DepartmentResponse updateDepartment(@PathVariable String code,
+            @Valid @RequestBody PatientDtos.UpdateDepartmentRequest request) {
+        return service.updateDepartment(code, request);
+    }
+
     @PostMapping("/departments")
     @ResponseStatus(HttpStatus.CREATED)
     @PreAuthorize(Roles.ADMIN_ONLY)

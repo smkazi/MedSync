@@ -56,10 +56,17 @@ public class FacilityService {
 
     // ---- room types (configuration) -------------------------------------------
 
+    /**
+     * @param includeInactive whether retired types are listed. Only the administration screen asks
+     *                        for them: a retired type must not appear in a pick-list, and it must
+     *                        be visible somewhere or retiring one is a one-way door.
+     */
     @Transactional(readOnly = true)
-    public List<FacilityDtos.RoomTypeResponse> allRoomTypes() {
-        return roomTypes.findByActiveTrueOrderByDisplayOrderAscCodeAsc().stream()
-                .map(FacilityMapper::toResponse).toList();
+    public List<FacilityDtos.RoomTypeResponse> allRoomTypes(boolean includeInactive) {
+        List<RoomType> found = includeInactive
+                ? roomTypes.findAllByOrderByDisplayOrderAscCodeAsc()
+                : roomTypes.findByActiveTrueOrderByDisplayOrderAscCodeAsc();
+        return found.stream().map(FacilityMapper::toResponse).toList();
     }
 
     /**
@@ -121,9 +128,18 @@ public class FacilityService {
 
     // ---- floors ---------------------------------------------------------------
 
+    /**
+     * @param includeInactive whether closed floors are listed. Same reasoning as room types, with
+     *                        one extra edge: {@code uq_floor_level} counts a closed floor too, so
+     *                        without this a level looked free, was refused, and the floor holding
+     *                        it could not be seen anywhere.
+     */
     @Transactional(readOnly = true)
-    public List<FacilityDtos.FloorResponse> allFloors() {
-        return floors.findByActiveTrueOrderByLevelAsc().stream().map(FacilityMapper::toResponse).toList();
+    public List<FacilityDtos.FloorResponse> allFloors(boolean includeInactive) {
+        List<Floor> found = includeInactive
+                ? floors.findAllByOrderByLevelAsc()
+                : floors.findByActiveTrueOrderByLevelAsc();
+        return found.stream().map(FacilityMapper::toResponse).toList();
     }
 
     @Transactional
@@ -132,6 +148,7 @@ public class FacilityService {
         if (floors.existsByCodeIgnoreCase(code)) {
             throw new ConflictException("Floor '" + code + "' already exists");
         }
+        requireFreeLevel(request.level(), null);
         Floor floor = new Floor(code, request.name().trim(), request.level());
         floors.save(floor);
         audit.record("FLOOR_CREATED", "Floor", floor.getId(), code + " level " + request.level());
@@ -144,7 +161,8 @@ public class FacilityService {
         if (request.name() != null) {
             floor.setName(request.name().trim());
         }
-        if (request.level() != null) {
+        if (request.level() != null && request.level() != floor.getLevel()) {
+            requireFreeLevel(request.level(), id);
             floor.setLevel(request.level());
         }
         if (request.active() != null) {
@@ -299,12 +317,22 @@ public class FacilityService {
      * <p>The type filter is how admissions-service asks for "the casualty beds" without having to
      * know which room codes make up casualty — which would make the bay's layout its problem.
      */
+    /**
+     * @param includeInactive whether decommissioned positions are listed. False for anything that
+     *                        allocates a bed; true only for the screen that manages them. It is
+     *                        deliberately ignored when a type filter is given, because that filter
+     *                        exists for allocation - admissions-service asks for "the casualty
+     *                        beds" and must never be handed one that is out of service.
+     */
     @Transactional(readOnly = true)
-    public List<FacilityDtos.BedResponse> allBeds(List<String> roomTypeCodes) {
-        List<Bed> found = roomTypeCodes == null || roomTypeCodes.isEmpty()
-                ? beds.findAllActive()
-                : beds.findActiveByRoomTypes(roomTypeCodes.stream()
-                        .map(FacilityService::normaliseCode).toList());
+    public List<FacilityDtos.BedResponse> allBeds(List<String> roomTypeCodes, boolean includeInactive) {
+        List<Bed> found;
+        if (roomTypeCodes != null && !roomTypeCodes.isEmpty()) {
+            found = beds.findActiveByRoomTypes(roomTypeCodes.stream()
+                    .map(FacilityService::normaliseCode).toList());
+        } else {
+            found = includeInactive ? beds.findEveryBed() : beds.findAllActive();
+        }
         return found.stream().map(FacilityMapper::toResponse).toList();
     }
 
@@ -397,6 +425,53 @@ public class FacilityService {
     }
 
     /** Codes are upper-case identifiers. Locale.ROOT: the default locale mangles "I" in Turkish. */
+    /**
+     * Corrects or decommissions a bed.
+     *
+     * <p>A bed could be added and never removed, which meant a position taken out of service had
+     * to be deleted by hand or left looking allocatable. Deactivating keeps the row - admissions
+     * that happened in it remain valid - and drops it out of {@code findAllActive}, which is what
+     * bed allocation reads.
+     */
+    @Transactional
+    public FacilityDtos.BedResponse updateBed(UUID id, FacilityDtos.UpdateBedRequest request) {
+        Bed bed = beds.findById(id).orElseThrow(() -> NotFoundException.of("Bed", id));
+        if (request.label() != null) {
+            bed.setLabel(trimToNull(request.label()));
+        }
+        if (request.active() != null) {
+            bed.setActive(request.active());
+        }
+        audit.record("BED_UPDATED", "Bed", id, bed.getCode() + " active=" + bed.isActive());
+        return FacilityMapper.toResponse(beds.save(bed));
+    }
+
+    /**
+     * Refuses a level another floor already occupies.
+     *
+     * <p>{@code uq_floor_level} enforces one floor per level, and without this check the violation
+     * surfaced as the generic "conflicts with existing data or a database constraint" — true, and
+     * no help at all to somebody who has just been told their code was fine. Every other refusal
+     * in this service names the thing in the way, so this one does too.
+     *
+     * @param exclude the floor being updated, so moving a floor to the level it already holds is
+     *                not a conflict with itself
+     */
+    private void requireFreeLevel(Short level, UUID exclude) {
+        if (level == null) {
+            return;
+        }
+        floors.findByLevel(level)
+                // Objects.equals, because an entity's id is nullable before its insert and
+                // SpotBugs is right to say so - and a null exclude (the create path) must not
+                // match a persisted floor either way.
+                .filter(existing -> !java.util.Objects.equals(existing.getId(), exclude))
+                .ifPresent(existing -> {
+                    throw new ConflictException("Level " + level + " is already " + existing.getName()
+                            + " (" + existing.getCode() + "). A building has one floor per level.");
+                });
+    }
+
     private static String normaliseCode(String code) {
         return code == null ? null : code.trim().toUpperCase(Locale.ROOT);
     }

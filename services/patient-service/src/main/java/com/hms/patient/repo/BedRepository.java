@@ -30,5 +30,16 @@ public interface BedRepository extends JpaRepository<Bed, UUID> {
             """)
     List<Bed> findActiveByRoomTypes(@Param("roomTypeCodes") List<String> roomTypeCodes);
 
+    /**
+     * Every bed, decommissioned ones included.
+     *
+     * <p>For the administration screen only. Bed allocation must never see this list - a bed taken
+     * out of service is not allocatable - which is why it is a separate query rather than a flag
+     * on {@link #findAllActive()} that a caller could pass by accident.
+     */
+    @EntityGraph(attributePaths = {"room", "room.floor", "room.roomType"})
+    @Query("select b from Bed b order by b.room.code, b.code")
+    List<Bed> findEveryBed();
+
     boolean existsByRoomIdAndCodeIgnoreCase(UUID roomId, String code);
 }

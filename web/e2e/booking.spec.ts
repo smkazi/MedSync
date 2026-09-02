@@ -25,7 +25,13 @@ function nextWeekday(offsetDays = 7): string {
 
 async function openSlots(page: import("@playwright/test").Page, date: string, mrn: string) {
   await page.goto(`/appointments/new?mrn=${encodeURIComponent(mrn)}`);
-  await page.getByLabel("Clinician").selectOption({ label: `${CLINICIAN} — Consultant Physician` });
+  // A combobox, not just a label. `Card` names its <section> with `aria-labelledby`, which is
+  // correct ARIA and what makes a screen full of same-named fields addressable at all - but it
+  // means the region "Clinician and day" answers to getByLabel("Clinician") too. Saying the role
+  // says which of the two is meant.
+  await page
+    .getByRole("combobox", { name: "Clinician" })
+    .selectOption({ label: `${CLINICIAN} — Consultant Physician` });
   await page.getByLabel("Date").fill(date);
   await page.getByRole("button", { name: "Show slots" }).click();
   await expect(page.getByRole("group", { name: "Slot" })).toBeVisible();

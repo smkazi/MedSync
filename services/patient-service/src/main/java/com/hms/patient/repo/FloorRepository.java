@@ -12,6 +12,11 @@ public interface FloorRepository extends JpaRepository<Floor, UUID> {
 
     boolean existsByCodeIgnoreCase(String code);
 
+    /** A building has one floor per level, enforced by {@code uq_floor_level}. */
+    Optional<Floor> findByLevel(short level);
+
     /** Ordered by level so a directory reads bottom-up, the way a lift panel does. */
     List<Floor> findByActiveTrueOrderByLevelAsc();
+
+    List<Floor> findAllByOrderByLevelAsc();
 }

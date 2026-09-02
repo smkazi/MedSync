@@ -54,6 +54,13 @@ class AuthorizationAbuseIT extends RequiresRunningStack {
             "dr.rao,        POST,   /staff",
             "reception,     POST,   /staff",
             "reception,     POST,   /departments",
+            // Retiring a department or decommissioning a bed is administrative: it changes what
+            // every other service can reference, and a clinician retiring the department they work
+            // in would take it out of every pick-list.
+            "dr.rao,        PATCH,  /departments/CARD",
+            "reception,     PATCH,  /departments/CARD",
+            "dr.rao,        PATCH,  /beds/00000000-0000-0000-0000-000000000000",
+            "nurse.iqbal,   PATCH,  /beds/00000000-0000-0000-0000-000000000000",
             // Raw analyzer traffic is lab-only: it is unfiltered instrument output.
             "dr.rao,        GET,    /lab/device-messages",
             "reception,     GET,    /lab/device-messages",

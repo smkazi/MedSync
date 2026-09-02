@@ -128,6 +128,34 @@ public class StaffService {
         return PatientMapper.toResponse(department);
     }
 
+    /**
+     * Corrects or retires a department.
+     *
+     * <p>It could be created and never touched again, which for a vocabulary every other service
+     * references is a gap rather than a simplification: a department opened under the wrong name,
+     * or closed when a ward closed, had no path but SQL. Retiring one sets {@code active} false and
+     * keeps every row that points at it, because the encounters recorded under it are still real.
+     */
+    @Transactional
+    public PatientDtos.DepartmentResponse updateDepartment(String code,
+                                                           PatientDtos.UpdateDepartmentRequest request) {
+        String normalised = code.trim().toUpperCase(Locale.ROOT);
+        Department department = departments.findByCode(normalised)
+                .orElseThrow(() -> new NotFoundException("Department '" + normalised + "' was not found"));
+        if (request.name() != null) {
+            department.setName(request.name().trim());
+        }
+        if (request.description() != null) {
+            department.setDescription(request.description());
+        }
+        if (request.active() != null) {
+            department.setActive(request.active());
+        }
+        audit.record("DEPARTMENT_UPDATED", "Department", department.getId(),
+                normalised + " active=" + department.isActive());
+        return PatientMapper.toResponse(departments.save(department));
+    }
+
     private Department resolveDepartment(String code) {
         if (code == null || code.isBlank()) {
             return null;

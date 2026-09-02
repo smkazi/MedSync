@@ -535,4 +535,199 @@ class FacilityApiIntegrationTest {
                 .as("every seeded room appears exactly once under a floor")
                 .isGreaterThanOrEqualTo(21);
     }
+
+    @Test
+    @DisplayName("a bed can be relabelled and taken out of service, and stops being allocatable")
+    void aBedCanBeDecommissioned() throws Exception {
+        // A bed could be added and never removed: a position taken out of service had to be
+        // deleted by hand or left looking allocatable to whatever allocates beds next.
+        // Its own WARD room. GF-CAS is seeded at exactly its designed capacity, so adding a bed
+        // there is the 409 another test asserts - and a bed of a casualty type would change the
+        // count that casualtyHasBeds pins.
+        String roomCode = code("WD");
+        mockMvc.perform(post("/rooms").with(as("ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "code", roomCode, "name", "Decommission Test Ward",
+                                "roomTypeCode", "WARD", "floorCode", "GF", "capacity", 2))))
+                .andExpect(status().isCreated());
+
+        String bedCode = code("BD");
+        String created = mockMvc.perform(post("/rooms/" + roomCode + "/beds").with(as("ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "code", bedCode, "label", "Temporary"))))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        String bedId = objectMapper.readTree(created).get("id").asString();
+
+        mockMvc.perform(patch("/beds/" + bedId).with(as("ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "label", "Bay 9, screened", "active", false))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.label").value("Bay 9, screened"))
+                .andExpect(jsonPath("$.active").value(false));
+
+        // Out of service means out of the list bed allocation reads, and the row is still there.
+        String beds = mockMvc.perform(get("/beds").with(as("DOCTOR")))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        assertThat(beds).doesNotContain(bedCode);
+
+        // And the capacity it was occupying is released, which is the point of deactivating
+        // rather than leaving it: the room can take a replacement position.
+        mockMvc.perform(patch("/beds/" + bedId).with(as("ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("active", true))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.active").value(true));
+    }
+
+    @Test
+    @DisplayName("only an administrator may decommission a bed")
+    void bedUpdatesAreAdminOnly() throws Exception {
+        mockMvc.perform(patch("/beds/" + UUID.randomUUID()).with(as("DOCTOR"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("active", false))))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("two floors cannot share a level, and the refusal names what is already there")
+    void oneFloorPerLevel() throws Exception {
+        // uq_floor_level enforces it. Without a check in the service the violation surfaced as the
+        // generic "conflicts with existing data or a database constraint" - true, and no help at
+        // all to somebody who has just been told their code was fine.
+        mockMvc.perform(post("/floors").with(as("ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "code", code("L").substring(0, 6), "name", "Clashing Floor", "level", 0))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.detail").value(
+                        org.hamcrest.Matchers.containsString("Level 0 is already Ground Floor")));
+    }
+
+    /**
+     * The lowest level no floor occupies.
+     *
+     * <p>`uq_floor_level` is a hard unique constraint and there is no way to remove a floor, so a
+     * test that hard-codes a level passes once against a persistent database and 409s for ever
+     * after. Claiming the next free one is the only repeatable shape.
+     */
+    private short nextFreeLevel() throws Exception {
+        JsonNode floors = objectMapper.readTree(
+                mockMvc.perform(get("/floors").param("includeInactive", "true").with(as("ADMIN")))
+                        .andExpect(status().isOk())
+                        .andReturn().getResponse().getContentAsString());
+        int highest = 0;
+        for (JsonNode floor : floors) {
+            highest = Math.max(highest, floor.get("level").asInt());
+        }
+        return (short) (highest + 1);
+    }
+
+    @Test
+    @DisplayName("a floor may be saved at the level it already holds")
+    void aFloorDoesNotConflictWithItself() throws Exception {
+        short level = nextFreeLevel();
+        String created = mockMvc.perform(post("/floors").with(as("ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "code", code("S").substring(0, 6), "name", "Self Floor",
+                                "level", level))))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        String id = objectMapper.readTree(created).get("id").asString();
+
+        // Renaming it re-sends the same level. Checking the level without excluding the row being
+        // updated would make every such save a conflict with itself.
+        mockMvc.perform(patch("/floors/" + id).with(as("ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "name", "Self Floor, renamed", "level", level))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("Self Floor, renamed"));
+    }
+
+    @Test
+    @DisplayName("a room with no clinic is still found by search, and still not by a clinic filter")
+    void roomsWithoutADepartmentAreSearchable() throws Exception {
+        // Both halves matter and they pull in opposite directions. Written as the JPQL path
+        // r.department.code the predicate became an inner join, so every room with no clinic was
+        // dropped from this search whatever was filtered - a lobby, a corridor, the pharmacy, a
+        // ward. The obvious repair, "or r.department is null", swings the other way and makes a
+        // lobby match a filter for the paediatric clinic.
+        String roomCode = code("NC");
+        mockMvc.perform(post("/rooms").with(as("ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "code", roomCode, "name", "Clinicless Store",
+                                "roomTypeCode", "SUPPORT", "floorCode", "GF"))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.departmentCode").value(org.hamcrest.Matchers.nullValue()));
+
+        assertThat(mockMvc.perform(get("/rooms").param("q", roomCode).with(as("RECEPTIONIST")))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString())
+                .as("a room with no clinic must be findable")
+                .contains(roomCode);
+
+        assertThat(mockMvc.perform(get("/rooms")
+                        .param("q", roomCode).param("department", "CARD")
+                        .with(as("RECEPTIONIST")))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString())
+                .as("but it belongs to no clinic, so a clinic filter must not sweep it up")
+                .doesNotContain(roomCode);
+    }
+
+    @Test
+    @DisplayName("a closed floor and a retired room type are still visible to an administrator")
+    void retiredMasterDataIsStillReachable() throws Exception {
+        // Both endpoints took the flag from the query string and threw it away, so deactivating
+        // either was a one-way door: the row vanished from the only screen that could bring it
+        // back. Floors had a sharper edge - uq_floor_level counts a closed floor too, so its level
+        // looked free, the create was refused, and nothing on any screen said what held it.
+        short level = nextFreeLevel();
+        String floorCode = code("R").substring(0, 6);
+        String created = mockMvc.perform(post("/floors").with(as("ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "code", floorCode, "name", "Retired Floor", "level", level))))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        mockMvc.perform(patch("/floors/" + objectMapper.readTree(created).get("id").asString())
+                        .with(as("ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("active", false))))
+                .andExpect(status().isOk());
+
+        assertThat(mockMvc.perform(get("/floors").with(as("ADMIN")))
+                .andReturn().getResponse().getContentAsString())
+                .as("a closed floor is not offered as a place to put a room")
+                .doesNotContain(floorCode);
+        assertThat(mockMvc.perform(get("/floors").param("includeInactive", "true").with(as("ADMIN")))
+                .andReturn().getResponse().getContentAsString())
+                .as("but it is visible where it can be reopened")
+                .contains(floorCode);
+
+        String typeCode = code("RT");
+        mockMvc.perform(post("/room-types").with(as("ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "code", typeCode, "name", "Retired Type"))))
+                .andExpect(status().isCreated());
+        mockMvc.perform(patch("/room-types/" + typeCode).with(as("ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("active", false))))
+                .andExpect(status().isOk());
+
+        assertThat(mockMvc.perform(get("/room-types").with(as("RECEPTIONIST")))
+                .andReturn().getResponse().getContentAsString())
+                .doesNotContain(typeCode);
+        assertThat(mockMvc.perform(get("/room-types").param("includeInactive", "true").with(as("ADMIN")))
+                .andReturn().getResponse().getContentAsString())
+                .contains(typeCode);
+    }
 }

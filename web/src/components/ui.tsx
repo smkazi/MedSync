@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 
 /** The small set of primitives every screen is built from. */
 
@@ -15,11 +15,21 @@ export function Card({
   tone?: "default" | "critical";
 }) {
   const border = tone === "critical" ? "border-critical/40" : "border-line";
+  // A titled card is a landmark: `aria-labelledby` is what turns the <section> into a named region
+  // rather than a generic box. Screens here render a dozen of them, several containing a form with
+  // the same field labels, and without a name on the container neither a screen reader user nor a
+  // test can say which "Name" field they mean.
+  const headingId = useId();
   return (
-    <section className={`rounded-lg border ${border} bg-surface-raised shadow-sm`}>
+    <section
+      className={`rounded-lg border ${border} bg-surface-raised shadow-sm`}
+      aria-labelledby={title ? headingId : undefined}
+    >
       {title && (
         <header className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
-          <h2 className="text-sm font-semibold tracking-tight">{title}</h2>
+          <h2 id={headingId} className="text-sm font-semibold tracking-tight">
+            {title}
+          </h2>
           {action}
         </header>
       )}

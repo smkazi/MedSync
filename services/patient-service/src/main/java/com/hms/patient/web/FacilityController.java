@@ -48,8 +48,9 @@ public class FacilityController {
      */
     @GetMapping("/room-types")
     @PreAuthorize(Roles.CLINICAL_READ)
-    public List<FacilityDtos.RoomTypeResponse> roomTypes() {
-        return service.allRoomTypes();
+    public List<FacilityDtos.RoomTypeResponse> roomTypes(
+            @RequestParam(defaultValue = "false") boolean includeInactive) {
+        return service.allRoomTypes(includeInactive);
     }
 
     @PostMapping("/room-types")
@@ -72,8 +73,9 @@ public class FacilityController {
 
     @GetMapping("/floors")
     @PreAuthorize(Roles.CLINICAL_READ)
-    public List<FacilityDtos.FloorResponse> floors() {
-        return service.allFloors();
+    public List<FacilityDtos.FloorResponse> floors(
+            @RequestParam(defaultValue = "false") boolean includeInactive) {
+        return service.allFloors(includeInactive);
     }
 
     @PostMapping("/floors")
@@ -168,14 +170,22 @@ public class FacilityController {
      */
     @GetMapping("/beds")
     @PreAuthorize(Roles.CLINICAL_READ)
-    public List<FacilityDtos.BedResponse> beds(@RequestParam(required = false) List<String> type) {
-        return service.allBeds(type);
+    public List<FacilityDtos.BedResponse> beds(@RequestParam(required = false) List<String> type,
+            @RequestParam(defaultValue = "false") boolean includeInactive) {
+        return service.allBeds(type, includeInactive);
     }
 
     @GetMapping("/rooms/{code}/beds")
     @PreAuthorize(Roles.CLINICAL_READ)
     public List<FacilityDtos.BedResponse> bedsInRoom(@PathVariable String code) {
         return service.bedsIn(code);
+    }
+
+    @PatchMapping("/beds/{id}")
+    @PreAuthorize(Roles.ADMIN_ONLY)
+    public FacilityDtos.BedResponse updateBed(@PathVariable UUID id,
+            @Valid @RequestBody FacilityDtos.UpdateBedRequest request) {
+        return service.updateBed(id, request);
     }
 
     @PostMapping("/rooms/{code}/beds")

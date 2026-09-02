@@ -173,6 +173,13 @@ public final class FacilityDtos {
                                    @Size(max = 60) String label) {
     }
 
+    /**
+     * Sparse update. The code is absent for the same reason a room's is: it identifies the
+     * position, and admissions-service will reference a bed by it.
+     */
+    public record UpdateBedRequest(@Size(max = 60) String label, Boolean active) {
+    }
+
     public record BedResponse(UUID id, String code, String label, boolean active,
                               String roomCode, String roomName, String floorName) {
     }

@@ -1,6 +1,9 @@
 import { load } from "@/lib/load";
-import type { Bed } from "@/lib/types";
-import { Card, Empty, ErrorNote, Stat, Table } from "@/components/ui";
+import { currentUser, hasRole } from "@/lib/session";
+import type { Bed, Page, Room } from "@/lib/types";
+import { Badge, Card, Empty, ErrorNote, Stat, Table } from "@/components/ui";
+import { EditRow, RecordForm } from "@/components/RecordForm";
+import { addBed, updateBed } from "../actions";
 
 /**
  * Bed positions, grouped by the room that holds them.
@@ -10,7 +13,13 @@ import { Card, Empty, ErrorNote, Stat, Table } from "@/components/ui";
  * "patient" column means the bed is free.
  */
 export default async function BedsPage() {
-  const { data: beds, error } = await load<Bed[]>("/beds");
+  const mayEdit = hasRole(await currentUser(), "ADMIN");
+  // Decommissioned positions are listed here and nowhere else. Anything that allocates a bed reads
+  // the default list, because a bed out of service is not allocatable.
+  const [{ data: beds, error }, { data: rooms }] = await Promise.all([
+    load<Bed[]>(mayEdit ? "/beds?includeInactive=true" : "/beds"),
+    load<Page<Room>>("/rooms?size=200"),
+  ]);
 
   const byRoom = new Map<string, Bed[]>();
   for (const bed of beds ?? []) {
@@ -18,6 +27,12 @@ export default async function BedsPage() {
     list.push(bed);
     byRoom.set(bed.roomCode, list);
   }
+
+  // Only clinical rooms: the service refuses a bed anywhere else, and its message names the type.
+  const bedRooms = (rooms?.content ?? [])
+    .filter((room) => room.clinical && room.active)
+    .map((room) => ({ value: room.code, label: `${room.code} — ${room.name}` }));
+  const inService = (beds ?? []).filter((bed) => bed.active);
 
   return (
     <div className="space-y-6">
@@ -34,7 +49,7 @@ export default async function BedsPage() {
       {beds && (
         <>
           <div className="grid gap-3 sm:grid-cols-2">
-            <Stat label="Bed positions" value={beds.length} />
+            <Stat label="Bed positions" value={inService.length} />
             <Stat label="Rooms with beds" value={byRoom.size} />
           </div>
 
@@ -62,7 +77,67 @@ export default async function BedsPage() {
               </Table>
             </Card>
           )}
+
+          {mayEdit && beds.length > 0 && (
+            <Card title="Positions">
+              <Table head={["Room", "Bed", "Label", "", ""]}>
+                {beds.map((bed) => (
+                  <tr key={bed.id} className={bed.active ? "" : "opacity-60"}>
+                    <td className="numeric px-3 py-2">{bed.roomCode}</td>
+                    <td className="numeric px-3 py-2 font-medium">{bed.code}</td>
+                    <td className="px-3 py-2 text-ink-muted">{bed.label ?? "—"}</td>
+                    <td className="px-3 py-2">
+                      {!bed.active && <Badge tone="neutral">out of service</Badge>}
+                    </td>
+                    <td className="px-3 py-2">
+                      <EditRow label="Edit">
+                        <RecordForm
+                          action={updateBed}
+                          hidden={{ id: bed.id }}
+                          columns={2}
+                          submitLabel="Save"
+                          fields={[
+                            { name: "label", label: "Label", value: bed.label },
+                            {
+                              name: "active",
+                              label: "In service",
+                              type: "checkbox",
+                              value: bed.active,
+                            },
+                          ]}
+                        />
+                      </EditRow>
+                    </td>
+                  </tr>
+                ))}
+              </Table>
+              <p className="mt-3 text-xs text-ink-muted">
+                Taking a position out of service keeps the row — admissions recorded in it stay
+                valid — and drops it out of the list bed allocation reads.
+              </p>
+            </Card>
+          )}
         </>
+      )}
+
+      {mayEdit && (
+        <Card title="Add a bed">
+          <RecordForm
+            action={addBed}
+            columns={3}
+            submitLabel="Add bed"
+            fields={[
+              { name: "roomCode", label: "Room", type: "select", options: bedRooms, required: true },
+              { name: "code", label: "Bed code", required: true, placeholder: "CAS-7" },
+              { name: "label", label: "Label", placeholder: "Bay 7, screened" },
+            ]}
+          />
+          <p className="mt-3 text-xs text-ink-muted">
+            Beds belong in clinical rooms only, and never beyond the room&apos;s designed capacity —
+            a room with more positions recorded than it has means one of those beds is somewhere
+            else. Both are refused by the platform, with the numbers.
+          </p>
+        </Card>
       )}
     </div>
   );

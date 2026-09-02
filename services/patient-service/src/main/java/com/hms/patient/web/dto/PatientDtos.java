@@ -142,6 +142,18 @@ public final class PatientDtos {
                                           @Size(max = 500) String description) {
     }
 
+    /**
+     * Sparse, like every other update here: a null field is untouched.
+     *
+     * <p>The code is deliberately absent. A department code is referenced by staff rows,
+     * appointments and encounters across three services, none of which would learn it had been
+     * renamed. Retiring a department is what {@code active} is for.
+     */
+    public record UpdateDepartmentRequest(@Size(max = 120) String name,
+                                          @Size(max = 500) String description,
+                                          Boolean active) {
+    }
+
     public record MessageResponse(String message) {
     }
 }
