@@ -2,11 +2,13 @@ import Link from "next/link";
 import { load } from "@/lib/load";
 import { currentUser, hasRole } from "@/lib/session";
 import type {
+  CarePlan,
   CatalogEntry,
   Encounter,
   FormularyEntry,
   LabOrderSummary,
   News2,
+  OrderSet,
   Patient,
   Prescription,
 } from "@/lib/types";
@@ -15,7 +17,8 @@ import { RecordForm } from "@/components/RecordForm";
 import { orderTests } from "../../laboratory/actions";
 import { prescribe } from "../../pharmacy/actions";
 import { PRIORITIES } from "../../laboratory/state";
-import { closeEncounter, recordVitals, signNote } from "./actions";
+import { applyOrderSet, closeEncounter, recordVitals, signNote, startCarePlan } from "./actions";
+import { CarePlanPanel } from "./CarePlanPanel";
 import { DiagnosisForm } from "./DiagnosisForm";
 import { NoteEditor } from "./NoteEditor";
 import {
@@ -70,15 +73,21 @@ export default async function EncounterPage({
   // The laboratory orders raised from this visit, and the catalogue to raise more from. Both are
   // only fetched for somebody who may chart: an encounter's order list is chart content, and the
   // service gates `GET /lab/encounters/{id}/orders` on CHART_READ for exactly that reason.
-  const [labOrders, catalog, patient, prescriptions, formulary] = mayChart
+  const [labOrders, catalog, patient, prescriptions, formulary, orderSets, carePlan] = mayChart
     ? await Promise.all([
         load<LabOrderSummary[]>(`/lab/encounters/${id}/orders`),
         load<CatalogEntry[]>("/lab/catalog"),
         load<Patient>(`/patients/${encounter.patientId}`),
         load<Prescription[]>(`/prescriptions?encounterId=${id}`),
         load<FormularyEntry[]>("/pharmacy/formulary"),
+        load<OrderSet[]>(`/order-sets?department=${encodeURIComponent(encounter.departmentCode ?? "")}`),
+        // A 404 here is the ordinary case — most encounters have no plan — so the error is
+        // rendered as an absence rather than as a failure.
+        load<CarePlan>(`/care-plans/encounters/${id}`),
       ])
     : [
+        { data: null, error: null },
+        { data: null, error: null },
         { data: null, error: null },
         { data: null, error: null },
         { data: null, error: null },
@@ -430,6 +439,134 @@ export default async function EncounterPage({
                   />
                 </div>
               )}
+            </Card>
+          )}
+
+          {/*
+            Order sets: the reason clinicians tolerate computerised ordering at all. A fever needs
+            the same six things every time, and typing them one at a time is where the sixth gets
+            forgotten at four in the morning.
+
+            Applying one is a saga across two services rather than a transaction — a prescription
+            lands in the pharmacy's schema and a laboratory order in the laboratory's — so the
+            outcome is reported in full. If the tests fail after the prescription was raised, the
+            prescription is withdrawn; if the withdrawal fails too, the message names it, because a
+            clinician can cancel one by hand and cannot act on "something went wrong".
+          */}
+          {mayChart && open && (orderSets.data ?? []).length > 0 && (
+            <Card title="Order sets">
+              <div className="space-y-3">
+                {(orderSets.data ?? []).map((set) => (
+                  <div key={set.id} className="rounded-md border border-line p-3">
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <span className="font-medium">{set.name}</span>
+                      <span className="numeric text-xs text-ink-muted">{set.code}</span>
+                    </div>
+                    {set.description && (
+                      <p className="mt-1 text-sm text-ink-muted">{set.description}</p>
+                    )}
+                    <ul className="mt-2 space-y-1 text-sm">
+                      {set.items.map((item) => (
+                        <li key={item.id}>
+                          <Badge tone={item.kind === "MEDICATION" ? "warn" : "neutral"}>
+                            {item.kind === "MEDICATION" ? "medicine" : "test"}
+                          </Badge>{" "}
+                          <span className="numeric">{item.code}</span>
+                          {item.kind === "MEDICATION" ? (
+                            <span className="text-ink-muted">
+                              {" "}
+                              — {item.dose}, {item.frequency}, {item.durationDays} day(s),{" "}
+                              {item.quantity} to dispense
+                            </span>
+                          ) : (
+                            <span className="text-ink-muted"> — {item.priority?.toLowerCase()}</span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                    <form action={applyOrderSet} className="mt-3 flex flex-wrap items-end gap-2">
+                      <input type="hidden" name="encounterId" value={encounter.id} />
+                      <input type="hidden" name="code" value={set.code} />
+                      {set.items.some((item) => item.kind === "MEDICATION") && (
+                        <div className="grow">
+                          <label
+                            htmlFor={`reason-${set.code}`}
+                            className="block text-xs text-ink-muted"
+                          >
+                            Reason, if a warning is raised
+                          </label>
+                          <input
+                            id={`reason-${set.code}`}
+                            name="overrideReason"
+                            className="mt-1 w-full rounded border border-line bg-surface-raised px-2 py-1 text-xs"
+                          />
+                        </div>
+                      )}
+                      <button
+                        type="submit"
+                        className="rounded border border-line px-3 py-1.5 text-xs font-medium hover:bg-surface"
+                      >
+                        Apply
+                      </button>
+                    </form>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-3 border-t border-line pt-2 text-xs text-ink-muted">
+                Every line is shown before it is raised, with its dose, because a set applied in one
+                click is a set nobody reads unless the screen makes them. The tests go out as one
+                order — a panel of bloods is one needle — at the most urgent priority any line
+                carries. A medicine the patient reacts to refuses the whole set, and refuses it
+                before anything has been raised.
+              </p>
+            </Card>
+          )}
+
+          {/*
+            The care plan. A chart records what happened; this records what was meant to happen,
+            which is what a ward round, a discharge summary and a review all ask about and which no
+            note answers. "Improving" is not a goal.
+          */}
+          {mayChart && (
+            <Card title="Care plan">
+              {!carePlan.data ? (
+                <div>
+                  <Empty>No care plan on this visit.</Empty>
+                  {open && (
+                    <form action={startCarePlan} className="mt-3 flex flex-wrap items-end gap-2">
+                      <input type="hidden" name="encounterId" value={encounter.id} />
+                      <div className="grow">
+                        <label htmlFor="plan-title" className="block text-sm font-medium">
+                          What is this episode trying to achieve?
+                        </label>
+                        <input
+                          id="plan-title"
+                          name="title"
+                          required
+                          placeholder="Admission plan"
+                          className="mt-1 w-full rounded-md border border-line bg-surface-raised px-3 py-2 text-sm"
+                        />
+                      </div>
+                      <button
+                        type="submit"
+                        className="rounded-md border border-line px-4 py-2 text-sm font-medium hover:bg-surface"
+                      >
+                        Start a plan
+                      </button>
+                    </form>
+                  )}
+                </div>
+              ) : (
+                <CarePlanPanel plan={carePlan.data} encounterId={encounter.id}
+                               diagnoses={encounter.diagnoses} />
+              )}
+              <p className="mt-3 border-t border-line pt-2 text-xs text-ink-muted">
+                A goal may be filed under one of this visit&apos;s own diagnoses, or under none —
+                &ldquo;mobilising independently&rdquo; belongs to the admission rather than to a
+                problem. It cannot name a diagnosis nobody made. Anything other than
+                <strong> met</strong> needs a note, because &ldquo;not met&rdquo; on its own is a
+                record nobody can learn from.
+              </p>
             </Card>
           )}
         </div>

@@ -10,9 +10,9 @@ haematology analyzer over its own wire protocol and released by a pathologist.
 
 > **Status:** the clinical core, the laboratory (including analyzer integration), the AI service
 > and the web UI are implemented and verified end to end against a real stack, and so are the
-> containerisation, TLS, security-testing and performance-testing layers. **880 tests pass** —
-> 489 Java unit and integration, 91 Python, 41 web unit, 165 black-box API and security abuse cases,
-> and 94 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
+> containerisation, TLS, security-testing and performance-testing layers. **907 tests pass** —
+> 503 Java unit and integration, 91 Python, 41 web unit, 172 black-box API and security abuse cases,
+> and 100 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
 > [Security](#security); what is left is in the [Roadmap](#roadmap).
 
 ---
@@ -195,6 +195,48 @@ That is enforced by the response type having nowhere to put any of it rather tha
 careful, and `queue_tokens` itself holds no patient identity at all. It is allowlisted through
 `hms.security.public-paths`, which had existed since hms-common was written and had no user until
 now — so nothing had to be loosened to add it.
+
+#### Order sets, and care plans
+
+Two things a clinician does with a chart that nothing else here could do: raise the half-dozen
+orders a presentation always needs in one act, and write down what the episode is trying to achieve.
+
+**An order set is rows.** Adding "fever, first line" needs no new behaviour — it is a name and a
+list. What it must never be is half-filled, so a medication line without a dose, a frequency, a
+duration *and* a quantity cannot be stored: an order set is the one place a template reaches a
+patient without anybody typing it, and a CHECK constraint is the only kind of rule that cannot be
+forgotten. The reverse is refused too — a laboratory line carrying a dose is a medicine mis-typed
+as a test, which would be raised as neither.
+
+**Applying one is a saga with compensation, not a transaction, and the code says so.** The
+prescription lands in pharmacy-service's schema and the laboratory order in laboratory-service's,
+so no database transaction spans them, and a comment claiming one would be the most dangerous kind.
+What the platform does promise is that applying a set either raises everything it names or leaves
+nothing behind:
+
+1. The prescription goes **first**, because it is the step that can be refused on clinical grounds
+   — an allergy, an interaction, a role that may not prescribe. A refusal there has left nothing.
+2. The laboratory order goes second, as **one** order for every test in the set: a panel of bloods
+   is one needle, and separate orders would mean separate specimens and a patient stuck twice. It
+   carries the most urgent priority any line names, because taking the first or averaging would
+   quietly downgrade an urgent draw.
+3. If that fails, the prescription is withdrawn.
+4. If the withdrawal fails too, the refusal **names the prescription**, because a clinician can
+   cancel one by hand and cannot act on "something went wrong".
+
+The caller's own token goes downstream, so a nurse applying a laboratory-only set succeeds and the
+same nurse applying one that prescribes is refused by pharmacy-service. That rule lives there, once;
+a copy of the role list in scheduling-service could drift from it, and the drift would be silent in
+the dangerous direction.
+
+**A care plan is goals with dates and outcomes.** A chart records what happened; this records what
+was meant to happen, which is what a ward round, a discharge summary and a review all ask about and
+which no note answers — "improving" is not a goal. One plan per encounter, by unique constraint. A
+goal may be filed under one of that encounter's own diagnoses (checked live, so a diagnosis added
+later is still available) or under none, because "mobilising independently" belongs to the admission
+rather than to a problem. Any outcome other than met needs a note, and the plan **refuses to close
+while a goal is still open** — which is the point: it makes somebody decide, rather than letting
+"we were going to do that" disappear at discharge.
 
 ### `laboratory-service` — schema `laboratory`
 Test catalog, sex-specific reference ranges, orders, specimens with sequence-issued accession
@@ -386,7 +428,7 @@ them and an empty dropdown is worse than an absent one.
 | Dashboard | today's board |
 | Patients | register (search), register a patient, edit a record, the allergy list |
 | Scheduling | appointment book, clinician availability, lapsed appointments, clinician schedules, the OPD token queue, and a link to the corridor display |
-| Clinical | triage intake, encounter charting — vitals with a NEWS2 score, the SOAP note, signing, amendments, ICD-10 coding, laboratory ordering and prescribing — with AI assistance beside the note; the casualty board and the admissions census with its bed map; the drug round, where a dose is given against two scans. All gated to clinicians rather than to everybody who may look a patient up |
+| Clinical | triage intake, encounter charting — vitals with a NEWS2 score, the SOAP note, signing, amendments, ICD-10 coding, laboratory ordering, prescribing, order sets and the care plan — with AI assistance beside the note; the casualty board and the admissions census with its bed map; the drug round, where a dose is given against two scans; and the order-set reference list. All gated to clinicians rather than to everybody who may look a patient up |
 | Laboratory | worklist, an order's report with collection, result entry and release, specimen labels, scan a tube, test catalogue, reference ranges and interpretation rules — both retunable by a pathologist — analyzers, device messages |
 | Facility | room directory, rooms, floors, room types, beds, departments — all editable by an administrator |
 | Messaging | delivery log with the send form, message wording — readable by anybody who may send, editable by an administrator |
@@ -796,12 +838,12 @@ make help          # everything else
 Or directly:
 
 ```bash
-mvn -q verify                                     # 489 Java unit and integration tests
+mvn -q verify                                     # 503 Java unit and integration tests
 cd services/ai-service && uv run pytest -q        # 91 Python tests
 cd web && npm run lint && npm run typecheck       # web static checks
 cd web && npm test                                # 41 web unit tests
-cd web && npx playwright test                     # 94 browser tests, no skips
-mvn -Pautomation -pl tests/api verify             # 165 API and security abuse cases
+cd web && npx playwright test                     # 100 browser tests, no skips
+mvn -Pautomation -pl tests/api verify             # 172 API and security abuse cases
 ```
 
 | Layer | What runs | Where |
@@ -958,6 +1000,12 @@ set; when it is not, the job writes an explicit notice and a run-summary entry s
 
 Worth writing down, because it is the argument for having built them:
 
+- **SpotBugs caught a null id that would have been a prescription nobody could cancel.** The
+  order-set saga withdraws a prescription when the laboratory step fails, which it can only do if it
+  knows the prescription's id — and `RestClient` can return a null body on a 2xx. The code read the
+  id straight out of it. A 2xx with no body would have looked like success, the laboratory order
+  would have gone ahead, and if *that* failed there would have been a live prescription with no id
+  to name. It is a hard failure now, before anything else is raised.
 - **A wrong patient id read as a broken platform.** The pharmacy's allergy client fails closed, on
   purpose: if the list cannot be read, the prescription is refused rather than written unchecked.
   The first version could not tell "no such patient" from "service unreachable", so a mistyped id
@@ -1064,7 +1112,15 @@ SAST/DAST tooling, and performance profiles. Dependency scanning covers Python (
   created nor deleted; a morphology cut-off's **note** is likewise read-only, since it appears
   verbatim on signed reports. There is no critical-value concept anywhere in the service — no
   column, field, flag or notification — so there is no critical-range editor to build yet.
-- **Further clinical modules** — billing and claims, pharmacy and inventory, imaging/PACS.
+- **Further clinical modules** — billing and claims, imaging/PACS.
+- **A screen for composing an order set.** The endpoint exists and is administrator-only; there is
+  no form, because what goes into a set is a clinical governance decision rather than a data-entry
+  task — a set is applied in one click by anybody who may chart — and a form with no review step in
+  front of it would be the wrong control. The reference list at `/order-sets` says so on the page.
+- **Care plans do not follow a patient between visits.** One plan per encounter, by design; a
+  long-term plan spanning admissions would need a different aggregate and a different owner, and
+  guessing at one now would produce a table nobody could reconcile with the per-visit plans already
+  written.
 - **In-patient care beyond the bed.** admissions-service records where a patient is and how they
   got there; it does not hold a ward round, a nursing care plan, a fluid balance chart or a
   discharge-summary document. A discharge takes a free-text summary and that is all — enough to say

@@ -46,6 +46,13 @@ hms:
   patient:
     # Where the facility directory lives. Room codes are validated against it at booking time.
     base-url: ${HMS_PATIENT_URI:http://localhost:8082}
+  laboratory:
+    # Applying an order set raises the tests it names here, with the clinician's own token.
+    base-url: ${HMS_LABORATORY_URI:http://localhost:8084}
+  pharmacy:
+    # And the medicines here. The prescription is raised first, because it is the step that can be
+    # refused on clinical grounds — see OrderingClient for why the order of the two matters.
+    base-url: ${HMS_PHARMACY_URI:http://localhost:8087}
   security:
     mode: resource-server
     # The corridor display, and the only unauthenticated path in the platform.

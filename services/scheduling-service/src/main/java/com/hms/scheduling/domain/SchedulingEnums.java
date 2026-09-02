@@ -51,4 +51,31 @@ public final class SchedulingEnums {
     public enum TokenStatus {
         WAITING, CALLED, DONE
     }
+
+    /**
+     * What one line of an order set raises.
+     *
+     * <p>In code rather than a table because each value maps to a different service, a different
+     * request shape and a different set of required fields: a third value with nothing behind it
+     * would be a row that silently raises nothing when the set is applied.
+     */
+    public enum OrderSetKind {
+        LAB, MEDICATION
+    }
+
+    /** A care plan's life. */
+    public enum CarePlanStatus {
+        ACTIVE, COMPLETED, CANCELLED
+    }
+
+    /**
+     * Whether a goal was reached.
+     *
+     * <p>NOT_MET and ABANDONED are separate values, and both require a note. "We tried and it did
+     * not happen" and "we stopped trying, and here is why" are different facts about a patient's
+     * admission, and a review that cannot tell them apart cannot learn anything from either.
+     */
+    public enum GoalStatus {
+        OPEN, MET, NOT_MET, ABANDONED
+    }
 }

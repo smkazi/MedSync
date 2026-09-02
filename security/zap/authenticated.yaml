@@ -217,6 +217,27 @@ jobs:
       - url: "${ZAP_TARGET}/patients/00000000-0000-4000-8000-000000000000/allergies"
         method: GET
         responseCode: 404
+      # Order sets and care plans. Reading a set is clinical reference data and writing one is
+      # administrative, so the POST must be 403 as a DOCTOR - a set is applied in one click by
+      # anybody who may chart, which makes composing one a governance act rather than data entry.
+      - url: "${ZAP_TARGET}/order-sets"
+        method: GET
+      - url: "${ZAP_TARGET}/order-sets/FEVER1"
+        method: GET
+      - url: "${ZAP_TARGET}/order-sets"
+        method: POST
+        data: '{"code":"ZAPSET","name":"Zap","items":[{"kind":"LAB","code":"CBC"}]}'
+        responseCode: 403
+      # Applying a set fans out to two other services with the caller's own token. Aimed at an
+      # encounter that does not exist, so the refusal comes from the lookup rather than from the
+      # body: a 200 or a 500 here would mean an unvalidated path reached the fan-out.
+      - url: "${ZAP_TARGET}/order-sets/FEVER1/apply"
+        method: POST
+        data: '{"encounterId":"00000000-0000-4000-8000-000000000000"}'
+        responseCode: 404
+      - url: "${ZAP_TARGET}/care-plans/encounters/00000000-0000-4000-8000-000000000000"
+        method: GET
+        responseCode: 404
 
   - type: spider
     parameters:

@@ -124,6 +124,12 @@ services:
       SERVER_PORT: 8083
       HMS_SCHEDULING_PORT: 8083
       HMS_AI_URI: http://ai-service:8000
+      # Applying an order set raises the tests and the medicines it names in these two, with the
+      # clinician's own token. A saga with compensation rather than a transaction: no database
+      # transaction spans two services, so the prescription goes first and is withdrawn if the
+      # laboratory order cannot be raised.
+      HMS_LABORATORY_URI: http://laboratory-service:8084
+      HMS_PHARMACY_URI: http://pharmacy-service:8087
     expose:
       - "8083"
 

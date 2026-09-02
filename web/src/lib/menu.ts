@@ -78,6 +78,12 @@ const MEDICATION_READ: RoleName[] = ["ADMIN", "DOCTOR", "NURSE", "PHARMACIST"];
 // and administering puts it into a patient, and the loop is only a control while those are done by
 // different people.
 const MEDICATION_ADMINISTER: RoleName[] = ["ADMIN", "DOCTOR", "NURSE"];
+// Who writes clinical content, and therefore who has any use for an order set. The same three
+// roles as BED_MANAGE and MEDICATION_ADMINISTER, and a third name for the same reason `Roles.java`
+// keeps LAB_CONFIG separate from LAB_VERIFY: allocating a bed, giving a dose and raising a set of
+// orders are different acts that happen to share a role list today, and a change to one should not
+// silently move the others.
+const CLINICAL_WRITE: RoleName[] = ["ADMIN", "DOCTOR", "NURSE"];
 const ADMIN_ONLY: RoleName[] = ["ADMIN"];
 
 /**
@@ -140,6 +146,12 @@ export const MENUS: Menu[] = [
         href: "/emar",
         roles: MEDICATION_ADMINISTER,
         note: "Scan the wristband, scan the medicine",
+      },
+      {
+        label: "Order sets",
+        href: "/order-sets",
+        roles: CLINICAL_WRITE,
+        note: "Read-only — applied from a chart",
       },
     ],
   },

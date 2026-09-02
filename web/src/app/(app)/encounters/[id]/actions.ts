@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { readForm, refused, withoutBlanks } from "@/lib/form";
 import { submit } from "@/lib/mutate";
-import type { ClinicalNote, Diagnosis, Encounter, Vitals } from "@/lib/types";
+import type { CarePlan, ClinicalNote, Diagnosis, Encounter, Vitals } from "@/lib/types";
 import { NOTE_FIELDS, NUMERIC_VITALS, VITALS_FIELDS, type NoteState } from "./state";
 
 /**
@@ -118,6 +118,72 @@ export async function openEncounter(form: FormData): Promise<void> {
 }
 
 /** Back to the chart with the outcome, since every one of these is a row action, not a form page. */
+/**
+ * Applies an order set to this encounter.
+ *
+ * <p>The refusal is shown verbatim, and here that is not a style preference. Applying a set is a
+ * saga across two other services: the message may be the pharmacy's own words about an allergy, or
+ * it may be the one sentence that matters — the tests could not be raised, the prescription could
+ * not be withdrawn, and prescription X has to be cancelled by hand. A form that flattened those to
+ * "could not apply" would leave a live prescription nobody knows about.
+ */
+export async function applyOrderSet(form: FormData): Promise<void> {
+  const id = String(form.get("encounterId") ?? "");
+  const code = String(form.get("code") ?? "");
+  const overrideReason = String(form.get("overrideReason") ?? "").trim();
+  const result = await submit<{ message: string }>(`/order-sets/${code}/apply`, "POST", {
+    encounterId: id,
+    ...(overrideReason ? { overrideReason } : {}),
+  });
+  finish(id, result.ok ? null : result.error, result.ok ? result.data.message : null);
+}
+
+export async function startCarePlan(form: FormData): Promise<void> {
+  const id = String(form.get("encounterId") ?? "");
+  const title = String(form.get("title") ?? "").trim();
+  const result = await submit<CarePlan>("/care-plans", "POST", { encounterId: id, title });
+  finish(id, result.ok ? null : result.error, result.ok ? "Care plan started." : null);
+}
+
+export async function addCareGoal(form: FormData): Promise<void> {
+  const id = String(form.get("encounterId") ?? "");
+  const planId = String(form.get("planId") ?? "");
+  const values = readForm(form, ["description", "problemCode", "targetDate"] as const);
+  const result = await submit<CarePlan>(`/care-plans/${planId}/goals`, "POST",
+    withoutBlanks(values));
+  finish(id, result.ok ? null : result.error, result.ok ? "Goal added." : null);
+}
+
+/**
+ * Records how a goal turned out.
+ *
+ * <p>The note field is offered for every outcome and required by the service for anything other
+ * than met — the refusal explains why rather than naming a constraint, so it is shown as it comes.
+ */
+export async function recordCareGoal(form: FormData): Promise<void> {
+  const id = String(form.get("encounterId") ?? "");
+  const goalId = String(form.get("goalId") ?? "");
+  const status = String(form.get("status") ?? "");
+  const progressNote = String(form.get("progressNote") ?? "").trim();
+  const result = await submit<CarePlan>(`/care-plans/goals/${goalId}`, "PATCH", {
+    status,
+    ...(progressNote ? { progressNote } : {}),
+  });
+  finish(id, result.ok ? null : result.error,
+    result.ok ? `Goal recorded as ${status.toLowerCase().replace("_", " ")}.` : null);
+}
+
+export async function closeCarePlan(form: FormData): Promise<void> {
+  const id = String(form.get("encounterId") ?? "");
+  const planId = String(form.get("planId") ?? "");
+  const outcome = String(form.get("outcome") ?? "COMPLETED");
+  const result = await submit<CarePlan>(`/care-plans/${planId}/close?outcome=${outcome}`, "POST");
+  // The service refuses to complete a plan with an open goal, and says how many. That is the
+  // instruction: record each one, rather than letting an unfinished goal vanish at discharge.
+  finish(id, result.ok ? null : result.error,
+    result.ok ? `Care plan ${outcome.toLowerCase()}.` : null);
+}
+
 function finish(id: string, problem: string | null, done: string | null): never {
   revalidatePath(`/encounters/${id}`);
   const params = new URLSearchParams();

@@ -64,7 +64,11 @@ test.describe("charting an encounter", () => {
     // ---- editing a signed note becomes an amendment, and the screen says so beforehand --
     await expect(page.getByText(/Saving creates an amendment/)).toBeVisible();
     await expect(page.getByRole("button", { name: "Save as an amendment" })).toBeVisible();
-    await page.getByLabel("Plan").fill("ECG and troponin; review with results.");
+    // The role and an exact name, not `getByLabel("Plan")`: the chart now also carries a Care plan
+    // card, whose region is labelled "Care plan" — and getByLabel matches substrings, so the loose
+    // locator resolved to two elements the moment that card appeared.
+    await page.getByRole("textbox", { name: "Plan", exact: true })
+      .fill("ECG and troponin; review with results.");
     await page.getByRole("button", { name: "Save as an amendment" }).click();
     await expect(page.getByRole("status")).toContainText(/Revision 2/);
 

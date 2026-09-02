@@ -779,3 +779,58 @@ export type DispenseRecord = {
   dispensedAt: string;
   outstanding: number;
 };
+
+// ---- order sets and care plans -------------------------------------------
+
+export type OrderSetKind = "LAB" | "MEDICATION";
+
+export type OrderSetItem = {
+  id: string;
+  kind: OrderSetKind;
+  code: string;
+  dose: string | null;
+  frequency: string | null;
+  durationDays: number | null;
+  quantity: number | null;
+  instructions: string | null;
+  priority: string | null;
+  displayOrder: number;
+};
+
+export type OrderSet = {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  departmentCode: string | null;
+  active: boolean;
+  items: OrderSetItem[];
+};
+
+export type GoalStatus = "OPEN" | "MET" | "NOT_MET" | "ABANDONED";
+
+export type CareGoal = {
+  id: string;
+  description: string;
+  /** One of the encounter's own diagnoses, or null for a goal that belongs to the admission. */
+  problemCode: string | null;
+  targetDate: string | null;
+  status: GoalStatus;
+  progressNote: string | null;
+  updatedBy: string;
+  /** Past its date and still open — what a ward round wants highlighted. */
+  overdue: boolean;
+};
+
+export type CarePlan = {
+  id: string;
+  encounterId: string;
+  patientId: string;
+  patientMrn: string;
+  title: string;
+  status: "ACTIVE" | "COMPLETED" | "CANCELLED";
+  createdBy: string;
+  createdAt: string;
+  closedAt: string | null;
+  goals: CareGoal[];
+};

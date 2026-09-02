@@ -41,9 +41,15 @@ public class RouteConfig {
                 // the one prefix on the platform reachable without a token: it is routed
                 // explicitly rather than by a wildcard so that adding a second public path is a
                 // visible act here as well as in the service's allowlist.
+                //
+                // `/order-sets/**` and `/care-plans/**` are scheduling's because both hang off an
+                // encounter. Applying a set reaches laboratory-service and pharmacy-service with
+                // the clinician's own token, so this one route fans out to two others — which is
+                // why the response says exactly what was raised in each.
                 .route("scheduling", r -> r
                         .path("/appointments/**", "/encounters/**", "/schedules/**",
-                              "/queue/**", "/public/queue/**", "/escalation-policies/**")
+                              "/queue/**", "/public/queue/**", "/escalation-policies/**",
+                              "/order-sets/**", "/care-plans/**")
                         .uri(services.scheduling()))
                 // Laboratory: orders, specimens, results, catalog and analyzer message ingest.
                 .route("laboratory", r -> r

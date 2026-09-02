@@ -35,3 +35,17 @@ export const NUMERIC_VITALS = new Set<string>([
   "heightCm",
   "painScore",
 ]);
+
+/**
+ * How a goal can end.
+ *
+ * <p>OPEN is not offered: this list is what somebody picks when they are recording an outcome, and
+ * "still open" is the absence of one. NOT_MET and ABANDONED are separate because "we tried and it
+ * did not happen" and "we stopped trying, and here is why" are different facts about an admission,
+ * and both need a note the service refuses to do without.
+ */
+export const GOAL_OUTCOMES = [
+  { value: "MET", label: "Met" },
+  { value: "NOT_MET", label: "Not met" },
+  { value: "ABANDONED", label: "Abandoned" },
+] as const;
