@@ -44,9 +44,77 @@ jobs:
           distribution: temurin
           cache: maven
 
+      # ---- The gate that always runs -------------------------------------------------------
+      #
+      # Trivy over a CycloneDX SBOM that Maven emits. No API key, no repository secret, seconds
+      # rather than the hours an NVD feed download takes. This is the Java equivalent of what
+      # pip-audit and npm audit already do for Python and the web app.
+      #
+      # An SBOM rather than pointing a scanner at the poms: nearly every version in this build
+      # comes from the imported Spring Boot and Spring Cloud BOMs rather than being written in a
+      # pom, so a scanner that parses pom.xml has to re-implement Maven's resolution to get the
+      # versions right. Maven emits the resolved graph instead.
+      - name: Build the CycloneDX SBOM
+        run: mvn $MAVEN_ARGS -Psbom package -DskipTests
+
+      - name: Scan the SBOM (Trivy, fails on fixable HIGH/CRITICAL)
+        # Same action already used by the container and IaC scans in this workflow, so no new
+        # supply-chain surface. ignore-unfixed matches the image scan: an unfixable transitive CVE
+        # still reaches the code-scanning tab, but it cannot freeze every merge until upstream
+        # ships a release - and the usual answer to that is a blanket suppression, which is worse
+        # than an honest report.
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: sbom
+          # The plugin's path, not a choice: a `pom`-packaged root writes the reactor-wide SBOM
+          # here and ignores outputDirectory.
+          scan-ref: target/classes/META-INF/sbom/application.cdx.json
+          format: sarif
+          output: trivy-deps.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Upload the SBOM scan SARIF
+        # hashFiles guards against the silent pass: a missing report with continue-on-error set
+        # looks exactly like a clean one.
+        if: always() && hashFiles('trivy-deps.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-deps.sarif
+          category: trivy-deps
+        continue-on-error: true
+
+      - name: Upload the SBOM
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: target/classes/META-INF/sbom/application.cdx.json
+          retention-days: 30
+          if-no-files-found: warn
+
+      # ---- Dependency-Check: only when there is a key, and loudly skipped when there is not ----
+      #
+      # This step used to fail every single nightly run. `<nvdApiKey>${env.NVD_API_KEY}</nvdApiKey>`
+      # in the pom turned an unset secret into a zero-length key, and Dependency-Check rejects an
+      # empty key outright where it would have degraded gracefully on an absent one. The pom no
+      # longer configures the key at all; it is passed here only when one exists.
+      - name: Is an NVD API key available?
+        id: nvd
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        run: |
+          if [ -n "$NVD_API_KEY" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Cache the NVD database
-        # Without this, every run re-downloads the full feed: slow, and rate-limited hard enough
-        # that consecutive runs start failing for reasons unrelated to any dependency.
+        # Only when the database can actually be populated. Caching an empty directory is how the
+        # `NoDataException: No documents exist` in the old logs kept reappearing.
+        if: steps.nvd.outputs.available == 'true'
         uses: actions/cache@v4
         with:
           path: ~/.m2/repository/org/owasp/dependency-check-data
@@ -54,14 +122,29 @@ jobs:
           restore-keys: nvd-
 
       - name: OWASP Dependency-Check (fails on CVSS 7.0+)
+        if: steps.nvd.outputs.available == 'true'
         env:
-          # Optional but strongly advised - free from nvd.nist.gov. Without it the feed download is
-          # throttled to the point of timing out.
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
-        run: mvn $MAVEN_ARGS -Psecurity verify -DskipTests
+        run: mvn $MAVEN_ARGS -Psecurity verify -DskipTests -DnvdApiKey="$NVD_API_KEY"
+
+      - name: Report that Dependency-Check was skipped
+        # A skipped check is not a passed check. Without this the job goes green having run one
+        # scanner instead of two, and nothing on the run page says so.
+        if: steps.nvd.outputs.available != 'true'
+        run: |
+          echo "::notice title=Dependency-Check skipped::NVD_API_KEY is not set, so the NVD feed cannot be fetched. Java dependencies were still scanned by Trivy over the CycloneDX SBOM in this job."
+          {
+            echo "### Dependency-Check skipped"
+            echo
+            echo "\`NVD_API_KEY\` is not set on this repository, so OWASP Dependency-Check did not run."
+            echo "Java dependencies **were** scanned — by Trivy over the CycloneDX SBOM, earlier in this job."
+            echo
+            echo "To enable Dependency-Check as well, get a free key from <https://nvd.nist.gov/developers/request-an-api-key>"
+            echo "and add it as the \`NVD_API_KEY\` repository secret. Nothing else needs to change."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Dependency-Check SARIF
-        if: always()
+        if: always() && hashFiles('target/dependency-check-report.sarif') != ''
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: target/dependency-check-report.sarif

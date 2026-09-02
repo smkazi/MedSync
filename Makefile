@@ -80,11 +80,24 @@ sast: ## Static analysis: SpotBugs + FindSecBugs, Bandit, ESLint security rules
 	cd services/ai-service && uv run bandit -q -r app training && uv run ruff check .
 	cd web && npm run lint
 
+.PHONY: sbom
+sbom: ## CycloneDX SBOM for the whole reactor
+	mvn -q -Psbom package -DskipTests
+	@echo "SBOM: target/classes/META-INF/sbom/application.cdx.json"
+
 .PHONY: sca
-sca: ## Dependency vulnerability scanning
-	mvn -q -Psecurity org.owasp:dependency-check-maven:check
+sca: sbom ## Dependency vulnerability scanning
+	# Trivy over the SBOM is the Java gate: no NVD API key, seconds rather than hours. Install it
+	# from https://trivy.dev if this fails with "command not found".
+	trivy sbom --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 \
+		target/classes/META-INF/sbom/application.cdx.json
 	cd services/ai-service && uv run --with pip-audit pip-audit
 	cd web && npm audit --audit-level=high
+	# OWASP Dependency-Check as well, if you have a key. It is not in the line above because
+	# without NVD_API_KEY the feed download is throttled to the point of being useless, and
+	# passing an empty key is an outright error rather than a graceful degradation:
+	#
+	#   NVD_API_KEY=... mvn -q -Psecurity verify -DskipTests -DnvdApiKey="$$NVD_API_KEY"
 
 .PHONY: secrets
 secrets: ## Scan the working tree and history for secrets

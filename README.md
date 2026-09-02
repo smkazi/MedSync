@@ -503,6 +503,7 @@ limiter itself is covered by `EdgeFilterTest` in the gateway module, so raising 
 
 ```bash
 make security      # SAST + dependency scanning + secret scanning
+make sbom          # CycloneDX SBOM for the whole reactor
 make vapt          # OWASP ZAP: unauthenticated baseline, then an authenticated full scan
 make pentest       # sqlmap, nuclei, testssl.sh against a running stack
 make perf-smoke    # k6: one pass of everything, one VU
@@ -516,7 +517,8 @@ make perf-soak     # modest load held for an hour (PERF_SOAK_DURATION=8h for ove
 | SAST (Java) | SpotBugs + FindSecBugs | `mvn -Pquality verify`, gates on Medium and above |
 | SAST (Python) | Bandit + Ruff `S` rules | `uv run bandit`, `uv run ruff check` |
 | SAST (multi-language) | Semgrep — OWASP Top Ten, JWT, secrets, Dockerfile | nightly workflow, SARIF |
-| Dependencies | OWASP Dependency-Check (CVSS ≥ 7 fails), `pip-audit`, `npm audit` | `mvn -Psecurity verify` |
+| Dependencies | Trivy over a CycloneDX SBOM (fixable HIGH/CRITICAL fails), `pip-audit`, `npm audit` | `make sca` |
+| Dependencies, second opinion | OWASP Dependency-Check (CVSS ≥ 7 fails) — **needs an NVD API key**, see below | `mvn -Psecurity verify -DnvdApiKey=…` |
 | Secrets | gitleaks over full history | CI, every push |
 | Containers / IaC | Trivy on a built image and the compose file | nightly workflow, SARIF |
 | DAST / VAPT | OWASP ZAP Automation Framework, two plans, risk-threshold gate | `security/zap/`, `make vapt` |
@@ -557,9 +559,24 @@ second, seven minutes — for whatever a shared container's numbers are worth as
 no-show scores returned — the last of which matters because a score that vanished under load would
 mean the circuit breaker had opened.
 
-CI runs the fast set on every push; the slow set — Dependency-Check's NVD feed, PIT, both ZAP plans
+CI runs the fast set on every push; the slow set — PIT, both ZAP plans, the container and IaC scans
 — runs nightly and uploads SARIF, so a new finding appears as a code-scanning alert rather than a
 line in a log nobody opens.
+
+**Java dependency scanning is Trivy over an SBOM, and that is a correction rather than a
+preference.** The nightly job originally ran OWASP Dependency-Check alone, and it had **never
+passed**. The pom configured `<nvdApiKey>${env.NVD_API_KEY}</nvdApiKey>`; the repository secret was
+never populated; so the plugin received a zero-length key and died with `Invalid API Key, length of
+0`. An absent key degrades to keyless mode, an empty one is fatal — and Dependency-Check 13.0.0 has
+the same bug internally ([#8715](https://github.com/dependency-check/DependencyCheck/issues/8715)),
+which is why the version here is held at 12.2.2. Because that workflow only runs on a nightly cron
+and never on a push, every run went red where nobody was looking.
+
+So the gate is now Trivy against the CycloneDX SBOM Maven emits: no API key, no repository secret,
+seconds instead of the hours an NVD feed download takes. Dependency-Check stays wired as a second
+opinion and runs only when `NVD_API_KEY` is set; when it is not, the job writes an explicit notice
+and a run-summary entry saying so. *A skipped check is not a passed check*, so it is never quietly
+green.
 
 ---
 
@@ -604,11 +621,20 @@ Worth writing down, because it is the argument for having built them:
 ## Roadmap
 
 **Implemented and verified against a running stack:** clinical core, laboratory with analyzer
-integration, AI service, web UI, containerisation, TLS, the full test pyramid, SAST/SCA/DAST
-tooling, and performance profiles.
+integration, AI service, web UI, containerisation, TLS, the full test pyramid, SAST/DAST tooling,
+and performance profiles. Dependency scanning covers Python (`pip-audit`) and the web app
+(`npm audit`) on every run, and Java through Trivy over the SBOM.
 
-**Shipped but not verified here:** `docker compose up`. The container this was developed in has no
-Docker daemon, so that path is validated by review only.
+**Shipped but not verified here:**
+
+- `docker compose up`. The container this was developed in has no Docker daemon, so that path is
+  validated by review only.
+- **OWASP Dependency-Check has never produced a passing run**, because it needs an `NVD_API_KEY`
+  that is not set on this repository. It is wired and conditional; the Java dependency gate that
+  does run is Trivy over the SBOM. Add the secret (free, from
+  <https://nvd.nist.gov/developers/request-an-api-key>) and it switches on with no code change.
+- Trivy itself could not be exercised locally: its release assets are unreachable through this
+  container's egress proxy, so the SBOM scan is verified by a CI run rather than a local one.
 
 **Not built:**
 

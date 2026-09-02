@@ -38,7 +38,12 @@
          build red for reasons nobody changed. -->
     <spotbugs-maven-plugin.version>4.10.4.0</spotbugs-maven-plugin.version>
     <findsecbugs.version>1.14.0</findsecbugs.version>
-    <dependency-check-maven.version>13.0.0</dependency-check-maven.version>
+    <!-- Held at 12.2.2 deliberately. 13.0.0 passes an empty string rather than null when no NVD
+         API key is configured, so it cannot update keyless at all - dependency-check#8715, from
+         PR #8549, fixed by PR #8716 but not yet released (13.0.0 is still the newest on Maven
+         Central). Move forward once a release later than 13.0.0 exists. -->
+    <dependency-check-maven.version>12.2.2</dependency-check-maven.version>
+    <cyclonedx-maven-plugin.version>2.9.3</cyclonedx-maven-plugin.version>
     <pitest-maven.version>1.30.0</pitest-maven.version>
     <pitest-junit5.version>1.2.3</pitest-junit5.version>
     <spotbugs.threshold>Medium</spotbugs.threshold>
@@ -78,6 +83,49 @@
   </dependencies>
 
   <profiles>
+
+    <!-- CycloneDX SBOM. `mvn -Psbom package -DskipTests`.
+         The reactor-wide one lands at target/classes/META-INF/sbom/application.cdx.json - that
+         path is the plugin's, not a choice; a `pom`-packaged root writes the aggregate there and
+         ignores outputDirectory. Each module also embeds its own SBOM at the same relative path
+         inside its jar, which is worth keeping: a deployed artifact then carries its own bill of
+         materials.
+
+         Why an SBOM rather than pointing a scanner at the poms: nearly every version here comes
+         from the imported spring-boot-dependencies and spring-cloud-dependencies BOMs rather than
+         being written in a pom, so a scanner parsing pom.xml has to re-implement Maven's
+         resolution to get versions right. Letting Maven emit the resolved graph removes the
+         guesswork - it is how both jackson-databind 3.1.5 and the 2.21.5 that arrives
+         transitively show up as separate components. -->
+    <profile>
+      <id>sbom</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.cyclonedx</groupId>
+            <artifactId>cyclonedx-maven-plugin</artifactId>
+            <version>${cyclonedx-maven-plugin.version}</version>
+            <configuration>
+              <outputFormat>json</outputFormat>
+              <projectType>application</projectType>
+              <schemaVersion>1.5</schemaVersion>
+              <!-- Test-only dependencies do not ship, so scanning them turns real findings into
+                   noise - the same call the Dependency-Check profile makes with skipTestScope. -->
+              <includeTestScope>false</includeTestScope>
+            </configuration>
+            <executions>
+              <execution>
+                <id>default</id>
+                <phase>package</phase>
+                <goals>
+                  <goal>makeAggregateBom</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
     <!-- Static analysis: SpotBugs with the FindSecBugs detector pack.
          `mvn -Pquality verify` (or `make sast`). Fails the build on a high-confidence finding
          rather than writing a report nobody opens. -->
@@ -134,11 +182,20 @@
     </profile>
 
     <!-- Dependency vulnerability scanning (OWASP Dependency-Check).
-         `mvn -Psecurity verify` (or `make sca`). Fails on CVSS 7.0 and above - the level at which
+         `mvn -Psecurity verify -DnvdApiKey=...`. Fails on CVSS 7.0 and above - the level at which
          a vulnerable transitive dependency stops being paperwork.
 
-         Needs to fetch the NVD feed on first run, which is slow and rate-limited without a key;
-         set NVD_API_KEY (free from nvd.nist.gov) in CI. -->
+         The key is NOT configured here, and that is the fix for a real outage rather than an
+         omission. It used to read `<nvdApiKey>${env.NVD_API_KEY}</nvdApiKey>`, and when the
+         environment variable was unset-or-empty - which it is, because the repository secret was
+         never populated - the plugin received a zero-length key and died with "Invalid API Key,
+         length of 0". An absent key degrades to keyless mode; an empty one is a hard error. The
+         plugin already exposes `nvdApiKey` as a user property, so CI passes -DnvdApiKey when it
+         has one and passes nothing when it does not.
+
+         Without a key the NVD feed is throttled hard enough to be impractical in CI, so this
+         profile is the with-a-key path. The gate that runs unconditionally is Trivy over the
+         CycloneDX SBOM produced by the `sbom` profile below. -->
     <profile>
       <id>security</id>
       <build>
@@ -154,7 +211,6 @@
                 <format>SARIF</format>
                 <format>JSON</format>
               </formats>
-              <nvdApiKey>${env.NVD_API_KEY}</nvdApiKey>
               <suppressionFiles>
                 <suppressionFile>config/dependency-check-suppressions.xml</suppressionFile>
               </suppressionFiles>
