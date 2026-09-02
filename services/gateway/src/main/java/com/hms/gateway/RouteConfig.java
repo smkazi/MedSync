@@ -65,6 +65,16 @@ public class RouteConfig {
                 .route("admissions", r -> r
                         .path("/casualty/**", "/admissions/**")
                         .uri(services.admissions()))
+                // The medication loop: formulary, prescribing, dispensing, and the bedside eMAR.
+                //
+                // `/prescriptions/**` sits outside the `/pharmacy/**` prefix deliberately. A
+                // prescription is a clinical order written by a prescriber, not a pharmacy record —
+                // the pharmacy reads it — and putting it under the pharmacy's prefix would say
+                // otherwise in the one place every client sees. `/emar/**` is the ward's end of the
+                // same loop and is separate for the same reason.
+                .route("pharmacy", r -> r
+                        .path("/pharmacy/**", "/prescriptions/**", "/emar/**")
+                        .uri(services.pharmacy()))
                 // Clinical decision support: summarisation, triage, no-show risk, coding.
                 .route("ai", r -> r
                         .path("/ai/**")

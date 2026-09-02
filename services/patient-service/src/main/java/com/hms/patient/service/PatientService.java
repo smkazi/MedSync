@@ -159,6 +159,22 @@ public class PatientService {
                 patient.isActive());
     }
 
+    /**
+     * The allergy list on its own.
+     *
+     * <p>Audited like the contact lookup, and for the same reason: a narrow endpoint held by a role
+     * that cannot read the chart is exactly the endpoint somebody will later ask "who has been
+     * reading these?" about.
+     */
+    @Transactional
+    public PatientDtos.PatientAllergies readAllergies(UUID id) {
+        Patient patient = require(id);
+        audit.record("PATIENT_ALLERGIES_READ", "Patient", id,
+                "allergy list released to " + CurrentUser.usernameOrSystem());
+        return new PatientDtos.PatientAllergies(patient.getId(), patient.isActive(),
+                patient.getAllergies().stream().map(PatientMapper::toResponse).toList());
+    }
+
     @Transactional
     public PatientDtos.AllergyResponse addAllergy(UUID patientId, PatientDtos.AddAllergyRequest request) {
         Patient patient = require(patientId);

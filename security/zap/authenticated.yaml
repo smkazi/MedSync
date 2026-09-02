@@ -177,6 +177,46 @@ jobs:
       - url: "${ZAP_TARGET}/admissions/00000000-0000-4000-8000-000000000000"
         method: GET
         responseCode: 404
+      # The medication loop. A doctor prescribes, so the read surface is 200 and the write is
+      # aimed at by the active scan; dispensing and the formulary are the pharmacy's, so a 200
+      # there as a DOCTOR is a finding. Who else is refused is asserted in tests/api - ZAP logs in
+      # as one user and cannot express "403 as a pharmacist".
+      - url: "${ZAP_TARGET}/pharmacy/formulary"
+        method: GET
+      - url: "${ZAP_TARGET}/pharmacy/interactions"
+        method: GET
+      - url: "${ZAP_TARGET}/pharmacy/stock"
+        method: GET
+      - url: "${ZAP_TARGET}/prescriptions"
+        method: GET
+      - url: "${ZAP_TARGET}/pharmacy/formulary"
+        method: POST
+        data: '{"code":"ZAP1","name":"Zap","form":"TABLET","strength":"1 mg","unit":"tablet","ingredients":["ZAPIUM"]}'
+        responseCode: 403
+      - url: "${ZAP_TARGET}/pharmacy/interactions"
+        method: POST
+        data: '{"ingredientA":"A","ingredientB":"B","severity":"MINOR","effect":"x","management":"y"}'
+        responseCode: 403
+      - url: "${ZAP_TARGET}/pharmacy/stock"
+        method: POST
+        data: '{"drugCode":"PARA500","batchNo":"ZAP","expiresOn":"2030-01-01","quantity":1}'
+        responseCode: 403
+      - url: "${ZAP_TARGET}/pharmacy/dispenses"
+        method: POST
+        data: '{"prescriptionItemId":"00000000-0000-4000-8000-000000000000","quantity":1}'
+        responseCode: 403
+      # The safety check itself, with a body the scan can mutate: it takes a patient id and a list
+      # of drug codes and reaches patient-service for the allergy list, so it is the widest
+      # injection surface the pharmacy has.
+      - url: "${ZAP_TARGET}/pharmacy/check"
+        method: POST
+        data: '{"patientId":"00000000-0000-4000-8000-000000000000","drugCodes":["PARA500"]}'
+        responseCode: 404
+      # The narrow allergy endpoint. Held by the pharmacy and by clinicians, so a doctor reads it -
+      # the row is here so the active scan exercises the path, not to assert a refusal.
+      - url: "${ZAP_TARGET}/patients/00000000-0000-4000-8000-000000000000/allergies"
+        method: GET
+        responseCode: 404
 
   - type: spider
     parameters:

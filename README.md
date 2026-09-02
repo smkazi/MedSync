@@ -10,9 +10,9 @@ haematology analyzer over its own wire protocol and released by a pathologist.
 
 > **Status:** the clinical core, the laboratory (including analyzer integration), the AI service
 > and the web UI are implemented and verified end to end against a real stack, and so are the
-> containerisation, TLS, security-testing and performance-testing layers. **812 tests pass** —
-> 453 Java unit and integration, 91 Python, 40 web unit, 141 black-box API and security abuse cases,
-> and 87 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
+> containerisation, TLS, security-testing and performance-testing layers. **880 tests pass** —
+> 489 Java unit and integration, 91 Python, 41 web unit, 165 black-box API and security abuse cases,
+> and 94 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
 > [Security](#security); what is left is in the [Roadmap](#roadmap).
 
 ---
@@ -51,15 +51,16 @@ haematology analyzer over its own wire protocol and released by a pathologist.
       audit trail        departments        notes · vitals      results
                          rooms · beds       NEWS2 · OPD queue
 
-      notification :8085   admissions :8086    ai :8000
-      delivery log         casualty board      FastAPI
-      SMTP · HTTP SMS      bed occupancy       4 capabilities
-      no PHI outbound      transfers           (Claude + models)
-             │                 │            │
-             └── Kafka: hms.patient · hms.appointment · hms.lab · hms.admission · hms.audit ──┘
+      notification :8085   admissions :8086    pharmacy :8087      ai :8000
+      delivery log         casualty board      formulary           FastAPI
+      SMTP · HTTP SMS      bed occupancy       prescribe·dispense  4 capabilities
+      no PHI outbound      transfers           eMAR, two scans     (Claude + models)
+             │                 │                    │                  │
+             └── Kafka: hms.patient · hms.appointment · hms.lab · hms.admission ·
+                        hms.pharmacy · hms.audit ─────────────────────────────────┘
                                      │
                     PostgreSQL 16 — one schema per service
-    identity · patient · scheduling · laboratory · notification · admissions
+    identity · patient · scheduling · laboratory · notification · admissions · pharmacy
 ```
 
 **Authentication.** `identity-service` is the only holder of passwords and the only issuer of
@@ -85,7 +86,7 @@ order) are plain columns, not foreign keys, so a service survives another's outa
 .
 ├── pom.xml                      Maven aggregator; -Pquality / -Psecurity / -Pmutation / -Pautomation
 ├── Makefile                     every task, one place. `make help`
-├── docker-compose.yml           postgres, kafka (KRaft), eight services, ai-service, web
+├── docker-compose.yml           postgres, kafka (KRaft), nine services, ai-service, web
 ├── Dockerfile.java              shared multi-stage build, ARG SERVICE, non-root
 ├── config/                      SpotBugs exclusions and Dependency-Check suppressions, each with a reason
 ├── platform/hms-common/         security, errors, events, audit, crypto, pagination
@@ -97,6 +98,7 @@ order) are plain columns, not foreign keys, so a service survives another's outa
 │   ├── laboratory-service/      orders, results, reference ranges, ASTM + K-DPS parsers
 │   ├── notification-service/    channels, delivery log, message templates
 │   ├── admissions-service/      casualty board, bed occupancy, admissions, transfers
+│   ├── pharmacy-service/        formulary, prescribing, dispensing, closed-loop eMAR
 │   └── ai-service/              FastAPI: summarisation, no-show risk, triage, ICD-10
 ├── web/                         Next.js 16 app, Playwright suite in e2e/
 ├── tests/
@@ -306,6 +308,71 @@ wider clinical read. A list of who is in casualty, with what complaint, and how 
 them is a chart in table form; the front desk books and registers, and the laboratory has less
 reason still.
 
+### `pharmacy-service` — schema `pharmacy`
+The closed medication loop: formulary, prescribing, interaction and allergy checking, stock by
+batch, dispensing, and administration at the bedside.
+
+**Not a dispensary.** The temptation was to build formulary plus stock plus dispense and call it
+pharmacy; every system worth comparing this one to treats the medication loop as one circuit —
+prescribe → check → dispense → administer against a scanned wristband and a scanned label → record
+— because that circuit is where the deaths are. Building only the dispensing end would have left
+the highest-risk workflow in a hospital half-wired.
+
+**Three acts, three roles, no overlap.** A prescriber writes the order (`PRESCRIBE`), the pharmacy
+fills it (`PHARMACY_WRITE`), a nurse gives the dose (`MEDICATION_ADMINISTER`). No role on this
+platform holds two of the three, and eighteen rows in `tests/api`'s authorization table exist to
+keep it that way: if any one of them ever answers 2xx, one account can order a medicine, hand it
+over and sign that it was given. A pharmacist reads a prescription and an allergy list and **cannot
+open a chart** — the same line `CHART_READ` draws for the laboratory, drawn once more.
+
+**Checks run on ingredients, not on names.** A patient allergic to penicillin is allergic to it
+under every trade name it has ever been sold under, so `formulary_ingredients` carries the molecule
+*and* its class markers: amoxicillin is AMOXICILLIN and PENICILLIN, ibuprofen is IBUPROFEN and
+NSAID. That is how a class allergy and a class interaction work without a second mechanism — and it
+is why an entry with no ingredients is refused at creation, since it would pass every check by
+having nothing to match. Matching is whole-word rather than substring, because plain containment
+makes an "ACE" allergy block paracetamol, and a checker that cries wolf is one people click through.
+
+**Three answers, not two.** A check comes back CLEAR, OVERRIDABLE or REFUSED, and the middle one is
+the point. A recorded severe or life-threatening allergy is refused outright and no reason unlocks
+it; a contraindicated pairing likewise. At or above the deployment's threshold —
+`hms.pharmacy.interaction-floor`, MAJOR by default — the prescriber may go ahead having written down
+why, and that sentence travels with the prescription to the counter, because the pharmacist is the
+last person who can question it. Below the floor, the finding is reported and does not block:
+interrupting for every minor interaction is how a hospital teaches its clinicians to dismiss the
+dialog without reading it.
+
+**The checks run twice.** Again at dispensing, against the patient's record as it is *now* — an
+allergy may have been recorded since the order was written, and the patient may have been started on
+something else.
+
+**One row per unordered pair.** `interaction_pairs` holds the two ingredients sorted, enforced by
+`CHECK (ingredient_a < ingredient_b)`, so a deployment cannot end up holding (warfarin, aspirin) as
+MAJOR and (aspirin, warfarin) as MINOR with which one fires depending on the order a caller passed
+them in. The `management` column is what earns the table its keep: "these interact" gets dismissed,
+"monitor INR weekly for the first month" does not.
+
+**Stock is by batch, and expiry is enforced three times.** A batch that expires today counts as
+expired. An expired delivery is refused at the door; the first-expiry-first-out query excludes
+expired batches so no picker is ever offered one; and the decrement re-checks the date, because
+choosing a batch and writing the row can span midnight. FEFO rather than FIFO because stock
+received later can expire sooner, and picking by arrival is how a pharmacy destroys the box it
+should have used.
+
+**The database decides the races.** Stock comes out by one conditional `UPDATE` — two pharmacists
+reaching for the last box both read the same quantity, and a read-modify-write would let the second
+silently restore what the first took. One dose is one record by unique constraint on
+(item, scheduled time): two nurses at one bedside, each believing the other had not given it, both
+pass a check and only one can win an insert.
+
+**Closed-loop administration.** A dose needs a scanned wristband matching the prescription's MRN and
+a scanned label matching the drug code; both are checked before the row exists, and both are stored
+verbatim rather than as a "verified" boolean, because the question asked after a wrong dose is
+*which barcode was actually scanned*. There is no "scanner unavailable" flag: typing the numbers in
+is allowed, since scanners fail, but an override that turns both checks off becomes the normal path
+within a week. A dose **not** given is also a row, with a reason and no scans, because the absence
+of a dose is a clinical fact the next shift needs.
+
 ### `web` — Next.js 16, React 19
 The clinical interface. Server components call the gateway; **the browser never receives an access
 token** — the session lives in httpOnly cookies and every platform call is made server-side.
@@ -319,11 +386,12 @@ them and an empty dropdown is worse than an absent one.
 | Dashboard | today's board |
 | Patients | register (search), register a patient, edit a record, the allergy list |
 | Scheduling | appointment book, clinician availability, lapsed appointments, clinician schedules, the OPD token queue, and a link to the corridor display |
-| Clinical | triage intake, encounter charting — vitals with a NEWS2 score, the SOAP note, signing, amendments, ICD-10 coding, laboratory ordering — with AI assistance beside the note; the casualty board and the admissions census with its bed map, both gated to clinicians rather than to everybody who may look a patient up |
+| Clinical | triage intake, encounter charting — vitals with a NEWS2 score, the SOAP note, signing, amendments, ICD-10 coding, laboratory ordering and prescribing — with AI assistance beside the note; the casualty board and the admissions census with its bed map; the drug round, where a dose is given against two scans. All gated to clinicians rather than to everybody who may look a patient up |
 | Laboratory | worklist, an order's report with collection, result entry and release, specimen labels, scan a tube, test catalogue, reference ranges and interpretation rules — both retunable by a pathologist — analyzers, device messages |
 | Facility | room directory, rooms, floors, room types, beds, departments — all editable by an administrator |
 | Messaging | delivery log with the send form, message wording — readable by anybody who may send, editable by an administrator |
-| Pharmacy, Billing | *not built* — see below |
+| Pharmacy | dispensing queue with the override reason on the row, formulary with its ingredient lists, the interaction table with what to do about each pairing, stock by batch with what is about to expire — gated to the roles that may read a medication order |
+| Billing | *not built* — see below |
 | Administration | staff directory, users (create, roles, reset a password), roles, audit trail |
 
 Three rules hold in the navigation, and each is asserted in `web/e2e/navigation.spec.ts` against a
@@ -335,8 +403,10 @@ real browser for all six seeded roles:
 - **Dropdowns are disclosure widgets, never hover menus.** Click or Enter/Space opens, Escape closes
   and returns focus to the trigger, arrows move and wrap, `aria-expanded` and `aria-controls` are
   wired, and there is no hover-only path — this runs on tablets and wall-mounted terminals.
-- **A module with no backend says so.** Pharmacy and Billing appear in the menu marked "not built"
-  and lead to a page naming the service and endpoints they need. No mock table, no empty state
+- **A module with no backend says so.** Billing appears in the menu marked "not built" and leads to
+  a page naming the service and endpoints it needs. Pharmacy was in that list until this slice and
+  is not any more: it has a backend and a role now, so it is gated like every other module that
+  does — which is also why the laboratory accounts and the front desk stopped seeing it. No mock table, no empty state
   implying data could arrive, no disabled buttons hinting at a workflow: a clinical screen that
   looks functional but is not is worse than an absent one, because somebody will read a number off
   it.
@@ -481,7 +551,7 @@ Flyway creates and migrates every schema on service start.
 
 ```bash
 mvn -q package -DskipTests
-scripts/local.sh start          # identity, patient, scheduling, laboratory, notification, admissions, gateway
+scripts/local.sh start          # identity, patient, scheduling, laboratory, notification, admissions, pharmacy, gateway
 scripts/local.sh status
 scripts/local.sh logs identity-service
 scripts/local.sh stop
@@ -523,6 +593,7 @@ The dev profile seeds one account per role:
 | `dr.pathan` | PATHOLOGIST |
 | `new.starter` | RECEPTIONIST — **still on its initial password**, so it can do nothing but change it |
 | `svc.notification` | SERVICE — **not a person.** notification-service signs in as this to find out where to send a message, because the work is triggered by an event and an event carries no caller's token. It holds the platform's narrowest role: a phone number, an email address, and no part of a chart. |
+| `pharmacist` | PHARMACIST — fills prescriptions, keeps the formulary and the stock. Reads a prescription and an allergy list and **cannot open a chart**, cannot prescribe, and cannot record a dose as given. |
 
 The seed password comes from `HMS_SEED_PASSWORD` and defaults to `ChangeMe!Dev2026`.
 
@@ -725,12 +796,12 @@ make help          # everything else
 Or directly:
 
 ```bash
-mvn -q verify                                     # 453 Java unit and integration tests
+mvn -q verify                                     # 489 Java unit and integration tests
 cd services/ai-service && uv run pytest -q        # 91 Python tests
 cd web && npm run lint && npm run typecheck       # web static checks
-cd web && npm test                                # 40 web unit tests
-cd web && npx playwright test                     # 87 browser tests, no skips
-mvn -Pautomation -pl tests/api verify             # 141 API and security abuse cases
+cd web && npm test                                # 41 web unit tests
+cd web && npx playwright test                     # 94 browser tests, no skips
+mvn -Pautomation -pl tests/api verify             # 165 API and security abuse cases
 ```
 
 | Layer | What runs | Where |
@@ -887,6 +958,14 @@ set; when it is not, the job writes an explicit notice and a run-summary entry s
 
 Worth writing down, because it is the argument for having built them:
 
+- **A wrong patient id read as a broken platform.** The pharmacy's allergy client fails closed, on
+  purpose: if the list cannot be read, the prescription is refused rather than written unchecked.
+  The first version could not tell "no such patient" from "service unreachable", so a mistyped id
+  answered 500 — telling a prescriber the platform was broken when the fix was in their hands. Only
+  the black-box suite could catch it: pharmacy-service's own tests stub that client, because
+  patient-service is not running beside them. A 404 from the callee is now the caller's 404 and a
+  403 is their 403; everything else still fails closed.
+
 - **A pick-list silently lost every row past the hundredth.** The staff screen asked for
   `/admin/users?size=200` to fill its "Platform login" dropdown, and the controller answers
   `Math.min(size, 100)` — so the request looked like it asked for everything and got the first
@@ -995,6 +1074,26 @@ SAST/DAST tooling, and performance profiles. Dependency scanning covers Python (
   carry what a bed-day charge needs, but nothing consumes them: there is no billing service yet, so
   a stay currently costs nothing anywhere. The event is emitted rather than added later so that the
   service does not have to learn billing exists.
+- **A controlled-drug register.** `formulary.controlled` is recorded and not enforced: there is no
+  register, no witnessed-destruction record and no running balance reconciliation. The flag is
+  honest about being a label rather than a control, which is better than a column implying one.
+- **Stock adjustment and write-off.** An expired batch stays visible with its quantity until
+  somebody adjusts it, and nothing in the platform can adjust it — there is no destruction record,
+  no stock take and no return-to-supplier. Dispensing it is already impossible, so the gap is an
+  accounting one rather than a safety one, and it is named rather than papered over with a delete.
+- **A printed wristband.** The eMAR checks a scanned wristband against the prescription's MRN, and
+  nothing in the platform prints the wristband: that belongs with admission, and
+  laboratory-service's `Code128` renderer would need to move into `hms-common` first. Typing the
+  MRN works and is checked identically, which is what makes the gap tolerable.
+- **Drug-class cross-sensitivity beyond what is recorded.** A class allergy works by the class
+  being named as an ingredient on each product, which is deliberate and explained in the migration
+  — but it means a class the formulary does not mark is a class the checker does not know. There is
+  no ontology and no external drug database behind it; a deployment's pharmacist is expected to
+  review the seeded ingredient lists.
+- **Dose calculation, paediatric or renal.** Every dose is free text as the prescriber wrote it.
+  There is no mg/kg arithmetic, no maximum-dose check and no renal adjustment, so the platform
+  cannot catch a decimal-point error in a dose the way it catches an allergy — and pretending
+  otherwise with a units field would be worse than the honest gap.
 - **Casualty triage from the AI service.** `POST /ai/triage` already returns an acuity and the
   arrival form does not offer it. The acuity on the board is a person's judgement, typed by the
   nurse who saw the patient, and wiring a suggestion into that field is a decision about how much

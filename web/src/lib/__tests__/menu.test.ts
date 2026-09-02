@@ -58,7 +58,6 @@ const EXPECTED_TOP_LEVEL: Record<RoleName, string[]> = {
     "Scheduling",
     "Clinical",
     "Facility",
-    "Pharmacy",
     "Billing",
     "Messaging",
   ],
@@ -68,7 +67,6 @@ const EXPECTED_TOP_LEVEL: Record<RoleName, string[]> = {
     "Scheduling",
     "Laboratory",
     "Facility",
-    "Pharmacy",
     "Billing",
   ],
   PATHOLOGIST: [
@@ -77,9 +75,13 @@ const EXPECTED_TOP_LEVEL: Record<RoleName, string[]> = {
     "Scheduling",
     "Laboratory",
     "Facility",
-    "Pharmacy",
     "Billing",
   ],
+  // The pharmacy sees its own module and nothing clinical. That is the point of the role: a
+  // pharmacist reads a prescription and an allergy list, and never a chart — so there is no
+  // Patients menu, no Scheduling and no Clinical, and the Billing entry is there only because it
+  // is not built and therefore not gated.
+  PHARMACIST: ["Dashboard", "Pharmacy", "Billing"],
 };
 
 describe("menusFor", () => {

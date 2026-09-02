@@ -17,6 +17,16 @@ public final class Topics {
      */
     public static final String ADMISSION = "hms.admission.events";
 
+    /**
+     * Prescriptions, dispenses and doses given.
+     *
+     * <p>Its own topic for the reason {@link #ADMISSION} is: a different aggregate family with a
+     * different key. It also carries what billing will need — a dispense is a chargeable event —
+     * which is why the events are published now rather than added when a billing service exists.
+     * A module that has to be changed to become observable is a module nobody makes observable.
+     */
+    public static final String PHARMACY = "hms.pharmacy.events";
+
     private Topics() {
     }
 }

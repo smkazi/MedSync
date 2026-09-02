@@ -115,6 +115,31 @@ class AuthorizationAbuseIT extends RequiresRunningStack {
             "lab.tech,      GET,    /admissions/beds",
             "reception,     GET,    /casualty/patients/00000000-0000-4000-8000-000000000000",
             "lab.tech,      GET,    /admissions/patients/00000000-0000-4000-8000-000000000000",
+            // The medication loop is three acts by three roles, and no role holds two of them.
+            // These rows are what makes the loop a control rather than a workflow: if any one of
+            // them ever answers 2xx, one account can order a medicine, hand it over and sign that
+            // it was given.
+            "nurse.iqbal,   POST,   /prescriptions",
+            "pharmacist,    POST,   /prescriptions",
+            "reception,     POST,   /prescriptions",
+            "dr.rao,        POST,   /pharmacy/dispenses",
+            "nurse.iqbal,   POST,   /pharmacy/dispenses",
+            "pharmacist,    POST,   /emar/administer",
+            // The formulary and the interaction table decide what may be prescribed at all and
+            // what the platform refuses. Readable by the ward, writable only by the pharmacy.
+            "dr.rao,        POST,   /pharmacy/formulary",
+            "nurse.iqbal,   POST,   /pharmacy/interactions",
+            "dr.rao,        POST,   /pharmacy/stock",
+            // And the laboratory has no part in the loop: not the queue, not the stock, not the
+            // formulary.
+            "lab.tech,      GET,    /prescriptions",
+            "lab.tech,      GET,    /pharmacy/stock",
+            "dr.pathan,     GET,    /pharmacy/formulary",
+            "reception,     GET,    /prescriptions",
+            // The narrow allergy endpoint the pharmacy holds is narrow in both directions: it is
+            // the pharmacy's door into the chart, and not the front desk's or the laboratory's.
+            "reception,     GET,    /patients/00000000-0000-4000-8000-000000000000/allergies",
+            "lab.tech,      GET,    /patients/00000000-0000-4000-8000-000000000000/allergies",
     })
     void roleIsEnforcedPerEndpoint(String username, String method, String path) {
         var request = given().spec(Api.as(username.trim()));

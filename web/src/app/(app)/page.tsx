@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { api, isAuthError } from "@/lib/api";
 import { currentUser, hasRole } from "@/lib/session";
-import type { Appointment, LabOrderSummary, Page } from "@/lib/types";
+import type { Appointment, LabOrderSummary, Page, Prescription } from "@/lib/types";
 import {
   Badge,
   Card,
@@ -22,20 +22,34 @@ import {
  */
 export default async function Dashboard() {
   const user = await currentUser();
-  const [appointments, labOrders] = await Promise.all([
-    load<Page<Appointment>>("/appointments?size=100"),
+  // Each panel is fetched only for a role that may read it. The alternative — asking anyway and
+  // rendering the refusal — is what this page used to do, and it gave the pharmacist, whose role
+  // deliberately cannot see a clinic list, a dashboard of error notes on every sign-in.
+  const maySeeClinic = hasRole(user, "ADMIN", "DOCTOR", "NURSE", "RECEPTIONIST", "LAB_TECH",
+    "PATHOLOGIST");
+  const maySeeMedicines = hasRole(user, "ADMIN", "DOCTOR", "NURSE", "PHARMACIST");
+  const [appointments, labOrders, prescriptions] = await Promise.all([
+    maySeeClinic
+      ? load<Page<Appointment>>("/appointments?size=100")
+      : Promise.resolve({ ok: true as const, data: null }),
     hasRole(user, "ADMIN", "DOCTOR", "NURSE", "LAB_TECH", "PATHOLOGIST")
       ? load<Page<LabOrderSummary>>("/lab/orders?size=100")
       : Promise.resolve({ ok: true as const, data: null }),
+    maySeeMedicines
+      ? load<Prescription[]>("/prescriptions")
+      : Promise.resolve({ ok: true as const, data: null }),
   ]);
 
-  const todays = appointments.ok ? appointments.data.content : [];
+  const todays = appointments.ok && appointments.data ? appointments.data.content : [];
   const waiting = todays.filter((a) => a.status === "CHECKED_IN");
   const inProgress = todays.filter((a) => a.status === "IN_PROGRESS");
   const highRisk = todays.filter((a) => a.noShowRisk?.band === "HIGH");
   const orders = labOrders.ok && labOrders.data ? labOrders.data.content : [];
   const awaitingRelease = orders.filter((o) => o.status === "RESULTED");
   const abnormal = orders.filter((o) => o.hasAbnormalResults && o.status !== "VERIFIED");
+  const queue = prescriptions.ok && prescriptions.data ? prescriptions.data : [];
+  const linesToDispense = queue.reduce(
+    (total, rx) => total + rx.items.filter((item) => item.outstanding > 0).length, 0);
 
   return (
     <div className="space-y-6">
@@ -55,6 +69,13 @@ export default async function Dashboard() {
           value={awaitingRelease.length}
           hint="results needing a pathologist"
         />
+        {maySeeMedicines && (
+          <Stat
+            label="To dispense"
+            value={linesToDispense}
+            hint="medicines waiting at the pharmacy"
+          />
+        )}
       </div>
 
       {!appointments.ok && <ErrorNote>Appointments unavailable: {appointments.error}</ErrorNote>}

@@ -1,0 +1,18 @@
+# Integration tests run against a real PostgreSQL. The safety rules here are database constraints —
+# one dose one record, an ordered-pair CHECK on the interaction table, a stock quantity that cannot
+# go negative — and there is no in-memory substitute that enforces them.
+spring:
+  datasource:
+    url: ${HMS_TEST_DB_URL:jdbc:postgresql://localhost:5432/hms_test}
+    username: ${HMS_TEST_DB_USER:hms}
+    password: ${HMS_TEST_DB_PASSWORD:hms}
+    hikari:
+      schema: pharmacy
+  flyway:
+    enabled: true
+hms:
+  events:
+    transport: log
+logging:
+  level:
+    org.flywaydb: WARN

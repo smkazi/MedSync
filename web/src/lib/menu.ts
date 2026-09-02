@@ -27,7 +27,8 @@ export type RoleName =
   | "NURSE"
   | "RECEPTIONIST"
   | "LAB_TECH"
-  | "PATHOLOGIST";
+  | "PATHOLOGIST"
+  | "PHARMACIST";
 
 export type MenuItem = {
   label: string;
@@ -69,6 +70,14 @@ const NOTIFY: RoleName[] = ["ADMIN", "DOCTOR", "NURSE", "RECEPTIONIST"];
 // with what complaint and how sick they are is a chart in table form, and the front desk has no
 // business reading it.
 const BED_MANAGE: RoleName[] = ["ADMIN", "DOCTOR", "NURSE"];
+// Who may read a medication order: the prescriber, the ward that gives it, and the pharmacy that
+// fills it. Wider than who may write one, because the people who administer a medicine are not the
+// people who ordered it and a nurse who cannot read the prescription cannot safely give it.
+const MEDICATION_READ: RoleName[] = ["ADMIN", "DOCTOR", "NURSE", "PHARMACIST"];
+// Giving a dose at the bedside. Deliberately not the pharmacy: dispensing hands the medicine over
+// and administering puts it into a patient, and the loop is only a control while those are done by
+// different people.
+const MEDICATION_ADMINISTER: RoleName[] = ["ADMIN", "DOCTOR", "NURSE"];
 const ADMIN_ONLY: RoleName[] = ["ADMIN"];
 
 /**
@@ -126,6 +135,12 @@ export const MENUS: Menu[] = [
         note: "Sickest first, never arrival order",
       },
       { label: "Admissions & beds", href: "/admissions", roles: BED_MANAGE },
+      {
+        label: "Drug round",
+        href: "/emar",
+        roles: MEDICATION_ADMINISTER,
+        note: "Scan the wristband, scan the medicine",
+      },
     ],
   },
 
@@ -162,10 +177,17 @@ export const MENUS: Menu[] = [
 
   {
     label: "Pharmacy",
+    roles: MEDICATION_READ,
     items: [
-      { label: "Dispensing queue", href: "/not-built/dispensing", notBuilt: true },
-      { label: "Formulary", href: "/not-built/formulary", notBuilt: true },
-      { label: "Stock", href: "/not-built/stock", notBuilt: true },
+      {
+        label: "Dispensing queue",
+        href: "/pharmacy",
+        roles: MEDICATION_READ,
+        note: "Oldest first — nobody is more urgent at a counter",
+      },
+      { label: "Formulary", href: "/pharmacy/formulary", roles: MEDICATION_READ },
+      { label: "Interactions", href: "/pharmacy/interactions", roles: MEDICATION_READ },
+      { label: "Stock", href: "/pharmacy/stock", roles: MEDICATION_READ },
     ],
   },
 

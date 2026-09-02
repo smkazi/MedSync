@@ -1,0 +1,65 @@
+spring:
+  application:
+    name: pharmacy-service
+  datasource:
+    url: ${HMS_DB_URL:jdbc:postgresql://localhost:5432/hms}
+    username: ${HMS_DB_USER:hms}
+    password: ${HMS_DB_PASSWORD:hms}
+    hikari:
+      schema: pharmacy
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: pharmacy
+        jdbc:
+          time_zone: UTC
+  flyway:
+    enabled: true
+    schemas: pharmacy
+    default-schema: pharmacy
+    create-schemas: true
+  kafka:
+    bootstrap-servers: ${HMS_KAFKA:localhost:9092}
+
+server:
+  port: ${HMS_PHARMACY_PORT:8087}
+  error:
+    include-message: never
+    include-stacktrace: never
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+hms:
+  security:
+    mode: resource-server
+  events:
+    transport: ${HMS_EVENTS_TRANSPORT:log}
+  patient:
+    # The allergy list. Read through the narrow `GET /patients/{id}/allergies` rather than the
+    # chart, and the client fails closed: if the list cannot be read, the prescription is refused
+    # rather than written without a check. A false block costs a phone call and a false pass costs
+    # a patient, so the two are not symmetric and the code does not treat them as though they were.
+    base-url: ${HMS_PATIENT_URI:http://localhost:8082}
+  pharmacy:
+    # The severity at or above which a drug-drug interaction refuses rather than warns. Deployment
+    # configuration because formularies and tolerance for interruption differ, and a floor nobody
+    # can move is a floor somebody works around. MAJOR by default: refusing CONTRAINDICATED alone
+    # would let a pairing that needs a conversation through on a busy afternoon.
+    interaction-floor: ${HMS_INTERACTION_FLOOR:MAJOR}
+
+spring.security.oauth2.resourceserver.jwt.jwk-set-uri: ${HMS_JWKS_URI:http://localhost:8081/.well-known/jwks.json}
+
+logging:
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level [%X{correlationId:-}] %logger{36} - %msg%n"

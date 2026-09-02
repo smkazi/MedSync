@@ -1,10 +1,19 @@
 import Link from "next/link";
 import { load } from "@/lib/load";
 import { currentUser, hasRole } from "@/lib/session";
-import type { CatalogEntry, Encounter, LabOrderSummary, News2, Patient } from "@/lib/types";
+import type {
+  CatalogEntry,
+  Encounter,
+  FormularyEntry,
+  LabOrderSummary,
+  News2,
+  Patient,
+  Prescription,
+} from "@/lib/types";
 import { AiAssist } from "@/components/AiAssist";
 import { RecordForm } from "@/components/RecordForm";
 import { orderTests } from "../../laboratory/actions";
+import { prescribe } from "../../pharmacy/actions";
 import { PRIORITIES } from "../../laboratory/state";
 import { closeEncounter, recordVitals, signNote } from "./actions";
 import { DiagnosisForm } from "./DiagnosisForm";
@@ -61,13 +70,17 @@ export default async function EncounterPage({
   // The laboratory orders raised from this visit, and the catalogue to raise more from. Both are
   // only fetched for somebody who may chart: an encounter's order list is chart content, and the
   // service gates `GET /lab/encounters/{id}/orders` on CHART_READ for exactly that reason.
-  const [labOrders, catalog, patient] = mayChart
+  const [labOrders, catalog, patient, prescriptions, formulary] = mayChart
     ? await Promise.all([
         load<LabOrderSummary[]>(`/lab/encounters/${id}/orders`),
         load<CatalogEntry[]>("/lab/catalog"),
         load<Patient>(`/patients/${encounter.patientId}`),
+        load<Prescription[]>(`/prescriptions?encounterId=${id}`),
+        load<FormularyEntry[]>("/pharmacy/formulary"),
       ])
     : [
+        { data: null, error: null },
+        { data: null, error: null },
         { data: null, error: null },
         { data: null, error: null },
         { data: null, error: null },
@@ -309,6 +322,109 @@ export default async function EncounterPage({
                         label: "Clinical details for the laboratory",
                         type: "textarea",
                         hint: "Travels with the order. This is the clinical context a pathologist reads, and it is the reason the lab does not need the chart.",
+                      },
+                    ]}
+                  />
+                </div>
+              )}
+            </Card>
+          )}
+
+          {/*
+            Prescribing, on the chart, for the same reason laboratory ordering is: a clinician
+            writing a medicine is already looking at the assessment that justifies it, and the
+            order carries the encounter so the visit can show what it raised.
+
+            One medicine per submission, and the screen says so. The platform checks each line
+            against the patient's allergy list and against the pairings among *this* order's
+            ingredients; a prescriber adding a second medicine gets a second check. What this form
+            cannot do is check two lines submitted together — it posts one — which is a limitation
+            of the form rather than of the service, and naming it is better than implying a check
+            that did not run.
+          */}
+          {mayChart && maySign && (
+            <Card title="Medicines">
+              {prescriptions.error && <ErrorNote>{prescriptions.error}</ErrorNote>}
+
+              {(prescriptions.data ?? []).length === 0 ? (
+                <Empty>Nothing prescribed on this visit.</Empty>
+              ) : (
+                <div className="space-y-3">
+                  {(prescriptions.data ?? []).map((rx) => (
+                    <div key={rx.id} className="rounded-md border border-line p-3">
+                      <div className="flex flex-wrap items-baseline justify-between gap-2">
+                        <span className="text-xs text-ink-muted">
+                          {formatDateTime(rx.issuedAt)} · {rx.prescriberName}
+                        </span>
+                        <Badge tone={statusTone(rx.status)}>{rx.status.toLowerCase()}</Badge>
+                      </div>
+                      {rx.overrideReason && (
+                        <p className="mt-2 rounded-md border border-warn/40 bg-warn-soft px-3 py-2 text-xs text-warn">
+                          <strong>Warning accepted:</strong> {rx.overrideReason}
+                        </p>
+                      )}
+                      <ul className="mt-2 space-y-1 text-sm">
+                        {rx.items.map((item) => (
+                          <li key={item.id}>
+                            <span className="font-medium">{item.drugName}</span> — {item.dose},{" "}
+                            {item.frequency}, {item.durationDays} day(s)
+                            <span className="ml-2 text-xs text-ink-muted">
+                              {item.quantityDispensed} of {item.quantity} dispensed
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {open && formulary.data && formulary.data.length > 0 && (
+                <div className="mt-4 border-t border-line pt-4">
+                  <RecordForm
+                    action={prescribe}
+                    columns={2}
+                    submitLabel="Prescribe"
+                    busyLabel="Checking…"
+                    hidden={{
+                      encounterId: encounter.id,
+                      patientId: encounter.patientId,
+                      patientMrn: encounter.patientMrn,
+                    }}
+                    fields={[
+                      {
+                        name: "drugCode",
+                        label: "Medicine",
+                        type: "select",
+                        required: true,
+                        options: formulary.data
+                          .filter((entry) => entry.active)
+                          .map((entry) => ({ value: entry.code, label: entry.label })),
+                      },
+                      { name: "dose", label: "Dose", required: true, placeholder: "1 tablet" },
+                      {
+                        name: "frequency",
+                        label: "Frequency",
+                        required: true,
+                        placeholder: "twice daily",
+                      },
+                      { name: "durationDays", label: "For (days)", type: "number", required: true },
+                      {
+                        name: "quantity",
+                        label: "Quantity to dispense",
+                        type: "number",
+                        required: true,
+                      },
+                      {
+                        name: "instructions",
+                        label: "Instructions for the patient",
+                        placeholder: "After food",
+                      },
+                      {
+                        name: "overrideReason",
+                        label: "Reason, if a warning is raised",
+                        type: "textarea",
+                        hint: "Leave blank. If the platform finds an interaction it can let through, it refuses once and asks for this; a recorded allergy at severe or above is refused outright and no reason unlocks it.",
                       },
                     ]}
                   />

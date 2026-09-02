@@ -102,6 +102,21 @@ public class PatientController {
         return new PatientDtos.MessageResponse("Patient chart archived");
     }
 
+    /**
+     * What the patient reacts to, and nothing else.
+     *
+     * <p>The pharmacy's endpoint. A dispense has to be checked against the allergy list, and the
+     * pharmacist doing the checking must not need the chart to do it — so this is
+     * {@link Roles#ALLERGY_READ} rather than {@link Roles#CLINICAL_READ}, the same narrowing
+     * {@code /contact} makes one level lower. The list is also on the chart response for anybody
+     * who may read a chart; this is the door for somebody who may not.
+     */
+    @GetMapping("/{id}/allergies")
+    @PreAuthorize(Roles.ALLERGY_READ)
+    public PatientDtos.PatientAllergies allergies(@PathVariable UUID id) {
+        return service.readAllergies(id);
+    }
+
     @PostMapping("/{id}/allergies")
     @ResponseStatus(HttpStatus.CREATED)
     @PreAuthorize(Roles.CLINICAL_WRITE)

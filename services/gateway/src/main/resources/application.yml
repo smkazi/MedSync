@@ -43,6 +43,7 @@ hms:
     laboratory: ${HMS_LABORATORY_URI:http://localhost:8084}
     notification: ${HMS_NOTIFICATION_URI:http://localhost:8085}
     admissions: ${HMS_ADMISSIONS_URI:http://localhost:8086}
+    pharmacy: ${HMS_PHARMACY_URI:http://localhost:8087}
     ai: ${HMS_AI_URI:http://localhost:8000}
 
 management:

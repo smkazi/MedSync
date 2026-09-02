@@ -118,6 +118,60 @@ public final class Roles {
     public static final String NOTIFY_READ =
             "hasAnyRole('ADMIN','DOCTOR','NURSE','RECEPTIONIST')";
 
+    /**
+     * The pharmacy.
+     *
+     * <p>A pharmacist reads a prescription and the patient's allergy list, and dispenses against
+     * them. They do not read the chart: {@link #CHART_READ} draws that line for the laboratory
+     * already, and the same reasoning applies here — the clinical context a dispense needs travels
+     * on the prescription, and a pharmacist checking an interaction has no need for the history,
+     * assessment and plan.
+     */
+    public static final String PHARMACIST = "PHARMACIST";
+
+    /** Dispensing, stock and the formulary: the pharmacy's own work. */
+    public static final String PHARMACY_WRITE = "hasAnyRole('ADMIN','PHARMACIST')";
+
+    /**
+     * Who may write a prescription.
+     *
+     * <p>Deliberately narrower than {@link #CLINICAL_WRITE}, which includes nurses: prescribing is
+     * a prescriber's act, and a platform that let anyone who may record a temperature also order a
+     * medication would be wrong in a way no amount of interaction checking repairs. Nurse
+     * prescribing exists in some jurisdictions and is a role grant when it does, not a widening of
+     * this one.
+     */
+    public static final String PRESCRIBE = "hasAnyRole('ADMIN','DOCTOR')";
+
+    /**
+     * Who may read a medication order: the prescriber, the ward, and the pharmacy.
+     *
+     * <p>Wider than {@link #PRESCRIBE} because the people who give a medicine are not the people
+     * who ordered it, and a nurse who cannot read the prescription cannot safely administer it.
+     */
+    public static final String MEDICATION_READ =
+            "hasAnyRole('ADMIN','DOCTOR','NURSE','PHARMACIST')";
+
+    /**
+     * Who may record that a dose was given.
+     *
+     * <p>Nurses and doctors, not the pharmacy: dispensing hands the medicine over, administering
+     * puts it into a patient, and they are different acts by different people at different times.
+     * The whole point of a closed loop is that the second one is witnessed at the bedside.
+     */
+    public static final String MEDICATION_ADMINISTER = "hasAnyRole('ADMIN','DOCTOR','NURSE')";
+
+    /**
+     * Who may read a patient's allergy list on its own, without the rest of the record.
+     *
+     * <p>The same narrowing as {@link #CONTACT_READ}, one level up: a pharmacist about to hand over
+     * a medicine must be able to see what the patient reacts to, and must not thereby acquire
+     * demographics, appointments and every lab order. An allergy that nobody can see protects
+     * nobody; an allergy list that comes bundled with a chart is a chart handed to the pharmacy.
+     */
+    public static final String ALLERGY_READ =
+            "hasAnyRole('ADMIN','DOCTOR','NURSE','PHARMACIST')";
+
     public static final String ADMIN_ONLY = "hasRole('ADMIN')";
 
     private Roles() {

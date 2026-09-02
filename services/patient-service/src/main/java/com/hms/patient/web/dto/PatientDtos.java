@@ -111,6 +111,25 @@ public final class PatientDtos {
     public record PatientContact(UUID id, String phone, String email, boolean active) {
     }
 
+    /**
+     * What a patient reacts to, and nothing else about them.
+     *
+     * <p>Its own response type for the same reason {@link PatientContact} is: the caller is the
+     * pharmacy, deciding whether a medicine may be handed over, and giving it the chart to answer
+     * that question would hand over demographics, appointments and every lab order as well. No
+     * name and no MRN — the caller already has the MRN, it is on the prescription, and echoing it
+     * back would put a patient identifier in a response that does not need one.
+     *
+     * <p>{@code active} is here for the reason it is on the contact record: an archived chart
+     * changes what the caller should do, and the decision belongs to them.
+     */
+    public record PatientAllergies(UUID id, boolean active, List<AllergyResponse> allergies) {
+
+        public PatientAllergies {
+            allergies = allergies == null ? List.of() : List.copyOf(allergies);
+        }
+    }
+
     public record AddAllergyRequest(@NotBlank @Size(max = 120) String substance,
                                     @Size(max = 255) String reaction,
                                     @NotNull AllergySeverity severity) {

@@ -16,9 +16,10 @@ import { openMenu, signIn } from "./sign-in";
 /**
  * What each seeded user must find in the top bar. Deliberately literal.
  *
- * A receptionist sees no Laboratory; only the administrator sees Administration. Pharmacy and
- * Billing appear for everyone because they contain nothing but not-built items, which carry no role
- * gate — there is no capability there to authorise. The laboratory roles see no Clinical menu at
+ * A receptionist sees no Laboratory; only the administrator sees Administration. Billing appears
+ * for everyone because it contains nothing but not-built items, which carry no role gate — there is
+ * no capability there to authorise. Pharmacy used to be in that list and is not any more: it has a
+ * backend and a role now, so it is gated like every other module that does. The laboratory roles see no Clinical menu at
  * all: triage is the front desk and the clinicians, the casualty board and the census are
  * clinical reading, and a menu whose every child was filtered away is dropped rather than shown
  * empty.
@@ -64,7 +65,6 @@ const EXPECTED: Record<string, string[]> = {
     "Scheduling",
     "Clinical",
     "Facility",
-    "Pharmacy",
     "Billing",
     "Messaging",
   ],
@@ -74,7 +74,6 @@ const EXPECTED: Record<string, string[]> = {
     "Scheduling",
     "Laboratory",
     "Facility",
-    "Pharmacy",
     "Billing",
   ],
   "dr.pathan": [
@@ -83,9 +82,11 @@ const EXPECTED: Record<string, string[]> = {
     "Scheduling",
     "Laboratory",
     "Facility",
-    "Pharmacy",
     "Billing",
   ],
+  // The pharmacy account. Its menu is the shape of the role: the module it works in, and nothing
+  // clinical — a pharmacist reads a prescription and an allergy list and never a chart.
+  pharmacist: ["Dashboard", "Pharmacy", "Billing"],
 };
 
 test.describe("the menu is role-aware", () => {

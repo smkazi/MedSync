@@ -27,6 +27,7 @@
     <module>services/scheduling-service</module>
     <module>services/notification-service</module>
     <module>services/admissions-service</module>
+    <module>services/pharmacy-service</module>
   </modules>
 
   <properties>

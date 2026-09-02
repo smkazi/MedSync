@@ -185,6 +185,25 @@ services:
     expose:
       - "8086"
 
+  pharmacy-service:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: Dockerfile.java
+      args:
+        SERVICE: pharmacy-service
+    environment:
+      <<: *platform-env
+      SERVER_PORT: 8087
+      HMS_PHARMACY_PORT: 8087
+      # The allergy list, read through the narrow endpoint. Fails closed: an unreachable
+      # patient-service refuses the prescription rather than writing one that was never checked.
+      HMS_PATIENT_URI: http://patient-service:8082
+      # The severity at or above which an interaction must be justified in writing.
+      HMS_INTERACTION_FLOOR: ${HMS_INTERACTION_FLOOR:-MAJOR}
+    expose:
+      - "8087"
+
   ai-service:
     build:
       context: ./services/ai-service
@@ -213,6 +232,7 @@ services:
       HMS_LABORATORY_URI: http://laboratory-service:8084
       HMS_NOTIFICATION_URI: http://notification-service:8085
       HMS_ADMISSIONS_URI: http://admissions-service:8086
+      HMS_PHARMACY_URI: http://pharmacy-service:8087
       HMS_AI_URI: http://ai-service:8000
       HMS_CORS_ALLOWED_ORIGINS: http://localhost:3000
     ports:
@@ -229,6 +249,8 @@ services:
       notification-service:
         condition: service_started
       admissions-service:
+        condition: service_started
+      pharmacy-service:
         condition: service_started
     restart: unless-stopped
 

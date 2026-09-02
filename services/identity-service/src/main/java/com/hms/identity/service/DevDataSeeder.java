@@ -94,7 +94,11 @@ public class DevDataSeeder implements ApplicationRunner {
             // nothing in the logs saying why. A deployment sets this account's password itself and
             // the flag would be a trap rather than a control.
             new SeedUser("33333333-0000-4000-8000-000000000008", "svc.notification",
-                    "notification@hms.local", "Notification Service", Set.of("SERVICE")));
+                    "notification@hms.local", "Notification Service", Set.of("SERVICE")),
+            // The pharmacy. Holds PHARMACIST and nothing else, so this account can dispense a
+            // medicine and cannot open the chart of the patient it is for.
+            new SeedUser("33333333-0000-4000-8000-000000000009", "pharmacist", "pharmacy@hms.local",
+                    "Deepa Shetty", Set.of("PHARMACIST")));
 
     private final UserRepository users;
     private final RoleRepository roles;

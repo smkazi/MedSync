@@ -652,3 +652,130 @@ export type BedState = {
   occupantId: string | null;
   occupiedSince: string | null;
 };
+
+// ---- pharmacy: the closed medication loop ---------------------------------
+
+export type InteractionSeverity = "MINOR" | "MODERATE" | "MAJOR" | "CONTRAINDICATED";
+
+/** What a safety check decided. Three answers, because only one of them is "fine". */
+export type CheckOutcome = "CLEAR" | "OVERRIDABLE" | "REFUSED";
+
+export type FormularyEntry = {
+  id: string;
+  code: string;
+  name: string;
+  form: string;
+  strength: string;
+  unit: string;
+  label: string;
+  controlled: boolean;
+  active: boolean;
+  /** Including class markers: an allergy to "penicillin" matches every product that names it. */
+  ingredients: string[];
+  unitsInStock: number;
+  earliestExpiry: string | null;
+};
+
+export type InteractionPairing = {
+  id: string;
+  ingredientA: string;
+  ingredientB: string;
+  severity: InteractionSeverity;
+  effect: string;
+  /** What to do instead. The field that makes the warning actionable rather than dismissible. */
+  management: string;
+  source: string | null;
+};
+
+export type AllergyFinding = {
+  substance: string;
+  reaction: string | null;
+  severity: string;
+  drugCode: string;
+  /** The ingredient or product name that triggered it, so a prescriber can check the reasoning. */
+  matchedOn: string;
+  overridable: boolean;
+};
+
+export type InteractionFinding = {
+  ingredientA: string;
+  ingredientB: string;
+  drugA: string;
+  drugB: string;
+  severity: InteractionSeverity;
+  effect: string;
+  management: string;
+  overridable: boolean;
+};
+
+export type SafetyCheck = {
+  outcome: CheckOutcome;
+  allergies: AllergyFinding[];
+  interactions: InteractionFinding[];
+  message: string;
+};
+
+export type AdministrationStatus = "GIVEN" | "REFUSED" | "OMITTED";
+
+export type DoseRecord = {
+  id: string;
+  prescriptionItemId: string;
+  scheduledFor: string;
+  administeredAt: string | null;
+  administeredBy: string;
+  status: AdministrationStatus;
+  refusalReason: string | null;
+};
+
+export type PrescriptionItem = {
+  id: string;
+  drugCode: string;
+  drugName: string;
+  dose: string;
+  frequency: string;
+  durationDays: number;
+  quantity: number;
+  instructions: string | null;
+  quantityDispensed: number;
+  outstanding: number;
+  administrations: DoseRecord[];
+};
+
+export type Prescription = {
+  id: string;
+  encounterId: string | null;
+  patientId: string;
+  patientMrn: string;
+  prescriberId: string;
+  prescriberName: string;
+  status: "ACTIVE" | "COMPLETED" | "CANCELLED";
+  /** Why a warning was accepted. Clinical content, which is why it is not in the audit detail. */
+  overrideReason: string | null;
+  issuedAt: string;
+  cancelledAt: string | null;
+  items: PrescriptionItem[];
+};
+
+export type StockBatch = {
+  id: string;
+  drugCode: string;
+  drugName: string | null;
+  batchNo: string;
+  expiresOn: string;
+  quantityOnHand: number;
+  receivedOn: string;
+  expired: boolean;
+  daysToExpiry: number;
+};
+
+export type DispenseRecord = {
+  id: string;
+  prescriptionItemId: string;
+  drugName: string;
+  batchNo: string;
+  expiresOn: string;
+  quantity: number;
+  dispensedBy: string;
+  dispensedAt: string;
+  outstanding: number;
+};
