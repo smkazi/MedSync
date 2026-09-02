@@ -126,6 +126,44 @@ class PatientApiIntegrationTest {
     }
 
     @Test
+    @DisplayName("the narrow lookup answers a name for an MRN and nothing else")
+    void identifyAnswersFourFields() throws Exception {
+        String surname = uniqueSurname();
+        JsonNode patient = register(surname);
+
+        JsonNode found = objectMapper.readTree(
+                mockMvc.perform(get("/patients/identify?q=" + surname).with(as("CASHIER")))
+                        .andExpect(status().isOk())
+                        .andReturn().getResponse().getContentAsString());
+
+        assertThat(found.size()).isEqualTo(1);
+        JsonNode row = found.get(0);
+        assertThat(row.get("mrn").asString()).isEqualTo(patient.get("mrn").asString());
+        assertThat(row.get("fullName").asString()).contains(surname);
+        // Everything a billing desk does not need is a field a leak would carry, so the answer is
+        // exactly four properties rather than a summary with the interesting ones removed.
+        assertThat(row.propertyNames()).containsExactlyInAnyOrder("id", "mrn", "fullName",
+                "active");
+    }
+
+    @Test
+    @DisplayName("a cashier may put a name to an MRN and may not read the register")
+    void identifyIsNarrowInBothDirections() throws Exception {
+        mockMvc.perform(get("/patients").with(as("CASHIER")))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/patients/identify?q=nobody").with(as("CASHIER")))
+                .andExpect(status().isOk());
+
+        // And the other direction: everybody in CLINICAL_READ has the full search already, so this
+        // endpoint is not theirs. A role list that grew to include them would make the narrowing
+        // pointless without anything failing.
+        mockMvc.perform(get("/patients/identify?q=nobody").with(as("DOCTOR")))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/patients/identify?q=nobody").with(as("LAB_TECH")))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     @DisplayName("MRNs are unique across registrations")
     void mrnsAreUnique() throws Exception {
         List<String> issued = List.of(register(uniqueSurname()).get("mrn").asString(),

@@ -172,6 +172,69 @@ public final class Roles {
     public static final String ALLERGY_READ =
             "hasAnyRole('ADMIN','DOCTOR','NURSE','PHARMACIST')";
 
+    /**
+     * The cashier's desk.
+     *
+     * <p>Named CASHIER rather than BILLING because a role names a person's job and not a module.
+     * The acts are {@link #BILLING_READ} and {@link #BILLING_WRITE}.
+     */
+    public static final String CASHIER = "CASHIER";
+
+    /**
+     * Who may read the money: invoices, payments, claims, the day book and the charge catalogue.
+     *
+     * <p>Clinicians are in, and deliberately: a doctor asked "what will this cost?" at the bedside
+     * needs an answer, and a platform that made them walk to the billing desk to read a number
+     * would be routed around within a week. What they may not do is {@link #BILLING_WRITE}.
+     *
+     * <p>The laboratory and the pharmacy are out. Neither raises an invoice nor takes money — their
+     * charges arrive in billing as events, with no token and no screen — and a bench technician who
+     * could read what every patient has been billed would be reading a financial record for no
+     * reason anybody can state.
+     */
+    public static final String BILLING_READ =
+            "hasAnyRole('ADMIN','CASHIER','DOCTOR','NURSE','RECEPTIONIST')";
+
+    /**
+     * Who may raise an invoice, take a payment, or move a claim.
+     *
+     * <p>Narrow on purpose, and the narrowing is the oldest financial control there is: the person
+     * who decides what is owed must not be the person who records that it was paid. A clinician
+     * decides what was done; a cashier records what was collected. So DOCTOR and NURSE are in
+     * {@link #BILLING_READ} and are refused here — {@code dr.rao} posting a payment is a 403, and
+     * the authorization suite asserts it.
+     *
+     * <p>RECEPTIONIST is out as well. The front desk in a small clinic often does take cash, and
+     * when a deployment works that way the answer is to grant those people CASHIER, not to widen
+     * this constant until it stops meaning anything.
+     */
+    public static final String BILLING_WRITE = "hasAnyRole('ADMIN','CASHIER')";
+
+    /**
+     * Who may change what things cost: the charge catalogue, tax rates, payers and their tariffs.
+     *
+     * <p>Separate from {@link #BILLING_WRITE} and narrower, for the reason {@code LAB_CONFIG} is
+     * separate from {@code LAB_VERIFY}: taking a payment and rewriting a price list are different
+     * acts that happen to be done at the same desk. A cashier who could retune the price of a
+     * procedure could discount it to zero and then record it as paid in full, and no reconciliation
+     * downstream would notice.
+     */
+    public static final String BILLING_CONFIG = "hasRole('ADMIN')";
+
+    /**
+     * Who may put a name to an MRN, and nothing else.
+     *
+     * <p>The third narrowing of the same kind as {@link #CONTACT_READ} and {@link #ALLERGY_READ}.
+     * A cashier raising an invoice has to identify the person being billed — a bill against the
+     * wrong patient is a bill somebody else is asked to pay — and must not thereby acquire the
+     * register, which carries date of birth, phone number and a critical-allergy marker.
+     *
+     * <p>So the endpoint behind this answers an id, an MRN and a name, and the role list is only
+     * the people who have no other way to look a patient up: everybody in {@link #CLINICAL_READ}
+     * already has the full search and does not need this one.
+     */
+    public static final String PATIENT_IDENTIFY = "hasAnyRole('ADMIN','CASHIER')";
+
     public static final String ADMIN_ONLY = "hasRole('ADMIN')";
 
     private Roles() {

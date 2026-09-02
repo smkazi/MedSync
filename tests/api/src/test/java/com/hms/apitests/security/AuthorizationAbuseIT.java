@@ -140,6 +140,32 @@ class AuthorizationAbuseIT extends RequiresRunningStack {
             // the pharmacy's door into the chart, and not the front desk's or the laboratory's.
             "reception,     GET,    /patients/00000000-0000-4000-8000-000000000000/allergies",
             "lab.tech,      GET,    /patients/00000000-0000-4000-8000-000000000000/allergies",
+            // The money. Two separations, and both are rows here because both are easy to widen
+            // by accident. A clinician decides what was done and must not record that it was paid
+            // -- the oldest financial control there is -- and a cashier takes money and must not
+            // set prices, because somebody who could discount a procedure to zero and then record
+            // it as settled in full would need no accomplice.
+            "dr.rao,        POST,   /invoices",
+            "nurse.iqbal,   POST,   /invoices",
+            "reception,     POST,   /invoices",
+            "dr.rao,        POST,   /charges",
+            "reception,     POST,   /claims",
+            "cashier,       POST,   /charge-items",
+            "cashier,       POST,   /tax-rates",
+            "cashier,       POST,   /payers",
+            "cashier,       PATCH,  /charge-items/CONSULT_OP",
+            // The bench and the pharmacy have no part in the revenue cycle at all: their charges
+            // arrive as events, with no token and no screen, so reading what every patient has
+            // been billed would be reading a financial record for no reason anybody can state.
+            "lab.tech,      GET,    /invoices",
+            "dr.pathan,     GET,    /invoices",
+            "pharmacist,    GET,    /day-book",
+            "pharmacist,    GET,    /claims",
+            "lab.tech,      GET,    /charge-items",
+            // And a cashier is not a clinician: the chart is closed to the billing desk, which is
+            // the other half of the same line.
+            "cashier,       GET,    /casualty",
+            "cashier,       GET,    /prescriptions",
     })
     void roleIsEnforcedPerEndpoint(String username, String method, String path) {
         var request = given().spec(Api.as(username.trim()));
@@ -157,6 +183,22 @@ class AuthorizationAbuseIT extends RequiresRunningStack {
                 // is the action succeeding. 400 is only acceptable if authorization ran first,
                 // which the 403 rows above already establish for these roles.
                 org.hamcrest.Matchers.is(400)));
+    }
+
+    @Test
+    @DisplayName("repricing is refused for a cashier even when the request is well-formed")
+    void aWellFormedRepriceIsStillRefused() {
+        // Same reasoning as the threshold test below: an empty body answers 400 whatever the role,
+        // so the table above proves the write did not happen rather than proving what stopped it.
+        // This body is valid, and the only thing left to refuse it is the role.
+        given().spec(Api.as(Api.CASHIER))
+                .body(Map.of("unitPrice", "1.00"))
+                .when().patch("/charge-items/CONSULT_OP")
+                .then().statusCode(403);
+        given().spec(Api.as(Api.DOCTOR))
+                .body(Map.of("amount", "1.00", "method", "CASH"))
+                .when().post("/invoices/00000000-0000-4000-8000-000000000000/payments")
+                .then().statusCode(403);
     }
 
     @Test

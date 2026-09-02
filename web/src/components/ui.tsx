@@ -74,13 +74,23 @@ export function statusTone(status: string): BadgeTone {
     case "COMPLETED":
     case "VERIFIED":
     case "CLOSED":
+    // Money: paid in full and settled in full are the same kind of fact as a closed encounter.
+    case "PAID":
+    case "SETTLED":
       return "good";
     case "CANCELLED":
     case "NO_SHOW":
+    case "DENIED":
       return "critical";
+    // Settled short is not a failure and is not finished either: somebody has to decide whether
+    // the balance goes to the patient or is written off.
+    case "PARTIALLY_SETTLED":
+      return "warn";
     case "IN_PROGRESS":
     case "CHECKED_IN":
     case "RESULTED":
+    case "ISSUED":
+    case "SUBMITTED":
       return "accent";
     case "STAT":
       return "critical";

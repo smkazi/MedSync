@@ -1,0 +1,26 @@
+# Integration tests run against a real PostgreSQL. Every safety rule in this module is a database
+# rule — money that cannot be overpaid, a charge that cannot be posted twice, numeric(14,2) rather
+# than a floating point — and there is no in-memory substitute that enforces any of them.
+spring:
+  datasource:
+    url: ${HMS_TEST_DB_URL:jdbc:postgresql://localhost:5432/hms_test}
+    username: ${HMS_TEST_DB_USER:hms}
+    password: ${HMS_TEST_DB_PASSWORD:hms}
+    hikari:
+      schema: billing
+  flyway:
+    enabled: true
+hms:
+  events:
+    transport: log
+  billing:
+    # UTC for the tests, and only for the tests. "Today" in this module is the deployment's own
+    # zone -- a hospital cashing up at eight in the evening in Kolkata must find that evening's
+    # takings in that day -- but a test that says `LocalDate.now()` and a service that says
+    # `Asia/Kolkata` disagree for five and a half hours out of every twenty-four, which is a
+    # failure with nothing to do with billing. The zone's own arithmetic is tested directly in
+    # `BillingClockTest`.
+    zone: UTC
+logging:
+  level:
+    org.flywaydb: WARN

@@ -81,6 +81,17 @@ public class RouteConfig {
                 .route("pharmacy", r -> r
                         .path("/pharmacy/**", "/prescriptions/**", "/emar/**")
                         .uri(services.pharmacy()))
+                // The revenue cycle: the price list, invoices, payments and payer claims.
+                //
+                // Every one of these paths is a top-level noun rather than a `/billing/**` prefix,
+                // because that is what they are to a client: an invoice is a document a patient is
+                // given and a payment is money that arrived, and neither is a module's internal
+                // detail. The service that answers them is a deployment decision this list is the
+                // only place that records.
+                .route("billing", r -> r
+                        .path("/invoices/**", "/charges", "/charge-items/**", "/payers/**",
+                                "/tax-rates/**", "/claims/**", "/day-book")
+                        .uri(services.billing()))
                 // Clinical decision support: summarisation, triage, no-show risk, coding.
                 .route("ai", r -> r
                         .path("/ai/**")

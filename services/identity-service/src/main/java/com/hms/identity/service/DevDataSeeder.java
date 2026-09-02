@@ -98,7 +98,12 @@ public class DevDataSeeder implements ApplicationRunner {
             // The pharmacy. Holds PHARMACIST and nothing else, so this account can dispense a
             // medicine and cannot open the chart of the patient it is for.
             new SeedUser("33333333-0000-4000-8000-000000000009", "pharmacist", "pharmacy@hms.local",
-                    "Deepa Shetty", Set.of("PHARMACIST")));
+                    "Deepa Shetty", Set.of("PHARMACIST")),
+            // The billing desk. Holds CASHIER and nothing else, which is what makes the
+            // separation demonstrable rather than asserted: this account can raise an invoice and
+            // take a payment and cannot open a chart, and `dr.rao` is the other way round.
+            new SeedUser("33333333-0000-4000-8000-00000000000a", "cashier", "billing@hms.local",
+                    "Farida Noorani", Set.of("CASHIER")));
 
     private final UserRepository users;
     private final RoleRepository roles;

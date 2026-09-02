@@ -1,0 +1,85 @@
+spring:
+  application:
+    name: billing-service
+  datasource:
+    url: ${HMS_DB_URL:jdbc:postgresql://localhost:5432/hms}
+    username: ${HMS_DB_USER:hms}
+    password: ${HMS_DB_PASSWORD:hms}
+    hikari:
+      schema: billing
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: billing
+        jdbc:
+          time_zone: UTC
+  flyway:
+    enabled: true
+    schemas: billing
+    default-schema: billing
+    create-schemas: true
+  kafka:
+    bootstrap-servers: ${HMS_KAFKA:localhost:9092}
+
+server:
+  port: ${HMS_BILLING_PORT:8088}
+  error:
+    include-message: never
+    include-stacktrace: never
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+hms:
+  security:
+    mode: resource-server
+  events:
+    transport: ${HMS_EVENTS_TRANSPORT:log}
+  billing:
+    # The tax the platform assumes when a charge item names no rate of its own.
+    #
+    # GST-exempt by default, and that is a decision rather than a placeholder: healthcare services
+    # provided by a clinical establishment are exempt in India, so the common case for a hospital's
+    # charge list is no tax at all. A deployment that charges tax on something taxable — a
+    # pharmacy sale, a consumable, a non-clinical service — names the rate on the charge item, and
+    # the rate itself is a row with effective dates because rates change by statute.
+    default-tax-rate: ${HMS_DEFAULT_TAX_RATE:}
+    # The prefix an invoice number carries. Numbers are per financial year and sequential.
+    invoice-prefix: ${HMS_INVOICE_PREFIX:INV}
+    # The zone a day is cashed up in. A payment's timestamp is an instant, and "the 14th" is a
+    # different window in Kolkata than in UTC -- a hospital counting its drawer at 8pm local would
+    # otherwise find the evening's takings in tomorrow's day book.
+    zone: ${HMS_BILLING_ZONE:Asia/Kolkata}
+    capture:
+      # What a clinical event is charged as. Configuration rather than code, because the codes
+      # belong to a deployment's own charge list: these are the ones the seed migration ships, and
+      # a deployment with a different list points these at its own codes instead of editing Java.
+      #
+      # A code naming nothing in the charge list is reported in the log and charged to nobody. That
+      # is deliberate: substituting a plausible price would put a number on an invoice that nobody
+      # chose, and throwing would stall the consumer group and stop every later charge too.
+      consultation-code: ${HMS_CHARGE_CONSULTATION:CONSULT_OP}
+      casualty-code: ${HMS_CHARGE_CASUALTY:CASUALTY}
+      # A released test is billed as `<prefix><test code>` when the charge list has such an item,
+      # and as the fallback panel when it does not -- so pricing an individual test is a row a
+      # deployment adds, not a code change.
+      lab-code-prefix: ${HMS_CHARGE_LAB_PREFIX:LAB_}
+      lab-fallback-code: ${HMS_CHARGE_LAB_FALLBACK:LAB_PANEL}
+      dispense-fallback-code: ${HMS_CHARGE_DISPENSE:PHARM_DISP}
+      bed-day-code: ${HMS_CHARGE_BED_DAY:BED_GEN}
+
+spring.security.oauth2.resourceserver.jwt.jwk-set-uri: ${HMS_JWKS_URI:http://localhost:8081/.well-known/jwks.json}
+
+logging:
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level [%X{correlationId:-}] %logger{36} - %msg%n"

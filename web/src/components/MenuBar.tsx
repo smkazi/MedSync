@@ -213,13 +213,6 @@ export function MenuBar({ menus }: { menus: Menu[] }) {
                   >
                     <span className="flex items-center justify-between gap-3">
                       <span>{item.label}</span>
-                      {item.notBuilt && (
-                        // Said on the item, not just on the page it leads to. Somebody scanning the
-                        // menu for a feature deserves to know before they click.
-                        <span className="rounded border border-line px-1.5 py-0.5 text-[0.65rem] uppercase tracking-wide text-ink-muted">
-                          not built
-                        </span>
-                      )}
                     </span>
                     {item.note && (
                       <span className="mt-0.5 block text-xs text-ink-muted">{item.note}</span>

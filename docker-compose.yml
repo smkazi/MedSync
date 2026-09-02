@@ -210,6 +210,24 @@ services:
     expose:
       - "8087"
 
+  billing-service:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: Dockerfile.java
+      args:
+        SERVICE: billing-service
+    environment:
+      <<: *platform-env
+      SERVER_PORT: 8088
+      HMS_BILLING_PORT: 8088
+      # The zone a day is cashed up in, and the prefix its invoice numbers carry. Both are a
+      # deployment's own, which is why neither is hard-coded in the service.
+      HMS_BILLING_ZONE: ${HMS_BILLING_ZONE:-Asia/Kolkata}
+      HMS_INVOICE_PREFIX: ${HMS_INVOICE_PREFIX:-INV}
+    expose:
+      - "8088"
+
   ai-service:
     build:
       context: ./services/ai-service
@@ -239,6 +257,7 @@ services:
       HMS_NOTIFICATION_URI: http://notification-service:8085
       HMS_ADMISSIONS_URI: http://admissions-service:8086
       HMS_PHARMACY_URI: http://pharmacy-service:8087
+      HMS_BILLING_URI: http://billing-service:8088
       HMS_AI_URI: http://ai-service:8000
       HMS_CORS_ALLOWED_ORIGINS: http://localhost:3000
     ports:
@@ -257,6 +276,8 @@ services:
       admissions-service:
         condition: service_started
       pharmacy-service:
+        condition: service_started
+      billing-service:
         condition: service_started
     restart: unless-stopped
 

@@ -11,6 +11,7 @@ import com.hms.common.security.CurrentUser;
 import com.hms.common.web.CorrelationId;
 import com.hms.laboratory.domain.LabEnums;
 import com.hms.laboratory.domain.LabOrder;
+import com.hms.laboratory.domain.LabOrderItem;
 import com.hms.laboratory.domain.LabResult;
 import com.hms.laboratory.domain.Specimen;
 import com.hms.laboratory.web.dto.LabDtos;
@@ -140,8 +141,16 @@ public class LabResultService {
         order.advanceTo(LabEnums.OrderStatus.VERIFIED);
 
         audit.record("LAB_RESULTS_VERIFIED", "LabOrder", orderId, found.size() + " result(s) released by " + actor);
+        // The released tests travel on the event. Consumers need to know *what* was released and
+        // not only how much: billing prices a released order per test, and a count cannot be
+        // priced. It is a fact about the order rather than a favour to any one consumer — this
+        // service still knows nothing about who listens.
         publish("lab.results.verified", order, Map.of("count", found.size(),
-                "abnormal", found.stream().filter(LabResult::isAbnormal).count()));
+                "abnormal", found.stream().filter(LabResult::isAbnormal).count(),
+                "tests", order.getItems().stream()
+                        .map(LabOrderItem::getTestCode)
+                        .distinct()
+                        .toList()));
         return found.size();
     }
 

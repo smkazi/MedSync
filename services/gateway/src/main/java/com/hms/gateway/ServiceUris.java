@@ -8,5 +8,6 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  */
 @ConfigurationProperties(prefix = "hms.services")
 public record ServiceUris(String identity, String patient, String scheduling, String laboratory,
-                          String notification, String admissions, String pharmacy, String ai) {
+                          String notification, String admissions, String pharmacy, String billing,
+                          String ai) {
 }

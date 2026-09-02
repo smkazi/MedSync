@@ -14,10 +14,12 @@ import { hasRole, type SessionUser } from "@/lib/session";
  *    it is absent. Filtering happens on the server, in {@link menusFor}, so an item the user may not
  *    see is never serialised into the page at all. A disabled item in the markup is a disclosure of
  *    what exists and who else can reach it.
- * 2. **`notBuilt` is honest, not decorative.** These modules have no backend whatsoever, and the
- *    item leads to a page that says so. The alternative — hiding them — was considered and rejected:
- *    seeing the whole shape of the product is useful, and a menu that quietly omits half the roadmap
- *    is its own kind of misleading. What is not acceptable is a screen that looks like it works.
+ * 2. **Every item leads to a real screen.** There used to be a `notBuilt` flag and a page behind it
+ *    naming what a module still needed — the OPD queue, casualty, the pharmacy and finally Billing
+ *    all passed through it. All of them are built, so the flag, the page and the "not built" badge
+ *    are gone rather than kept as scaffolding whose every claim would be false. What is still
+ *    missing from the platform is named in the README's Roadmap, which is where somebody looks for
+ *    a roadmap; a menu is where somebody looks for a screen that works.
  */
 
 /** Role names as the identity service issues them. */
@@ -28,15 +30,14 @@ export type RoleName =
   | "RECEPTIONIST"
   | "LAB_TECH"
   | "PATHOLOGIST"
-  | "PHARMACIST";
+  | "PHARMACIST"
+  | "CASHIER";
 
 export type MenuItem = {
   label: string;
   href: string;
   /** Undefined means every signed-in user. */
   roles?: RoleName[];
-  /** No backend exists. The link goes to the not-built page, which says what is missing. */
-  notBuilt?: boolean;
   /** Shown under the label — why the screen exists, or what it cannot do. */
   note?: string;
 };
@@ -84,6 +85,14 @@ const MEDICATION_ADMINISTER: RoleName[] = ["ADMIN", "DOCTOR", "NURSE"];
 // orders are different acts that happen to share a role list today, and a change to one should not
 // silently move the others.
 const CLINICAL_WRITE: RoleName[] = ["ADMIN", "DOCTOR", "NURSE"];
+// Who may read the money. Clinicians are in: a doctor asked what something will cost at the
+// bedside needs an answer, and a platform that sent them to the billing desk to read a number
+// would be routed around within a week. The bench and the pharmacy are out — neither raises an
+// invoice nor takes money, and their charges arrive in billing as events with no screen at all.
+const BILLING_READ: RoleName[] = ["ADMIN", "CASHIER", "DOCTOR", "NURSE", "RECEPTIONIST"];
+// Who may raise an invoice, take a payment or move a claim. The oldest financial control there
+// is: the person who decides what is owed is not the person who records that it was paid.
+const BILLING_WRITE: RoleName[] = ["ADMIN", "CASHIER"];
 const ADMIN_ONLY: RoleName[] = ["ADMIN"];
 
 /**
@@ -205,13 +214,30 @@ export const MENUS: Menu[] = [
 
   {
     label: "Billing",
+    roles: BILLING_READ,
     items: [
-      { label: "Invoices", href: "/not-built/invoices", notBuilt: true },
-      { label: "Payments", href: "/not-built/payments", notBuilt: true },
-      { label: "Charge items", href: "/not-built/charge-items", notBuilt: true },
-      { label: "Payers & tariffs", href: "/not-built/payers", notBuilt: true },
-      { label: "Claims", href: "/not-built/claims", notBuilt: true },
-      { label: "Receivables", href: "/not-built/receivables", notBuilt: true },
+      {
+        label: "Invoices",
+        href: "/billing",
+        roles: BILLING_READ,
+        note: "Open bills first — what is owed is the question",
+      },
+      { label: "Raise an invoice", href: "/billing/new", roles: BILLING_WRITE },
+      {
+        label: "Day book",
+        href: "/billing/day-book",
+        roles: BILLING_READ,
+        note: "Billed, collected and outstanding, split by method",
+      },
+      { label: "Claims", href: "/billing/claims", roles: BILLING_READ },
+      { label: "Charge items", href: "/billing/charge-items", roles: BILLING_READ },
+      { label: "Payers & tariffs", href: "/billing/payers", roles: BILLING_READ },
+      {
+        label: "Tax rates",
+        href: "/billing/tax-rates",
+        roles: BILLING_READ,
+        note: "Dated rows — an invoice keeps the rate it was raised under",
+      },
     ],
   },
 

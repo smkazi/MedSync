@@ -61,13 +61,16 @@ const EXPECTED_TOP_LEVEL: Record<RoleName, string[]> = {
     "Billing",
     "Messaging",
   ],
+  // No Billing for either: neither raises an invoice nor takes money — the laboratory's charges
+  // reach billing as an event, with no token and no screen — and a bench technician who could read
+  // what every patient has been billed would be reading a financial record for no reason anybody
+  // can state.
   LAB_TECH: [
     "Dashboard",
     "Patients",
     "Scheduling",
     "Laboratory",
     "Facility",
-    "Billing",
   ],
   PATHOLOGIST: [
     "Dashboard",
@@ -75,13 +78,16 @@ const EXPECTED_TOP_LEVEL: Record<RoleName, string[]> = {
     "Scheduling",
     "Laboratory",
     "Facility",
-    "Billing",
   ],
   // The pharmacy sees its own module and nothing clinical. That is the point of the role: a
   // pharmacist reads a prescription and an allergy list, and never a chart — so there is no
-  // Patients menu, no Scheduling and no Clinical, and the Billing entry is there only because it
-  // is not built and therefore not gated.
-  PHARMACIST: ["Dashboard", "Pharmacy", "Billing"],
+  // Patients menu, no Scheduling and no Clinical, and no Billing either: a dispense is charged
+  // through an event rather than by anybody at the counter pressing a button.
+  PHARMACIST: ["Dashboard", "Pharmacy"],
+  // The billing desk sees the money and nothing else. The mirror image of the pharmacist: this
+  // account can raise an invoice and take a payment and cannot open a chart, which is what makes
+  // the separation demonstrable rather than asserted.
+  CASHIER: ["Dashboard", "Billing"],
 };
 
 describe("menusFor", () => {
@@ -163,23 +169,14 @@ describe("MENUS as data", () => {
     expect(new Set(hrefs).size).toBe(hrefs.length);
   });
 
-  it("points every not-built item at the not-built route, and nothing else at it", () => {
-    // The two have to agree in both directions: a notBuilt item that links to a real route would
-    // hide a working screen behind a "not built" label, and a real item pointing at /not-built
-    // would claim a working feature is missing.
+  it("points nothing at a placeholder route", () => {
+    // The menu used to carry items marked "not built" that led to a page naming what a module
+    // needed. Every one of those modules exists now, so the flag and the page are gone — and this
+    // is what stops either coming back by accident, as a link to a route with nothing behind it.
     for (const menu of MENUS) {
       for (const item of menu.items ?? []) {
-        expect(item.href.startsWith("/not-built/")).toBe(Boolean(item.notBuilt));
-      }
-    }
-  });
-
-  it("never marks a not-built item as role-restricted", () => {
-    // Roles describe who may use a capability. A module with no backend has no capability to
-    // restrict, and a role gate there would be a guess at an authorisation nobody has designed.
-    for (const menu of MENUS) {
-      for (const item of menu.items ?? []) {
-        if (item.notBuilt) expect(item.roles).toBeUndefined();
+        expect(item.href).not.toMatch(/^\/not-built\//);
+        expect(item.href.startsWith("/")).toBe(true);
       }
     }
   });

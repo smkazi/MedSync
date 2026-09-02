@@ -93,6 +93,16 @@ public final class PatientDtos {
                                  String phone, boolean active, boolean hasCriticalAllergy) {
     }
 
+    /**
+     * Enough to put a name to an MRN, and nothing more.
+     *
+     * <p>No date of birth, no phone number, no allergy marker. The caller is somebody raising an
+     * invoice who has to be sure they are billing the right person; every other field on
+     * {@link PatientSummary} is a field this answer does not need and a disclosure it would carry.
+     */
+    public record PatientIdentity(UUID id, String mrn, String fullName, boolean active) {
+    }
+
     /** The encrypted identifiers, released only to authorised roles and audited on every read. */
     public record PatientIdentifiers(UUID id, String mrn, String nationalId, String insurancePolicyNo) {
     }

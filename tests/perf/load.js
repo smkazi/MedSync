@@ -10,7 +10,14 @@
 
 import { sleep } from 'k6';
 import { thresholds, USERS } from './lib/config.js';
-import { login, setupJourney, readJourney, bookingJourney, displayJourney } from './lib/journey.js';
+import {
+  billingJourney,
+  bookingJourney,
+  displayJourney,
+  login,
+  readJourney,
+  setupJourney,
+} from './lib/journey.js';
 
 const READ_VUS = Number(__ENV.PERF_READ_VUS || 30);
 const BOOK_RATE = Number(__ENV.PERF_BOOK_RATE || 6); // bookings per second
@@ -65,4 +72,7 @@ export function reads(data) {
 export function bookings(data) {
   const token = login(USERS.reception);
   bookingJourney(token, data);
+  // The billing desk, on the same arrival-rate scenario as the front desk: a consultation booked
+  // is a consultation billed, and the two contend for nothing except the database.
+  billingJourney(login(USERS.cashier), data);
 }

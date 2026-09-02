@@ -16,6 +16,7 @@ SERVICES=(
   "notification-service:8085"
   "admissions-service:8086"
   "pharmacy-service:8087"
+  "billing-service:8088"
   "gateway:8080"
 )
 

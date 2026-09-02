@@ -27,6 +27,15 @@ public final class Topics {
      */
     public static final String PHARMACY = "hms.pharmacy.events";
 
+    /**
+     * Invoices, payments and claims.
+     *
+     * <p>Its own topic, like the others. Nothing consumes it yet — billing is the end of the chain
+     * rather than the middle — and it is published anyway, because a module that has to be changed
+     * to become observable is a module nobody makes observable.
+     */
+    public static final String BILLING = "hms.billing.events";
+
     private Topics() {
     }
 }

@@ -263,6 +263,59 @@ export function bookingJourney(token, data) {
  * <p>No token, deliberately, and no `Authorization` header is constructed: a request that
  * accidentally carried one would be measuring the authenticated path.
  */
+/**
+ * Raises an invoice, prices it, issues it and collects the balance.
+ *
+ * <p>Its own invoice per iteration, so a 409 here cannot be self-inflicted the way the booking
+ * journey's could — nothing is shared except the two things worth measuring under contention:
+ * the financial-year counter that issues invoice numbers (one statement, `ON CONFLICT … RETURNING`)
+ * and the conditional `UPDATE` that takes a payment. Both are single statements by design, and a
+ * profile that never made two cashiers meet on them would not be testing that design.
+ *
+ * <p>Every amount comes back from the platform. The check asserts the invoice was paid in full,
+ * which is the one assertion that catches a lost update: if two payments could both land, the
+ * status would say PAID while `amount_paid` had been silently restored.
+ */
+export function billingJourney(token, data) {
+  const started = Date.now();
+  const patient = data.patients[Math.floor(Math.random() * data.patients.length)];
+
+  const raised = http.post(
+    `${BASE_URL}/invoices`,
+    JSON.stringify({ patientId: patient.id, patientMrn: patient.mrn }),
+    params('invoice_create', token),
+  );
+  const numbered = check(raised, {
+    'invoice raised': (r) => r.status === 201,
+    'invoice carries a number': (r) => /\/\d{5}$/.test(r.json('number') || ''),
+  });
+  if (!numbered) return;
+
+  const id = raised.json('id');
+  const line = http.post(
+    `${BASE_URL}/invoices/${id}/lines`,
+    JSON.stringify({ chargeItemCode: 'CONSULT_OP', qty: 1 }),
+    params('invoice_line', token),
+  );
+  check(line, { 'charge added': (r) => r.status === 200 });
+  const total = line.json('total');
+
+  const issued = http.post(`${BASE_URL}/invoices/${id}/issue`, null, params('invoice_issue', token));
+  check(issued, { 'invoice issued': (r) => r.status === 200 });
+
+  const paid = http.post(
+    `${BASE_URL}/invoices/${id}/payments`,
+    JSON.stringify({ amount: total, method: 'CASH' }),
+    params('payment', token),
+  );
+  check(paid, {
+    'payment accepted': (r) => r.status === 200,
+    'invoice is paid in full': (r) => r.json('status') === 'PAID' && r.json('outstanding') === 0,
+  });
+
+  journeyDuration.add(Date.now() - started);
+}
+
 export function displayJourney(data) {
   const res = http.get(
     `${BASE_URL}/public/queue/${encodeURIComponent(data.roomCode)}`,

@@ -12,6 +12,11 @@ export const BASE_URL = __ENV.BASE_URL || 'http://localhost:8080';
 export const USERS = {
   doctor: { username: __ENV.PERF_DOCTOR || 'dr.rao', password: __ENV.PERF_PASSWORD || 'ChangeMe!Dev2026' },
   reception: { username: __ENV.PERF_RECEPTION || 'reception', password: __ENV.PERF_PASSWORD || 'ChangeMe!Dev2026' },
+  // The billing desk. Raising an invoice, taking a payment and issuing an invoice number are a
+  // cashier's acts, and the profile exercises them as one rather than as an administrator: the
+  // point of the leg is the contention on the counter and the payment statement, and both are
+  // reached through the same authorisation a real desk has.
+  cashier: { username: __ENV.PERF_CASHIER || 'cashier', password: __ENV.PERF_PASSWORD || 'ChangeMe!Dev2026' },
   // Used by setup() only, to provision the clinician the booking journey needs. Creating staff
   // is an administrative act, so the profile cannot bootstrap itself without it.
   admin: { username: __ENV.PERF_ADMIN || 'admin', password: __ENV.PERF_PASSWORD || 'ChangeMe!Dev2026' },

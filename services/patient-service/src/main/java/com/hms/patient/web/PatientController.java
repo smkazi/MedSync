@@ -5,6 +5,7 @@ import com.hms.common.security.Roles;
 import com.hms.patient.service.PatientService;
 import com.hms.patient.web.dto.PatientDtos;
 import jakarta.validation.Valid;
+import java.util.List;
 import java.util.UUID;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -49,6 +50,20 @@ public class PatientController {
             @RequestParam(defaultValue = "20") int size) {
         return PageResponse.of(service.search(q, includeInactive,
                 PageRequest.of(page, Math.min(size, MAX_PAGE_SIZE), Sort.by("lastName", "firstName"))));
+    }
+
+    /**
+     * A name for an MRN, for a caller who may not read the register.
+     *
+     * <p>Above {@code /{id}} in this class deliberately: {@code /patients/identify} would
+     * otherwise be a candidate for the {@code UUID} path variable and answer 400 rather than
+     * matching. Spring resolves the more specific literal path first regardless, and the ordering
+     * here says so to the next person reading it.
+     */
+    @GetMapping("/identify")
+    @PreAuthorize(Roles.PATIENT_IDENTIFY)
+    public List<PatientDtos.PatientIdentity> identify(@RequestParam(required = false) String q) {
+        return service.identify(q);
     }
 
     @GetMapping("/{id}")

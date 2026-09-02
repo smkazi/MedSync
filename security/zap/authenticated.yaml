@@ -238,6 +238,61 @@ jobs:
       - url: "${ZAP_TARGET}/care-plans/encounters/00000000-0000-4000-8000-000000000000"
         method: GET
         responseCode: 404
+      # The money. A doctor reads what a patient was billed - asked at the bedside, and a platform
+      # that sent them to the billing desk for a number would be routed around - and may not raise
+      # an invoice, post a charge or take a payment. Those three 403s are the oldest financial
+      # control there is written as scan rows: the person who decides what was done is not the
+      # person who records that it was paid.
+      - url: "${ZAP_TARGET}/invoices"
+        method: GET
+      - url: "${ZAP_TARGET}/charge-items"
+        method: GET
+      - url: "${ZAP_TARGET}/payers"
+        method: GET
+      - url: "${ZAP_TARGET}/tax-rates"
+        method: GET
+      - url: "${ZAP_TARGET}/claims"
+        method: GET
+      - url: "${ZAP_TARGET}/day-book"
+        method: GET
+      - url: "${ZAP_TARGET}/invoices"
+        method: POST
+        data: '{"patientId":"00000000-0000-4000-8000-000000000000","patientMrn":"ZAP"}'
+        responseCode: 403
+      - url: "${ZAP_TARGET}/charges"
+        method: POST
+        data: '{"sourceType":"MANUAL","sourceId":"00000000-0000-4000-8000-000000000000","patientId":"00000000-0000-4000-8000-000000000000","patientMrn":"ZAP","chargeItemCode":"CONSULT_OP","qty":1}'
+        responseCode: 403
+      - url: "${ZAP_TARGET}/invoices/00000000-0000-4000-8000-000000000000/payments"
+        method: POST
+        data: '{"amount":1.00,"method":"CASH"}'
+        responseCode: 403
+      - url: "${ZAP_TARGET}/claims"
+        method: POST
+        data: '{"invoiceId":"00000000-0000-4000-8000-000000000000"}'
+        responseCode: 403
+      # Setting prices is an administrator's, not a clinician's and not a cashier's. Who else is
+      # refused is asserted in tests/api - ZAP logs in as one user and cannot express "403 as a
+      # cashier".
+      - url: "${ZAP_TARGET}/charge-items"
+        method: POST
+        data: '{"code":"ZAPITEM","name":"Zap","unitPrice":1.00}'
+        responseCode: 403
+      - url: "${ZAP_TARGET}/tax-rates"
+        method: POST
+        data: '{"code":"ZAPGST","name":"Zap","percent":1.00,"effectiveFrom":"2030-01-01"}'
+        responseCode: 403
+      # Reading an invoice that does not exist: 404 from the lookup, not a 500 from an unvalidated
+      # path parameter reaching a query.
+      - url: "${ZAP_TARGET}/invoices/00000000-0000-4000-8000-000000000000"
+        method: GET
+        responseCode: 404
+      # The narrow patient lookup a cashier holds. A doctor is not in PATIENT_IDENTIFY - they have
+      # the full register - so this is 403 for the scanning user, and that is the assertion: a
+      # narrow endpoint that quietly widened would show up here.
+      - url: "${ZAP_TARGET}/patients/identify?q=zap"
+        method: GET
+        responseCode: 403
 
   - type: spider
     parameters:

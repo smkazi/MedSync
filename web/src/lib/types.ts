@@ -834,3 +834,148 @@ export type CarePlan = {
   closedAt: string | null;
   goals: CareGoal[];
 };
+
+// ---- billing ---------------------------------------------------------------
+
+/**
+ * Enough to put a name to an MRN, from the narrow endpoint a cashier holds.
+ *
+ * <p>Deliberately not {@link PatientSummary}. A billing desk has to be sure it is invoicing the
+ * right person and has no business reading a date of birth, a phone number or a critical-allergy
+ * marker — so the endpoint behind this answers four fields and the role that may call it is not in
+ * CLINICAL_READ at all.
+ */
+export type PatientIdentity = {
+  id: string;
+  mrn: string;
+  fullName: string;
+  active: boolean;
+};
+
+export type InvoiceStatus = "DRAFT" | "ISSUED" | "PAID" | "CANCELLED";
+
+export type PaymentMethod = "CASH" | "CARD" | "UPI" | "BANK_TRANSFER" | "INSURANCE";
+
+export type ClaimStatus = "DRAFT" | "SUBMITTED" | "SETTLED" | "PARTIALLY_SETTLED" | "DENIED";
+
+/**
+ * Amounts arrive as JSON numbers with two decimal places and are kept as numbers here.
+ *
+ * <p>Which is safe for display and not for arithmetic: every figure on these screens is one the
+ * platform computed, and nothing in the browser adds two of them together. The moment a screen
+ * needs to total a column it must ask the service for the total, because a floating point sum of
+ * money is exactly the bug `numeric(14,2)` and `BigDecimal` exist to prevent on the other side.
+ */
+export type InvoiceLine = {
+  id: string;
+  chargeItemCode: string;
+  description: string;
+  qty: number;
+  unitPrice: number;
+  discount: number;
+  taxPercent: number;
+  taxAmount: number;
+  lineTotal: number;
+};
+
+export type Payment = {
+  id: string;
+  amount: number;
+  method: PaymentMethod;
+  reference: string | null;
+  receivedBy: string;
+  receivedAt: string;
+};
+
+export type Invoice = {
+  id: string;
+  number: string;
+  patientId: string;
+  patientMrn: string;
+  encounterId: string | null;
+  payerCode: string | null;
+  status: InvoiceStatus;
+  subtotal: number;
+  discount: number;
+  taxTotal: number;
+  total: number;
+  amountPaid: number;
+  outstanding: number;
+  invoiceDate: string;
+  issuedAt: string | null;
+  cancelledAt: string | null;
+  cancelledReason: string | null;
+  lines: InvoiceLine[];
+  payments: Payment[];
+};
+
+export type ChargeItem = {
+  id: string;
+  code: string;
+  name: string;
+  departmentCode: string | null;
+  unitPrice: number;
+  taxable: boolean;
+  taxRateCode: string | null;
+  taxPercentToday: number | null;
+  active: boolean;
+};
+
+export type TaxRate = {
+  id: string;
+  code: string;
+  name: string;
+  percent: number;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  inForceToday: boolean;
+};
+
+export type PayerTariff = {
+  chargeItemCode: string;
+  chargeItemName: string;
+  listPrice: number;
+  agreedPrice: number;
+};
+
+export type Payer = {
+  id: string;
+  code: string;
+  name: string;
+  requiresPreauth: boolean;
+  allowsCopay: boolean;
+  settlesDirectly: boolean;
+  taxExempt: boolean;
+  active: boolean;
+  tariffs: PayerTariff[];
+};
+
+export type Claim = {
+  id: string;
+  invoiceId: string;
+  invoiceNumber: string;
+  payerCode: string;
+  preauthNo: string | null;
+  submittedAt: string | null;
+  status: ClaimStatus;
+  claimedAmount: number;
+  settledAmount: number | null;
+  shortfall: number;
+  denialReason: string | null;
+};
+
+export type MethodTotal = {
+  method: PaymentMethod;
+  amount: number;
+  count: number;
+};
+
+export type DayBook = {
+  on: string;
+  billed: number;
+  collected: number;
+  outstanding: number;
+  invoices: number;
+  payments: number;
+  byMethod: MethodTotal[];
+};

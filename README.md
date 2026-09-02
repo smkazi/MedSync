@@ -10,9 +10,9 @@ haematology analyzer over its own wire protocol and released by a pathologist.
 
 > **Status:** the clinical core, the laboratory (including analyzer integration), the AI service
 > and the web UI are implemented and verified end to end against a real stack, and so are the
-> containerisation, TLS, security-testing and performance-testing layers. **907 tests pass** —
-> 503 Java unit and integration, 91 Python, 41 web unit, 172 black-box API and security abuse cases,
-> and 100 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
+> containerisation, TLS, security-testing and performance-testing layers. **979 tests pass** —
+> 541 Java unit and integration, 91 Python, 45 web unit, 194 black-box API and security abuse cases,
+> and 108 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
 > [Security](#security); what is left is in the [Roadmap](#roadmap).
 
 ---
@@ -51,16 +51,22 @@ haematology analyzer over its own wire protocol and released by a pathologist.
       audit trail        departments        notes · vitals      results
                          rooms · beds       NEWS2 · OPD queue
 
-      notification :8085   admissions :8086    pharmacy :8087      ai :8000
-      delivery log         casualty board      formulary           FastAPI
-      SMTP · HTTP SMS      bed occupancy       prescribe·dispense  4 capabilities
-      no PHI outbound      transfers           eMAR, two scans     (Claude + models)
+      notification :8085   admissions :8086    pharmacy :8087      billing :8088
+      delivery log         casualty board      formulary           charge capture
+      SMTP · HTTP SMS      bed occupancy       prescribe·dispense  GST invoices
+      no PHI outbound      transfers           eMAR, two scans     payments · claims
+
+      ai :8000
+      FastAPI
+      4 capabilities
+      (Claude + models)
              │                 │                    │                  │
              └── Kafka: hms.patient · hms.appointment · hms.lab · hms.admission ·
-                        hms.pharmacy · hms.audit ─────────────────────────────────┘
+                        hms.pharmacy · hms.billing · hms.audit ────────────────────┘
                                      │
                     PostgreSQL 16 — one schema per service
-    identity · patient · scheduling · laboratory · notification · admissions · pharmacy
+    identity · patient · scheduling · laboratory · notification · admissions ·
+    pharmacy · billing
 ```
 
 **Authentication.** `identity-service` is the only holder of passwords and the only issuer of
@@ -86,7 +92,7 @@ order) are plain columns, not foreign keys, so a service survives another's outa
 .
 ├── pom.xml                      Maven aggregator; -Pquality / -Psecurity / -Pmutation / -Pautomation
 ├── Makefile                     every task, one place. `make help`
-├── docker-compose.yml           postgres, kafka (KRaft), nine services, ai-service, web
+├── docker-compose.yml           postgres, kafka (KRaft), ten services, ai-service, web
 ├── Dockerfile.java              shared multi-stage build, ARG SERVICE, non-root
 ├── config/                      SpotBugs exclusions and Dependency-Check suppressions, each with a reason
 ├── platform/hms-common/         security, errors, events, audit, crypto, pagination
@@ -99,6 +105,7 @@ order) are plain columns, not foreign keys, so a service survives another's outa
 │   ├── notification-service/    channels, delivery log, message templates
 │   ├── admissions-service/      casualty board, bed occupancy, admissions, transfers
 │   ├── pharmacy-service/        formulary, prescribing, dispensing, closed-loop eMAR
+│   ├── billing-service/         charge capture, GST invoicing, payments, payer claims
 │   └── ai-service/              FastAPI: summarisation, no-show risk, triage, ICD-10
 ├── web/                         Next.js 16 app, Playwright suite in e2e/
 ├── tests/
@@ -415,11 +422,85 @@ is allowed, since scanners fail, but an override that turns both checks off beco
 within a week. A dose **not** given is also a row, with a reason and no scans, because the absence
 of a dose is a clinical fact the next shift needs.
 
+### `billing-service` — schema `billing`
+Charge capture, GST invoicing, payments and payer claims. Ten tables, and four of them exist to
+answer a way hospitals lose money with a database rule rather than with application care.
+
+**A charge cannot post twice.** `posted_charges` is keyed by `(source_type, source_id,
+charge_item_code)`, so a redelivered Kafka message collides with the charge it already produced and
+is reported as already-posted rather than billing the patient again. Brokers redeliver and operators
+replay lost partitions; without that key a patient is billed twice for one consultation, and the
+second bill is the one they take to a lawyer.
+
+**Overpayment is refused atomically.** One conditional statement takes the money and moves the
+status in the same breath:
+
+```sql
+UPDATE invoices SET amount_paid = amount_paid + :amt,
+       status = CASE WHEN amount_paid + :amt >= total THEN 'PAID' ELSE status END
+ WHERE id = :id AND status IN ('DRAFT','ISSUED') AND amount_paid + :amt <= total
+```
+
+Zero rows is the refusal, and the service turns it into a 409 naming what is actually outstanding.
+Two cashiers taking the same balance both read the same `amount_paid`; a read-modify-write would let
+the second silently restore what the first collected. Deriving PAID in a second statement would
+leave a window in which an invoice was fully paid and still said ISSUED, and a receipt printed in
+that window would be wrong.
+
+**Prices are snapshotted onto the line, never joined.** The deliberate opposite of the room
+decision elsewhere in this platform: a room's directions must always be current, and a financial
+record must never change after the fact. Repricing a charge item changes what the next invoice
+charges and nothing that has already been raised.
+
+**Tax is rows with effective dates, never 18% in the code.** GST changes by statute and an invoice
+raised last year must keep the rate that applied then, so a rate change is a new row that closes its
+predecessor rather than an edit — and a rate cannot start in the past, because receipts already
+issued would disagree with it. **Healthcare services provided by a clinical establishment are
+GST-exempt in India**, so exempt is the default and what is taxable is what a hospital *sells*: a
+dispensed medicine, a consumable. A tax-exempt payer exempts the line whatever the item says, and
+tax is charged on the discounted amount rather than the gross, because taxing the list price and
+then discounting collects tax on money nobody paid.
+
+**`numeric(14,2)` in the database, `BigDecimal` with explicit HALF_UP at every boundary, and no
+`double` anywhere near an amount.** Rounding happens once per line — per unit magnifies the error by
+the quantity, per invoice produces a total that does not equal the sum of the printed lines. HALF_UP
+because it is what the person checking the bill does by hand. The scale survives to the screen too:
+JSON has one number type and `JSON.parse` turned `500.00` into `500`, which rendered "500" beside
+"18.00" until a formatter fixed it — no error, no log, just a bill that invites an argument.
+
+**Charge capture is by event, so no clinical service knows billing exists.** A completed
+consultation, a released laboratory order, a dispense and a discharge's bed-day count all arrive as
+domain events and are priced here. Asking scheduling to call billing would make finishing a
+consultation fail when the billing service is down, which is the wrong trade in a hospital. Which
+charge item each event posts against is configuration (`hms.billing.capture.*`); an event naming
+something the price list has never heard of is reported in the log and charged to nobody, because
+substituting a plausible price would put a number on an invoice that nobody chose.
+
+**Two separations of duties, and both are asserted.** A clinician reads what a patient was billed —
+asked at the bedside, and a platform that sent them to the billing desk for a number would be routed
+around within a week — and cannot raise an invoice, post a charge or take a payment: the person who
+decides what was done is not the person who records that it was paid. A cashier takes money and
+cannot set prices, because somebody who could discount a procedure to zero and then record it as
+settled in full would need no accomplice. The laboratory and the pharmacy see none of it. The
+`CASHIER` role holds no clinical read at all, so identifying a patient to bill goes through a narrow
+`GET /patients/identify` that answers an id, an MRN and a name — the third narrowing of the kind
+`CONTACT_READ` and `ALLERGY_READ` already make.
+
+**A day is the deployment's own.** Invoice dates, tax resolution, the financial-year number series
+and the day book's boundaries all come from one `BillingClock` bound to `hms.billing.zone`. That was
+not theoretical: the day book counted payments in Asia/Kolkata while invoices were dated in the
+container's UTC, and a day's billing read zero while its collections read eight hundred.
+
+Invoice numbers are per financial year (April–March, Indian convention) and issued by a
+single-statement counter with `ON CONFLICT … RETURNING`, so a gap in the sequence — the one thing an
+auditor reading a numbered series cares about — cannot come from two cashiers raising an invoice at
+once.
+
 ### `web` — Next.js 16, React 19
 The clinical interface. Server components call the gateway; **the browser never receives an access
 token** — the session lives in httpOnly cookies and every platform call is made server-side.
 
-Nine top-level menus, defined once as data in `src/lib/menu.ts`. What a role sees is a subset: the
+Ten top-level menus, defined once as data in `src/lib/menu.ts`. What a role sees is a subset: the
 laboratory accounts get no Clinical menu at all, because every one of its items is gated away from
 them and an empty dropdown is worse than an absent one.
 
@@ -433,11 +514,11 @@ them and an empty dropdown is worse than an absent one.
 | Facility | room directory, rooms, floors, room types, beds, departments — all editable by an administrator |
 | Messaging | delivery log with the send form, message wording — readable by anybody who may send, editable by an administrator |
 | Pharmacy | dispensing queue with the override reason on the row, formulary with its ingredient lists, the interaction table with what to do about each pairing, stock by batch with what is about to expire — gated to the roles that may read a medication order |
-| Billing | *not built* — see below |
+| Billing | invoices (open bills first, or one patient's whole history), raise an invoice, the day book split by how money arrived, claims, and — administrator-only — the charge list, payers with their agreed tariffs, and dated tax rates |
 | Administration | staff directory, users (create, roles, reset a password), roles, audit trail |
 
 Three rules hold in the navigation, and each is asserted in `web/e2e/navigation.spec.ts` against a
-real browser for all six seeded roles:
+real browser for all eight seeded roles:
 
 - **Roles filter, they do not disable.** Filtering happens on the server, so an item a user may not
   reach is never serialised into the page. A greyed-out item would disclose both what exists and
@@ -445,13 +526,14 @@ real browser for all six seeded roles:
 - **Dropdowns are disclosure widgets, never hover menus.** Click or Enter/Space opens, Escape closes
   and returns focus to the trigger, arrows move and wrap, `aria-expanded` and `aria-controls` are
   wired, and there is no hover-only path — this runs on tablets and wall-mounted terminals.
-- **A module with no backend says so.** Billing appears in the menu marked "not built" and leads to
-  a page naming the service and endpoints it needs. Pharmacy was in that list until this slice and
-  is not any more: it has a backend and a role now, so it is gated like every other module that
-  does — which is also why the laboratory accounts and the front desk stopped seeing it. No mock table, no empty state
-  implying data could arrive, no disabled buttons hinting at a workflow: a clinical screen that
-  looks functional but is not is worse than an absent one, because somebody will read a number off
-  it.
+- **Every item leads to a real screen.** There was a "not built" badge and a page behind it naming
+  what a module still needed — the OPD queue, the corridor display, casualty, the census, the
+  pharmacy and finally Billing all passed through it. All of them are built, so the badge, the page
+  and its registry are gone rather than kept as scaffolding whose every claim would now be false;
+  what is still missing is in the Roadmap below, which is where somebody looks for a roadmap. The
+  rule it enforced still holds and is still asserted: no mock table, no empty state implying data
+  could arrive, no disabled button hinting at a workflow. A screen that looks functional and is not
+  is worse than an absent one, because somebody will read a number off it.
 
 Writes go through **server actions**, not route handlers: `api()` already runs server-side with the
 session cookie, so an action can call the gateway directly and then `revalidatePath()`, and the form
@@ -593,7 +675,7 @@ Flyway creates and migrates every schema on service start.
 
 ```bash
 mvn -q package -DskipTests
-scripts/local.sh start          # identity, patient, scheduling, laboratory, notification, admissions, pharmacy, gateway
+scripts/local.sh start          # identity, patient, scheduling, laboratory, notification, admissions, pharmacy, billing, gateway
 scripts/local.sh status
 scripts/local.sh logs identity-service
 scripts/local.sh stop
@@ -636,6 +718,7 @@ The dev profile seeds one account per role:
 | `new.starter` | RECEPTIONIST — **still on its initial password**, so it can do nothing but change it |
 | `svc.notification` | SERVICE — **not a person.** notification-service signs in as this to find out where to send a message, because the work is triggered by an event and an event carries no caller's token. It holds the platform's narrowest role: a phone number, an email address, and no part of a chart. |
 | `pharmacist` | PHARMACIST — fills prescriptions, keeps the formulary and the stock. Reads a prescription and an allergy list and **cannot open a chart**, cannot prescribe, and cannot record a dose as given. |
+| `cashier` | CASHIER — raises invoices, takes payments, works claims. The mirror image of the pharmacist: it can collect money and **cannot open a chart**, and `dr.rao` can read a bill and cannot take a payment. |
 
 The seed password comes from `HMS_SEED_PASSWORD` and defaults to `ChangeMe!Dev2026`.
 
@@ -838,12 +921,12 @@ make help          # everything else
 Or directly:
 
 ```bash
-mvn -q verify                                     # 503 Java unit and integration tests
+mvn -q verify                                     # 541 Java unit and integration tests
 cd services/ai-service && uv run pytest -q        # 91 Python tests
 cd web && npm run lint && npm run typecheck       # web static checks
-cd web && npm test                                # 41 web unit tests
-cd web && npx playwright test                     # 100 browser tests, no skips
-mvn -Pautomation -pl tests/api verify             # 172 API and security abuse cases
+cd web && npm test                                # 45 web unit tests
+cd web && npx playwright test                     # 108 browser tests, no skips
+mvn -Pautomation -pl tests/api verify             # 194 API and security abuse cases
 ```
 
 | Layer | What runs | Where |
@@ -1014,6 +1097,33 @@ Worth writing down, because it is the argument for having built them:
   patient-service is not running beside them. A 404 from the callee is now the caller's 404 and a
   403 is their 403; everything else still fails closed.
 
+- **The day book counted a day in one zone and dated invoices in another.** A hospital cashes up in
+  its own zone, so the day book bounds a day in `hms.billing.zone`; invoices were dated with
+  `LocalDate.now()`, which is the JVM's. On a UTC container after half past six in the evening the
+  two disagree, and the live stack showed it plainly: a day with eight hundred collected and zero
+  billed, over one invoice raised that day. Found by reading real output rather than by a test, and
+  every date in the module now comes from one `BillingClock`.
+- **A repository projection that compiled, ran, and threw.** The day book's billed-and-count query
+  was declared as `Object[]`, which is what a two-column aggregate looks like — and the shape that
+  comes back is not the shape it looks like, so the day book answered 500 with an
+  `ArrayIndexOutOfBoundsException`. It is a named interface projection now, whose columns the
+  compiler checks.
+- **A refusal that turned into a 500 because it asked the database a question.** Raising a second
+  claim for one invoice hits `uq_claim_per_invoice`, and the handler read the existing claim back so
+  the message could name it — inside the transaction the violation had just aborted, where
+  PostgreSQL accepts no further statements. The check now runs *before* the insert and the
+  constraint stays behind it as the race-condition backstop, with a refusal that names no numbers
+  because it cannot read any.
+- **Two decimal places survived the database, Java and the wire, and died in the browser.** JSON has
+  one number type: the service sends `500.00`, `JSON.parse` hands React the number `500`, and an
+  invoice rendered "500" in the total column beside "18.00" in the tax column. Nothing failed and
+  nothing logged — just a bill that invites an argument at the counter. Caught by a browser test
+  asserting the platform's own figure, and fixed by one formatter that every amount now goes
+  through.
+- **An entity that dated itself.** `Invoice.invoiceDate` was initialised to `LocalDate.now()` as a
+  field default. The constructor always overwrites it, so nothing was wrong yet — and a default like
+  that is how the zone bug above gets back in, so it is gone and the NOT NULL column is what fails
+  loudly if a caller forgets.
 - **A pick-list silently lost every row past the hundredth.** The staff screen asked for
   `/admin/users?size=200` to fill its "Platform login" dropdown, and the controller answers
   `Math.min(size, 100)` — so the request looked like it asked for everything and got the first
@@ -1087,7 +1197,9 @@ Worth writing down, because it is the argument for having built them:
 ## Roadmap
 
 **Implemented and verified against a running stack:** clinical core, laboratory with analyzer
-integration, outbound messaging, AI service, web UI, containerisation, TLS, the full test pyramid,
+integration, casualty and the in-patient census, the closed medication loop, the revenue cycle
+(GST invoicing, payments, payer claims and event-driven charge capture), outbound messaging, AI
+service, web UI, containerisation, TLS, the full test pyramid,
 SAST/DAST tooling, and performance profiles. Dependency scanning covers Python (`pip-audit`) and the web app
 (`npm audit`) on every run, and Java through Trivy over the SBOM.
 
@@ -1112,7 +1224,8 @@ SAST/DAST tooling, and performance profiles. Dependency scanning covers Python (
   created nor deleted; a morphology cut-off's **note** is likewise read-only, since it appears
   verbatim on signed reports. There is no critical-value concept anywhere in the service — no
   column, field, flag or notification — so there is no critical-range editor to build yet.
-- **Further clinical modules** — billing and claims, imaging/PACS.
+- **Further clinical modules** — imaging/PACS, and an HL7 v2 interface engine. Both are named
+  gaps rather than half-built modules, which was the choice made deliberately.
 - **A screen for composing an order set.** The endpoint exists and is administrator-only; there is
   no form, because what goes into a set is a clinical governance decision rather than a data-entry
   task — a set is applied in one click by anybody who may chart — and a form with no review step in
@@ -1126,10 +1239,29 @@ SAST/DAST tooling, and performance profiles. Dependency scanning covers Python (
   discharge-summary document. A discharge takes a free-text summary and that is all — enough to say
   what happened, not a structured transfer-of-care document. Observations and NEWS2 stay in
   scheduling-service against the encounter, so a ward view reads a score rather than owning one.
-- **Nightly bed-day charging.** admissions-service publishes `hms.admission.events` and the events
-  carry what a bed-day charge needs, but nothing consumes them: there is no billing service yet, so
-  a stay currently costs nothing anywhere. The event is emitted rather than added later so that the
-  service does not have to learn billing exists.
+- **Bed-days are charged at discharge, not nightly.** billing-service consumes
+  `admission.discharged` and prices the bed-day count the event carries, so a stay that has not
+  ended yet costs nothing yet. One event and one idempotent charge rather than a nightly job with a
+  clock to be wrong about — but it does mean an in-patient's bill cannot be shown mid-stay, which a
+  hospital taking interim payments would want.
+- **A cash-up.** The day book totals what was billed and collected and splits collections by
+  method, and nothing signs it off: there is no drawer count, no shift close, no till
+  reconciliation and no variance record. The numbers are readable and unsigned, which is named
+  here rather than implied to be a control.
+- **Credit notes and refunds.** An invoice with money against it cannot be cancelled, and the
+  platform has no way to give money back. That is the honest state: a cancellation standing in for
+  a refund would make the record say a treatment was never billed while the cash was in the drawer.
+- **Receivables ageing.** The day book answers what is outstanding as of a date; nothing buckets it
+  by how long it has been owed or by payer, which is the report a hospital chases money from.
+- **A dispensed medicine is priced by the charge list, not by the pharmacy.** Charge capture bills
+  a drug's own code when the charge list carries one and falls back to the configured dispensing
+  item when it does not, so until a deployment prices its drug codes a dispense posts a
+  zero-value line naming the medicine. Visible on the invoice rather than absent from it, and a
+  copy of the pharmacy's prices into billing is the missing piece rather than a guess at them.
+- **Charges captured from events price at list.** An event carries no payer, so an invoice opened
+  by charge capture is self-paying; a payer's tariff applies to invoices a cashier raises. Pricing
+  a captured charge against a payer needs the encounter's payer to travel on the clinical event,
+  which is a change to services that deliberately know nothing about billing.
 - **A controlled-drug register.** `formulary.controlled` is recorded and not enforced: there is no
   register, no witnessed-destruction record and no running balance reconciliation. The flag is
   honest about being a label rather than a control, which is better than a column implying one.

@@ -18,7 +18,9 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -77,6 +79,31 @@ public class PatientService {
         Page<Patient> page = patients.search(QueryPatterns.contains(query), includeInactive, pageable);
         Set<UUID> critical = criticalAllergyIds(page.getContent());
         return page.map(patient -> PatientMapper.toSummary(patient, critical.contains(patient.getId())));
+    }
+
+    /**
+     * Puts a name to an MRN, for a caller who may not read the register.
+     *
+     * <p>Audited like the contact and allergy lookups, and for the same reason: a narrow endpoint
+     * held by a role that cannot read a chart is exactly the endpoint somebody will later ask "who
+     * has been searching these?" about. The audit detail is the query rather than the results,
+     * because what was looked for is the question an investigation asks and the answer is a list of
+     * patients who happened to match.
+     *
+     * <p>Bounded at ten. A cashier identifying a patient types an MRN or a surname; a caller
+     * paging through hundreds is doing something this endpoint does not exist for.
+     */
+    @Transactional
+    public List<PatientDtos.PatientIdentity> identify(String query) {
+        Page<Patient> found = patients.search(QueryPatterns.contains(query), false,
+                PageRequest.of(0, 10, Sort.by("lastName", "firstName")));
+        audit.record("PATIENT_IDENTIFY", "Patient", null,
+                "%d match(es) for a lookup by %s".formatted(found.getNumberOfElements(),
+                        CurrentUser.usernameOrSystem()));
+        return found.getContent().stream()
+                .map(patient -> new PatientDtos.PatientIdentity(patient.getId(), patient.getMrn(),
+                        patient.fullName(), patient.isActive()))
+                .toList();
     }
 
     /** Resolves the critical-allergy marker for a whole page in one query. */

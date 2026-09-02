@@ -16,13 +16,13 @@ import { openMenu, signIn } from "./sign-in";
 /**
  * What each seeded user must find in the top bar. Deliberately literal.
  *
- * A receptionist sees no Laboratory; only the administrator sees Administration. Billing appears
- * for everyone because it contains nothing but not-built items, which carry no role gate — there is
- * no capability there to authorise. Pharmacy used to be in that list and is not any more: it has a
- * backend and a role now, so it is gated like every other module that does. The laboratory roles see no Clinical menu at
- * all: triage is the front desk and the clinicians, the casualty board and the census are
- * clinical reading, and a menu whose every child was filtered away is dropped rather than shown
- * empty.
+ * A receptionist sees no Laboratory; only the administrator sees Administration. Pharmacy and
+ * Billing were both in every role's list while they had no backend, and neither is now: a module
+ * with a service and a role behind it is gated like every other one. So the laboratory accounts
+ * see neither, the pharmacy sees no money, and the billing desk sees nothing clinical. The
+ * laboratory roles also see no Clinical menu at all: triage is the front desk and the clinicians,
+ * the casualty board and the census are clinical reading, and a menu whose every child was
+ * filtered away is dropped rather than shown empty.
  */
 const EXPECTED: Record<string, string[]> = {
   admin: [
@@ -74,7 +74,6 @@ const EXPECTED: Record<string, string[]> = {
     "Scheduling",
     "Laboratory",
     "Facility",
-    "Billing",
   ],
   "dr.pathan": [
     "Dashboard",
@@ -82,11 +81,13 @@ const EXPECTED: Record<string, string[]> = {
     "Scheduling",
     "Laboratory",
     "Facility",
-    "Billing",
   ],
   // The pharmacy account. Its menu is the shape of the role: the module it works in, and nothing
   // clinical — a pharmacist reads a prescription and an allergy list and never a chart.
-  pharmacist: ["Dashboard", "Pharmacy", "Billing"],
+  pharmacist: ["Dashboard", "Pharmacy"],
+  // The billing desk. The mirror image of the pharmacist: the module it works in and nothing
+  // clinical, which is what makes the separation of duties demonstrable rather than asserted.
+  cashier: ["Dashboard", "Billing"],
 };
 
 test.describe("the menu is role-aware", () => {
@@ -275,33 +276,34 @@ test.describe("every menu link resolves", () => {
   });
 });
 
-test.describe("a not-built module is honest about it", () => {
-  test("it says so, offers nothing that looks functional, and names what it needs", async ({
+test.describe("every menu item leads to a real screen", () => {
+  test("no item claims to be unbuilt, and none points at a placeholder route", async ({
     page,
   }) => {
+    // This test used to prove the opposite: that Billing said "not built" and offered nothing that
+    // looked functional. Billing is built, and so is every other module that was ever in that
+    // list, so the honest assertion is now that the label appears nowhere.
     await signIn(page, "admin");
-    const billing = await openMenu(page, "Billing");
-    // The menu itself marks it, so a person scanning for the feature knows before clicking.
-    await expect(billing.getByRole("link", { name: /Invoices/ })).toContainText(/not built/i);
-    await billing.getByRole("link", { name: /Invoices/ }).click();
+    const nav = page.getByRole("navigation", { name: "Main" });
 
-    const main = page.getByRole("main");
-    await expect(main).toContainText(/Not built yet/i);
-    await expect(main).toContainText(/billing-service \(not created\)/);
-
-    // Nothing that could be mistaken for a working screen: no table to read a number off, no
-    // form to fill in, and no disabled control implying the workflow is nearly there.
-    await expect(main.locator("table")).toHaveCount(0);
-    await expect(main.locator("form")).toHaveCount(0);
-    await expect(main.locator("input, select, textarea")).toHaveCount(0);
-    await expect(main.locator("button[disabled], [aria-disabled='true']")).toHaveCount(0);
+    for (const trigger of await nav.locator("button[aria-controls]").all()) {
+      await trigger.click();
+      const panel = page.locator(`#${await trigger.getAttribute("aria-controls")}`);
+      await expect(panel).toBeVisible();
+      await expect(panel.getByText(/not built/i)).toHaveCount(0);
+      for (const link of await panel.locator("a[href]").all()) {
+        expect(await link.getAttribute("href")).not.toMatch(/^\/not-built\//);
+      }
+      await page.keyboard.press("Escape");
+    }
   });
 
-  test("an unknown module slug is a 404, not a generic not-built page", async ({ page }) => {
+  test("the placeholder route is gone rather than answering for anything", async ({ page }) => {
     await signIn(page, "admin");
-    // Otherwise a typo in the menu would render as a feature that merely has not shipped, and the
-    // broken link would never be noticed.
-    const response = await page.goto("/not-built/nonexistent-module");
+    // It served pages naming what a module still needed, and every one of those modules is built.
+    // A route that stayed would answer a "not built yet" page for a screen that exists, which is
+    // the one failure mode the whole idea was meant to avoid.
+    const response = await page.goto("/not-built/invoices");
     expect(response?.status()).toBe(404);
   });
 });
