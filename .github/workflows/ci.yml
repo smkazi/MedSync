@@ -200,6 +200,20 @@ jobs:
       - name: Build the CycloneDX SBOM
         run: mvn $MAVEN_ARGS -Psbom package -DskipTests
 
+      # Two passes over the same SBOM, and the first one is not redundant: with `format: sarif`
+      # Trivy writes to a file and prints nothing, so a failing run said "exit code 1" and gave a
+      # reader no idea which dependency or which CVE. This pass prints the table into the log and
+      # never fails; the next one is the gate.
+      - name: Report what is in the SBOM (Trivy, table to the log)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: sbom
+          scan-ref: target/classes/META-INF/sbom/application.cdx.json
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "0"
+
       - name: Scan the SBOM (Trivy, fails on fixable HIGH/CRITICAL)
         # ignore-unfixed matches the container scan in security.yml: an unfixable transitive CVE
         # still reaches the code-scanning tab, but it cannot freeze every merge until upstream
