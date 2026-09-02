@@ -215,6 +215,12 @@ jobs:
           exit-code: "0"
 
       - name: Scan the SBOM (Trivy, fails on fixable HIGH/CRITICAL)
+        env:
+          # This pass exists to set the exit code; the table above is what a human reads. Quiet it,
+          # because Trivy emits a "Unsupported hash algorithm" WARN per component per unsupported
+          # digest - roughly 1,500 lines for this SBOM - and two passes of that buried the findings
+          # table well out of reach of a log tail.
+          TRIVY_QUIET: "true"
         # ignore-unfixed matches the container scan in security.yml: an unfixable transitive CVE
         # still reaches the code-scanning tab, but it cannot freeze every merge until upstream
         # ships a release - and the usual answer to that is a blanket suppression, which is worse

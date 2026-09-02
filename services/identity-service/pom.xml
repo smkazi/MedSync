@@ -27,10 +27,22 @@
       <groupId>org.springframework.security</groupId>
       <artifactId>spring-security-oauth2-jose</artifactId>
     </dependency>
+    <!-- BouncyCastle backs Argon2 password hashing.
+         Nothing in this repository imports org.bouncycastle, which is why it looks removable and is
+         not: Spring Security's Argon2PasswordEncoder needs
+         org.bouncycastle.crypto.params.Argon2Parameters, so deleting this fails every login with a
+         NoClassDefFoundError at bean creation. Tried it; 15 integration tests said no.
+
+         Deliberately unversioned. It used to be pinned at 1.82 here, which carried
+         CVE-2025-14813 (CRITICAL) and CVE-2026-5598 (HIGH - private-key leakage through
+         non-constant-time comparison); the SBOM scan added to CI caught both on its first real run.
+         The version now comes from the imported spring-cloud-dependencies BOM, which already
+         supplies 1.85.2 transitively to the gateway through spring-cloud-starter. A local pin was
+         what let this drift three releases behind the rest of the reactor in the first place, and
+         it would have left two different bcprov versions in one build. -->
     <dependency>
       <groupId>org.bouncycastle</groupId>
       <artifactId>bcprov-jdk18on</artifactId>
-      <version>1.82</version>
     </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>

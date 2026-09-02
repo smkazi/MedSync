@@ -589,6 +589,13 @@ the script against both failure modes. That a whole workflow's first run had thr
 failing is the argument for putting checks where people look: `ci.yml` runs on every push and gets
 read, and the dependency gate now lives there.
 
+It found something on its first real run, which is the point: `bcprov-jdk18on` was pinned at 1.82 in
+identity-service and carried CVE-2025-14813 (CRITICAL) and CVE-2026-5598 (HIGH — private-key leakage
+through non-constant-time comparison). The pin is gone; the version now comes from the imported
+Spring Cloud BOM, which supplies 1.85.2 — the same version the gateway was already getting
+transitively. A local pin was what let one module drift three releases behind the rest of the
+reactor.
+
 So the gate is now Trivy against the CycloneDX SBOM Maven emits: no API key, no repository secret,
 seconds instead of the hours an NVD feed download takes. It runs in `ci.yml` **on every push**,
 beside the Python and web audits that were always there — the reason the security scans were split
