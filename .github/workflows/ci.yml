@@ -7,10 +7,10 @@
 # that people actually wait for it.
 #
 # Dependency scanning IS here, though, because the criterion was slowness and this is not slow.
-# Trivy over a CycloneDX SBOM takes seconds. It used to live in the nightly alongside
-# Dependency-Check and it failed there, unseen, on every run for weeks - which is the failure mode
-# of putting a gate where nobody looks. Python and web dependency audits already run in their own
-# jobs below, on every push, for the same reason.
+# Trivy over a CycloneDX SBOM takes seconds. The nightly's first and only run had three of its six
+# jobs fail - Dependency-Check on an empty NVD key, the container scan on an action tag that does
+# not exist, and ZAP - which is the argument for putting a check where it gets read. Python and web
+# dependency audits already run in their own jobs below, on every push, for the same reason.
 name: CI
 
 on:
@@ -205,7 +205,7 @@ jobs:
         # still reaches the code-scanning tab, but it cannot freeze every merge until upstream
         # ships a release - and the usual answer to that is a blanket suppression, which is worse
         # than an honest report.
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: sbom
           # The plugin's path, not a choice: a `pom`-packaged root writes the reactor-wide SBOM

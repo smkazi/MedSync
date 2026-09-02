@@ -569,14 +569,19 @@ passed**. The pom configured `<nvdApiKey>${env.NVD_API_KEY}</nvdApiKey>`; the re
 never populated; so the plugin received a zero-length key and died with `Invalid API Key, length of
 0`. An absent key degrades to keyless mode, an empty one is fatal — and Dependency-Check 13.0.0 has
 the same bug internally ([#8715](https://github.com/dependency-check/DependencyCheck/issues/8715)),
-which is why the version here is held at 12.2.2. Because that workflow only runs on a nightly cron
-and never on a push, every run went red where nobody was looking.
+which is why the version here is held at 12.2.2.
+
+The same first nightly run turned up two more failures, both worth naming rather than tidying away:
+the container and IaC scan had never run either, because `aquasecurity/trivy-action` was pinned to a
+tag that does not exist (`0.28.0` — the action's tags carry a `v` prefix), and the ZAP job failed at
+its scan step. The action pin is fixed. That a whole workflow's first run had three of six jobs
+failing is the argument for putting checks where people look: `ci.yml` runs on every push and gets
+read, and the dependency gate now lives there.
 
 So the gate is now Trivy against the CycloneDX SBOM Maven emits: no API key, no repository secret,
 seconds instead of the hours an NVD feed download takes. It runs in `ci.yml` **on every push**,
 beside the Python and web audits that were always there — the reason the security scans were split
-into a nightly was that they are slow, and this one is not. A gate nobody looks at is how the old
-one stayed red for weeks.
+into a nightly was that they are slow, and this one is not.
 
 Dependency-Check stays wired in the nightly as a second opinion and runs only when `NVD_API_KEY` is
 set; when it is not, the job writes an explicit notice and a run-summary entry saying so.
