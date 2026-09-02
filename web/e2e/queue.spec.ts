@@ -1,5 +1,6 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { CLINICIAN, fixtureMrn, nextWeekday } from "./chart";
+import { FIXTURE_SURNAME } from "./global-setup";
 import { signIn } from "./sign-in";
 
 /**
@@ -12,6 +13,54 @@ import { signIn } from "./sign-in";
  */
 
 const ROOM = "GF-GEN";
+
+/**
+ * Everything on a corridor display is either the page's own fixed copy or a number.
+ *
+ * <p>An invariant rather than a denylist, and both display tests use it so that the populated and
+ * the quiet screen are each held to it. The denylist version of this check forbade the substring
+ * "patient", which the empty-state copy legitimately contains, so its verdict depended on whether
+ * anybody happened to be in today's queue.
+ */
+async function showsNothingButFixedCopyAndNumbers(page: Page, roomCode: string) {
+  const shown = (await page.getByRole("main").innerText()).trim();
+  const remainder = shown
+    .replaceAll(roomCode, "")
+    .replace(/now serving/i, "")
+    .replace(/next/i, "")
+    .replace(/no patients waiting\./i, "")
+    .replace(/[\u2014\u2013]/g, "")
+    .trim();
+  expect(remainder, `the display shows fixed copy and numbers, nothing else; it read: ${shown}`)
+    .toMatch(/^[\d\s]*$/);
+
+  // The identity-shaped strings as well, over the whole document rather than the rendered text: a
+  // value carried in an attribute, a data island or the streamed payload is not visible in the
+  // corridor but is still served to anybody who views source.
+  const html = (await page.content()).toLowerCase();
+  for (const forbidden of [
+    FIXTURE_SURNAME.toLowerCase(),
+    "mrn-",
+    "patientid",
+    "patientmrn",
+    "clinicianid",
+    "appointmentid",
+    "fullname",
+  ]) {
+    expect(html, `the display must not contain "${forbidden}"`).not.toContain(forbidden);
+  }
+  // A uuid anywhere is a leaked identifier whatever it identifies - with one exception that has
+  // to be taken out first, or the check is a false positive on every run. Next stamps a CSP nonce
+  // into the streamed payload and it is uuid-shaped, but it is fresh random bytes per request and
+  // identifies nobody. Removed by name rather than by weakening the pattern, so a real uuid
+  // sitting next to it is still caught.
+  const withoutNonces = html.replace(
+    /nonce[^a-z0-9]{0,8}[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g,
+    "nonce",
+  );
+  expect(withoutNonces, "the display must carry no identifiers")
+    .not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/);
+}
 
 test.describe("the OPD token queue", () => {
   test("checking in issues a number, and starting the consultation calls it", async ({ page }) => {
@@ -110,12 +159,13 @@ test.describe("the OPD token queue", () => {
     await expect(page.getByRole("button", { name: "Sign out" })).toHaveCount(0);
     await expect(page.getByRole("link")).toHaveCount(0);
 
-    // And nothing about anybody. Asserted on the whole rendered document rather than on a
-    // component's props, because what matters is what a person standing in the corridor can read.
-    const html = (await page.content()).toLowerCase();
-    for (const forbidden of ["nair", "mrn-", "patient", "appointment", "clinician", "waiting for"]) {
-      expect(html, `the display must not contain "${forbidden}"`).not.toContain(forbidden);
-    }
+    // And nothing about anybody.
+    await showsNothingButFixedCopyAndNumbers(page, ROOM);
+
+    // The populated corridor board - a real number being called, with nothing about the person it
+    // belongs to - is proven end to end in tests/api's QueueJourneyIT, which books today through
+    // the API and reads /public/queue directly. It cannot be proven here: this suite books a
+    // future weekday (see above) and the display shows today and nothing else, both deliberately.
   });
 
   test("a room with no queue shows a quiet screen rather than an error", async ({ page }) => {
@@ -126,5 +176,7 @@ test.describe("the OPD token queue", () => {
     // an error page on a quiet morning tells a waiting room the hospital's computers are broken.
     await expect(page.getByText("No patients waiting.")).toBeVisible();
     await expect(page.getByText(/error/i)).toHaveCount(0);
+    // Held to the same invariant, because this is the state a display spends the night in.
+    await showsNothingButFixedCopyAndNumbers(page, "ZZ-NOBODY");
   });
 });
