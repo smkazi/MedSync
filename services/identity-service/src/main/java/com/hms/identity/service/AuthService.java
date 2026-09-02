@@ -107,11 +107,27 @@ public class AuthService {
         tokens.revoke(rawRefreshToken);
     }
 
+    /**
+     * Changes the caller's own password.
+     *
+     * <p>A wrong current password is reported as a wrong current password, unlike everywhere else
+     * in this class. The uniform "invalid username or password" exists so login cannot be used to
+     * enumerate accounts, and {@code GlobalExceptionHandler} enforces it by flattening every
+     * {@link BadCredentialsException} to that sentence — which meant an authenticated user who
+     * mistyped their current password was told their username might be wrong. There is nothing to
+     * enumerate here: the account is already known, because the caller is signed in as it.
+     *
+     * <p>The attempt still counts toward the lockout. Someone holding a stolen access token can
+     * already act as the user; what a password gets them is persistence past the token's fifteen
+     * minutes, so guessing it is worth the same rate limit that guessing at the login form gets.
+     */
     @Transactional
     public void changeOwnPassword(UUID userId, String currentPassword, String newPassword) {
         User user = users.findById(userId).orElseThrow(() -> NotFoundException.of("User", userId));
         if (!passwordEncoder.matches(currentPassword, user.getPasswordHash())) {
-            throw new BadCredentialsException("Current password is incorrect");
+            loginAttempts.recordFailure(user.getId());
+            audit.record("PASSWORD_CHANGE_FAILED", "User", user.getId(), "wrong current password");
+            throw new BadRequestException("Current password is incorrect");
         }
         if (passwordEncoder.matches(newPassword, user.getPasswordHash())) {
             throw new BadRequestException("New password must differ from the current password");

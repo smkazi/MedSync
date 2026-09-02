@@ -10,9 +10,9 @@ haematology analyzer over its own wire protocol and released by a pathologist.
 
 > **Status:** the clinical core, the laboratory (including analyzer integration), the AI service
 > and the web UI are implemented and verified end to end against a real stack, and so are the
-> containerisation, TLS, security-testing and performance-testing layers. **545 tests pass** —
-> 299 Java unit and integration, 91 Python, 34 web unit, 72 black-box API and security abuse cases,
-> and 49 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
+> containerisation, TLS, security-testing and performance-testing layers. **575 tests pass** —
+> 304 Java unit and integration, 91 Python, 34 web unit, 87 black-box API and security abuse cases,
+> and 59 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
 > [Security](#security); what is left is in the [Roadmap](#roadmap).
 
 ---
@@ -146,7 +146,7 @@ Nine top-level menus, defined once as data in `src/lib/menu.ts`:
 | Menu | Screens |
 | --- | --- |
 | Dashboard | today's board |
-| Patients | register (search), register a patient |
+| Patients | register (search), register a patient, edit a record, the allergy list |
 | Scheduling | appointment book, clinician availability, lapsed appointments, clinician schedules |
 | Clinical | triage intake, encounter charting — vitals, the SOAP note, signing, amendments, ICD-10 coding — with AI assistance beside the note |
 | Laboratory | worklist, scan a tube, test catalogue, reference ranges, interpretation rules, analyzers, device messages |
@@ -185,6 +185,16 @@ blackout's own reason). The form submits the chosen instant unmodified. Nothing 
 builds a timestamp: a `datetime-local` input yields a wall-clock string with no zone, and the
 browser's zone is not necessarily the platform's, so a booking assembled from one is a timezone bug
 waiting for the first clinician who travels.
+
+**An allergy is a rule, not a remark, and the form treats it as one.** Its severity is read by the
+platform: a LIFE_THREATENING entry puts the red banner on the chart and will make a dispense refuse
+outright. So recording one asks a question first, the question says what the entry will *do*, and
+the fields go read-only while it is on screen so the answer cannot be to a different question.
+Removing an allergy is confirmed too, and for the sharper reason — it withdraws a refusal the
+platform was making on the patient's behalf. Editing demographics is a screen of its own rather than
+fields that become editable in place, because the chart is read at a bedside by people who are not
+correcting it. Archiving is a `DELETE` that is not a delete: `active` goes false and every row
+stays, because the record is a legal document and the encounters referencing it remain valid.
 
 **The charting screen reports the note's lifecycle rather than owning it.** `PUT
 /encounters/{id}/note` does three different things depending on state the service holds: it creates
@@ -305,6 +315,7 @@ The dev profile seeds one account per role, all flagged must-change-password:
 | `reception` | RECEPTIONIST |
 | `lab.tech` | LAB_TECH |
 | `dr.pathan` | PATHOLOGIST |
+| `new.starter` | RECEPTIONIST — **still on its initial password**, so it can do nothing but change it |
 
 The seed password comes from `HMS_SEED_PASSWORD` and defaults to `ChangeMe!Dev2026`.
 
@@ -320,12 +331,35 @@ Because an id is a primary key, nothing repairs a database that was already seed
 A dev database from before that change needs its schemas dropped — which is what `make dev-test-stack`
 does.
 
-> **A gap, stated rather than hidden.** The seeder sets `mustChangePassword` and `/auth/me` returns
-> it, so the UI shows a banner — but **nothing enforces it**. `POST /auth/change-password` exists and
-> works; no screen calls it and no gate requires it, so every sign-in goes straight through. Closing
-> it properly is two pieces of work: a change-password screen, and a login flow that refuses to
-> proceed while the flag is set. The second is a backend change, which is why it is named here
-> instead of being papered over with a UI-only redirect that an API client would walk past.
+**The initial-password gate.** An account that has not changed the password it was issued with gets
+a session that can do exactly one useful thing: change it. The mechanism is a token minted with
+**no roles**, and that choice is the point:
+
+- It is *structural*, not a list of blocked paths. Every endpoint outside `/auth/**` sits behind a
+  `@PreAuthorize` naming at least one role, so a role-less token is refused by the authorisation
+  rules that already exist — in all five services, and in any service written later, without any of
+  them knowing the flag exists. `/auth/me`, `/auth/logout` and `/auth/change-password` carry no role
+  requirement, which is how the account fixes itself and signs out.
+- Refusing the login outright would be simpler and useless: `POST /auth/change-password` needs a
+  token, so the only way out of the state would be an administrator.
+- It is enforced by the platform, not the UI. The middleware redirect to `/change-password` is a
+  courtesy so nobody stares at a screen where nothing works; an API client that ignores it gets 403
+  from everything. This replaced a banner that said the password should be changed and enforced
+  nothing at all, which an API client never saw in the first place.
+
+Two things fell out of building it. An **administrator creating an account** now sets the flag —
+before, only a password *reset* did, so a user created through `POST /admin/users` kept a password
+their creator knew, permanently. And **a wrong current password now says so**: login deliberately
+answers "invalid username or password" for everything so accounts cannot be enumerated, and
+`GlobalExceptionHandler` enforced that by flattening every `BadCredentialsException` to that
+sentence — including for an authenticated user who mistyped their own current password. There is
+nothing to enumerate there. It is a 400 naming the field, and it still counts toward the lockout,
+because a password buys persistence past a stolen token's fifteen minutes.
+
+Only one seeded fixture carries the flag. Flagging all six — which is what the seeder used to do —
+would leave a freshly seeded platform with no usable account at all, since the demo accounts are
+what every test and every walkthrough signs in as. The seeder realigns the flag on accounts it owns,
+so an existing dev database picks the change up without being dropped.
 
 ```bash
 TOKEN=$(curl -s -X POST localhost:8081/auth/login \
@@ -372,6 +406,18 @@ have to be taught to trust turns every quick check into a detour.
 ---
 
 ## Design decisions worth knowing
+
+**Everything here is open source or free to use.** PostgreSQL, Spring Boot, Next.js, FastAPI,
+scikit-learn, Flyway, Playwright, REST Assured, k6, OWASP ZAP, SpotBugs/FindSecBugs, Trivy,
+CycloneDX, pip-audit — no component of this platform requires a commercial licence or a paid
+subscription, and the one external service credential it can use (an NVD API key) is free and
+optional. That is a standing constraint on what gets built next, not an accident of what was to
+hand: where a capability needs an outside service, it goes behind a port with a logging or
+file-based default so the platform runs and is testable with no account anywhere, and any adapter
+written for a specific provider is one implementation of that port rather than the only path
+through the code. It is also why the ICD-10 subset is bundled rather than fetched, why the AI
+service answers correctly with no API key, and why analyzer integration speaks ASTM over a file
+rather than a vendor SDK.
 
 **Double-booking is prevented by the database, not by a check.** A read-then-insert loses to a
 concurrent booking, so `appointments` carries a GiST exclusion constraint over
@@ -472,12 +518,12 @@ make help          # everything else
 Or directly:
 
 ```bash
-mvn -q verify                                     # 299 Java unit and integration tests
+mvn -q verify                                     # 304 Java unit and integration tests
 cd services/ai-service && uv run pytest -q        # 91 Python tests
 cd web && npm run lint && npm run typecheck       # web static checks
 cd web && npm test                                # 34 web unit tests
-cd web && npx playwright test                     # 49 browser tests, no skips
-mvn -Pautomation -pl tests/api verify             # 72 API and security abuse cases
+cd web && npx playwright test                     # 59 browser tests, no skips
+mvn -Pautomation -pl tests/api verify             # 87 API and security abuse cases
 ```
 
 | Layer | What runs | Where |
@@ -688,12 +734,10 @@ and performance profiles. Dependency scanning covers Python (`pip-audit`) and th
 
 **Not built:**
 
-- **Screens for the remaining write endpoints.** Registration, booking and charting have them.
-  Patient edit and the allergy list, facility and administration CRUD, laboratory ordering and
-  result entry, and the change-password flow behind `mustChangePassword` do not: those endpoints
-  work and are tested, but only an API client can reach them. `mustChangePassword` in particular is
-  set on the seeded accounts and enforced nowhere yet — a banner says so, and a banner is not a
-  gate.
+- **Screens for the remaining write endpoints.** Registration, booking, charting, patient edit,
+  the allergy list and the change-password flow have them. Facility and administration CRUD, and
+  laboratory ordering and result entry, do not: those endpoints work and are tested, but only an
+  API client can reach them.
 - **Further clinical modules** — billing and claims, pharmacy and inventory, imaging/PACS.
 - **Analyzer transport** — the RS-232/TCP device gateway. The ported parsers are
   transport-agnostic, exactly as they are in the source project, and `POST /lab/device-messages`

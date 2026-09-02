@@ -50,6 +50,11 @@ public class UserAdminService {
         User user = new User(request.username().toLowerCase(Locale.ROOT), request.email().toLowerCase(Locale.ROOT),
                 passwordEncoder.encode(request.password()), request.fullName());
         user.replaceRoles(resolveRoles(request.roles()));
+        // The administrator who creates the account chose the password and therefore knows it, so
+        // the account owes a change before it can do anything - the same rule resetPassword below
+        // already applied. Without this the flag was only ever set by a reset, which meant a
+        // newly created user's password was permanently shared with whoever created them.
+        user.setMustChangePassword(true);
         users.save(user);
         audit.record("USER_CREATED", "User", user.getId(), "roles " + user.roleCodes());
         return UserMapper.toResponse(user);

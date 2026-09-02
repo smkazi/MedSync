@@ -1,15 +1,19 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
-import { api, ApiError } from "@/lib/api";
+import { api } from "@/lib/api";
+import { load } from "@/lib/load";
+import { currentUser, hasRole } from "@/lib/session";
 import type { Appointment, LabOrderSummary, Patient } from "@/lib/types";
 import {
   Badge,
   Card,
   Empty,
+  ErrorNote,
   Table,
   formatDateTime,
   statusTone,
 } from "@/components/ui";
+import { archivePatient, removeAllergy, restorePatient } from "./actions";
+import { AllergyForm } from "./AllergyForm";
 
 /**
  * The patient chart.
@@ -23,17 +27,22 @@ export default async function PatientChart({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ registered?: string }>;
+  searchParams: Promise<{ registered?: string; done?: string; problem?: string }>;
 }) {
   const { id } = await params;
-  const { registered } = await searchParams;
+  const { registered, done, problem } = await searchParams;
+  const user = await currentUser();
 
-  let patient: Patient;
-  try {
-    patient = await api<Patient>(`/patients/${id}`);
-  } catch (error) {
-    if (error instanceof ApiError && error.status === 404) notFound();
-    throw error;
+  // `load` rather than a bare `api` call, so a role without CLINICAL_READ and a mistyped id both
+  // render an explanation inside the app instead of the error boundary.
+  const { data: patient, error } = await load<Patient>(`/patients/${id}`);
+  if (!patient) {
+    return (
+      <div className="space-y-4">
+        <h1 className="text-xl font-semibold tracking-tight">Patient</h1>
+        <ErrorNote>{error ?? "This record could not be loaded."}</ErrorNote>
+      </div>
+    );
   }
 
   const [appointments, labOrders] = await Promise.all([
@@ -42,9 +51,24 @@ export default async function PatientChart({
   ]);
 
   const criticalAllergies = patient.allergies.filter((allergy) => allergy.critical);
+  const mayEdit = hasRole(user, "ADMIN", "RECEPTIONIST", "DOCTOR", "NURSE");
+  // Allergies are clinical content: the front desk registers a patient, it does not decide what
+  // the platform will refuse to dispense. That is CLINICAL_WRITE, and the service enforces it.
+  const mayRecordAllergies = hasRole(user, "ADMIN", "DOCTOR", "NURSE");
+  const mayArchive = hasRole(user, "ADMIN");
 
   return (
     <div className="space-y-6">
+      {problem && <ErrorNote>{problem}</ErrorNote>}
+      {done && (
+        <p
+          role="status"
+          className="rounded-md border border-good/40 bg-good-soft px-3 py-2 text-sm text-good"
+        >
+          {done}
+        </p>
+      )}
+
       {registered === "1" && (
         // `role="status"`, not `alert`: this is a confirmation. The allergy banner below is the
         // only thing on this page that interrupts a screen reader, and it stays that way.
@@ -88,9 +112,39 @@ export default async function PatientChart({
             {patient.bloodGroup ? ` · ${patient.bloodGroup}` : ""}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {!patient.active && <Badge tone="neutral">archived</Badge>}
           {patient.deceased && <Badge tone="neutral">deceased</Badge>}
+          {mayEdit && (
+            <Link
+              href={`/patients/${patient.id}/edit`}
+              className="rounded-md border border-line px-3 py-1.5 text-sm font-medium hover:bg-surface"
+            >
+              Edit
+            </Link>
+          )}
+          {mayArchive && patient.active && (
+            <form action={archivePatient}>
+              <input type="hidden" name="patientId" value={patient.id} />
+              <button
+                type="submit"
+                className="rounded-md border border-line px-3 py-1.5 text-sm font-medium hover:bg-surface"
+              >
+                Archive
+              </button>
+            </form>
+          )}
+          {mayArchive && !patient.active && (
+            <form action={restorePatient}>
+              <input type="hidden" name="patientId" value={patient.id} />
+              <button
+                type="submit"
+                className="rounded-md border border-line px-3 py-1.5 text-sm font-medium hover:bg-surface"
+              >
+                Restore
+              </button>
+            </form>
+          )}
         </div>
       </div>
 
@@ -123,12 +177,34 @@ export default async function PatientChart({
                       <div className="text-xs text-ink-muted">{allergy.reaction}</div>
                     )}
                   </div>
-                  <Badge tone={allergy.critical ? "critical" : "warn"}>
-                    {allergy.severity.replace("_", " ").toLowerCase()}
-                  </Badge>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <Badge tone={allergy.critical ? "critical" : "warn"}>
+                      {allergy.severity.replace("_", " ").toLowerCase()}
+                    </Badge>
+                    {mayRecordAllergies && (
+                      <form action={removeAllergy}>
+                        <input type="hidden" name="patientId" value={patient.id} />
+                        <input type="hidden" name="allergyId" value={allergy.id} />
+                        <input type="hidden" name="substance" value={allergy.substance} />
+                        <button
+                          type="submit"
+                          aria-label={`Remove ${allergy.substance}`}
+                          className="text-xs text-ink-muted hover:text-critical hover:underline"
+                        >
+                          Remove
+                        </button>
+                      </form>
+                    )}
+                  </div>
                 </li>
               ))}
             </ul>
+          )}
+
+          {mayRecordAllergies && (
+            <div className="mt-4 border-t border-line pt-4">
+              <AllergyForm patientId={patient.id} />
+            </div>
           )}
         </Card>
 

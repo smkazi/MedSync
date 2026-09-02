@@ -64,6 +64,24 @@ class AuthFlowIntegrationTest {
         return username;
     }
 
+    /** Creates a throwaway account that has not yet changed its initial password. */
+    private String createFlaggedUser() {
+        String username = "fresh-" + UUID.randomUUID().toString().substring(0, 8);
+        User user = new User(username, username + "@hms.local", passwordEncoder.encode(SEED_PASSWORD),
+                "Fresh Test User");
+        user.replaceRoles(new java.util.LinkedHashSet<>(roles.findByCodeIn(Set.of("DOCTOR"))));
+        user.setMustChangePassword(true);
+        users.save(user);
+        return username;
+    }
+
+    /** The decoded payload of a signed JWT, without verifying it — the signature is tested elsewhere. */
+    private JsonNode claimsOf(String accessToken) {
+        String payload = accessToken.split("\\.")[1];
+        return objectMapper.readTree(new String(
+                java.util.Base64.getUrlDecoder().decode(payload), java.nio.charset.StandardCharsets.UTF_8));
+    }
+
     private JsonNode login(String username, String password) throws Exception {
         MvcResult result = mockMvc.perform(post("/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -244,5 +262,86 @@ class AuthFlowIntegrationTest {
                         .content(objectMapper.writeValueAsString(
                                 Map.of("username", username, "password", SEED_PASSWORD))))
                 .andExpect(status().isLocked());
+    }
+
+    @Test
+    @DisplayName("an account on its initial password gets a session with no roles at all")
+    void initialPasswordMintsARolelessToken() throws Exception {
+        JsonNode session = login(createFlaggedUser(), SEED_PASSWORD);
+
+        // The account really does hold DOCTOR in the database, and /auth/me says so - the client
+        // needs to know who it is to render a change-password screen for the right person.
+        assertThat(session.get("user").get("roles").toString()).contains("DOCTOR");
+        assertThat(session.get("user").get("mustChangePassword").asBoolean()).isTrue();
+
+        // The token is where the gate is. No roles means every @PreAuthorize on the platform
+        // refuses it, in every service, without any of them knowing this flag exists.
+        JsonNode claims = claimsOf(session.get("accessToken").asString());
+        assertThat(claims.get("roles")).isEmpty();
+        assertThat(claims.get("pwd_change_required").asBoolean()).isTrue();
+    }
+
+    @Test
+    @DisplayName("refreshing an initial-password session does not upgrade it")
+    void refreshDoesNotEscapeTheGate() throws Exception {
+        JsonNode session = login(createFlaggedUser(), SEED_PASSWORD);
+
+        JsonNode refreshed = objectMapper.readTree(refreshCall(session.get("refreshToken").asString()));
+
+        assertThat(claimsOf(refreshed.get("accessToken").asString()).get("roles")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("changing the password clears the flag, and the next sign-in carries the roles")
+    void changingThePasswordOpensTheGate() throws Exception {
+        String username = createFlaggedUser();
+        JsonNode session = login(username, SEED_PASSWORD);
+        String newPassword = "Corrected!Password2026";
+
+        mockMvc.perform(post("/auth/change-password")
+                        .header("Authorization", "Bearer " + session.get("accessToken").asString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "currentPassword", SEED_PASSWORD, "newPassword", newPassword))))
+                .andExpect(status().isOk());
+
+        // The old password no longer works, and the new session is a full one.
+        mockMvc.perform(post("/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                Map.of("username", username, "password", SEED_PASSWORD))))
+                .andExpect(status().isUnauthorized());
+
+        JsonNode reopened = login(username, newPassword);
+        assertThat(reopened.get("user").get("mustChangePassword").asBoolean()).isFalse();
+        assertThat(claimsOf(reopened.get("accessToken").asString()).get("roles").toString())
+                .contains("DOCTOR");
+    }
+
+    @Test
+    @DisplayName("a wrong current password says so, rather than borrowing the login message")
+    void changePasswordNamesItsOwnFailure() throws Exception {
+        String username = createDisposableUser();
+        JsonNode session = login(username, SEED_PASSWORD);
+
+        // Login deliberately answers "invalid username or password" for everything, so accounts
+        // cannot be enumerated. Here the account is already known - the caller is signed in as it -
+        // and that sentence would only mislead. 400, not 401: the request is authenticated.
+        mockMvc.perform(post("/auth/change-password")
+                        .header("Authorization", "Bearer " + session.get("accessToken").asString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "currentPassword", "not-the-password", "newPassword", "Whatever!Password2026"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value("Current password is incorrect"));
+    }
+
+    @Test
+    @DisplayName("an ordinary account's token carries its roles, so the gate is not on by accident")
+    void anUnflaggedAccountKeepsItsRoles() throws Exception {
+        JsonNode claims = claimsOf(login(createDisposableUser(), SEED_PASSWORD).get("accessToken").asString());
+
+        assertThat(claims.get("roles").toString()).contains("NURSE");
+        assertThat(claims.get("pwd_change_required").asBoolean()).isFalse();
     }
 }

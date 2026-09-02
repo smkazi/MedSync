@@ -5,6 +5,7 @@ import com.hms.identity.domain.User;
 import com.hms.identity.repo.RoleRepository;
 import com.hms.identity.repo.UserRepository;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,7 +23,15 @@ import org.springframework.transaction.annotation.Transactional;
  * idempotent: existing usernames are left untouched.
  *
  * <p>The seed password is deliberately configuration-driven; deployments set
- * {@code HMS_SEED_PASSWORD} and every seeded account is flagged must-change-password.
+ * {@code HMS_SEED_PASSWORD}.
+ *
+ * <p><strong>One</strong> seeded account carries the must-change-password flag, and it is there to
+ * exercise the gate rather than to be worked in. Since a flagged account gets a role-less token and
+ * so can reach nothing but {@code /auth/change-password}, flagging all of them — which is what this
+ * used to do — would have left a freshly seeded platform with no usable account at all, and the
+ * demo fixtures are the accounts every test and every walkthrough signs in as. The accounts an
+ * administrator creates through {@code POST /users} are still flagged, which is the path that
+ * matters outside a demo.
  */
 @Component
 @ConditionalOnProperty(name = "hms.seed.enabled", havingValue = "true")
@@ -30,7 +39,12 @@ public class DevDataSeeder implements ApplicationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(DevDataSeeder.class);
 
-    private record SeedUser(String id, String username, String email, String fullName, Set<String> roles) {
+    private record SeedUser(String id, String username, String email, String fullName, Set<String> roles,
+                            boolean mustChangePassword) {
+
+        SeedUser(String id, String username, String email, String fullName, Set<String> roles) {
+            this(id, username, email, fullName, roles, false);
+        }
     }
 
     /**
@@ -65,7 +79,11 @@ public class DevDataSeeder implements ApplicationRunner {
             new SeedUser("33333333-0000-4000-8000-000000000005", "lab.tech", "labtech@hms.local",
                     "Ravi Menon", Set.of("LAB_TECH")),
             new SeedUser("33333333-0000-4000-8000-000000000006", "dr.pathan", "pathan@hms.local",
-                    "Dr Imran Pathan", Set.of("PATHOLOGIST")));
+                    "Dr Imran Pathan", Set.of("PATHOLOGIST")),
+            // The fixture for the initial-password gate: signs in, holds a real role in the
+            // database, and can still do nothing until the password is changed.
+            new SeedUser("33333333-0000-4000-8000-000000000007", "new.starter", "starter@hms.local",
+                    "Priya Nair", Set.of("RECEPTIONIST"), true));
 
     private final UserRepository users;
     private final RoleRepository roles;
@@ -85,8 +103,20 @@ public class DevDataSeeder implements ApplicationRunner {
     public void run(ApplicationArguments args) {
         String hash = passwordEncoder.encode(seedPassword);
         int created = 0;
+        int realigned = 0;
         for (SeedUser seed : SEED_USERS) {
-            if (users.existsByUsernameIgnoreCase(seed.username())) {
+            Optional<User> existing = users.findByUsernameIgnoreCase(seed.username());
+            if (existing.isPresent()) {
+                // Only the flag is realigned, and only for accounts this class defines. A dev
+                // database seeded before the gate existed has all six fixtures flagged, which now
+                // means six accounts that can sign in and do nothing — a platform that looks
+                // broken for a reason nobody would guess. Passwords, roles and ids are left alone:
+                // this repairs the seeder's own drift, it does not administer the database.
+                User user = existing.get();
+                if (user.isMustChangePassword() != seed.mustChangePassword()) {
+                    user.setMustChangePassword(seed.mustChangePassword());
+                    realigned++;
+                }
                 continue;
             }
             User user = new User(seed.username(), seed.email(), hash, seed.fullName());
@@ -97,12 +127,15 @@ public class DevDataSeeder implements ApplicationRunner {
                 continue;
             }
             user.replaceRoles(resolved);
-            user.setMustChangePassword(true);
+            user.setMustChangePassword(seed.mustChangePassword());
             users.save(user);
             created++;
         }
         if (created > 0) {
-            log.info("Seeded {} user(s); all must change their password at first sign-in", created);
+            log.info("Seeded {} user(s)", created);
+        }
+        if (realigned > 0) {
+            log.info("Realigned the must-change-password flag on {} existing seed account(s)", realigned);
         }
     }
 }

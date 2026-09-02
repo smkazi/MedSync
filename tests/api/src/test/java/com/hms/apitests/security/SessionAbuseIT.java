@@ -171,11 +171,17 @@ class SessionAbuseIT extends RequiresRunningStack {
 
         // No user id in the payload at all: the endpoint takes its subject from the token, which
         // is the only design where this cannot be abused.
+        //
+        // 400, not 401. The caller is authenticated and the account is already known - it is the
+        // one holding the token - so the uniform "invalid username or password" that guards login
+        // against account enumeration has nothing to protect here, and saying it would only
+        // mislead somebody who mistyped their own password.
         given().spec(Api.withToken(session.accessToken()))
                 .body(Map.of("currentPassword", "wrong-current-password",
                         "newPassword", "AnotherPassword!2026"))
                 .when().post("/auth/change-password")
-                .then().statusCode(401);
+                .then().statusCode(400)
+                .body("detail", org.hamcrest.Matchers.equalTo("Current password is incorrect"));
 
         // And the original password still works.
         Api.login(username, Api.SEED_PASSWORD);

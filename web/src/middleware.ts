@@ -29,6 +29,25 @@ function contentSecurityPolicy(nonce: string): string {
   ].join("; ");
 }
 
+/**
+ * Whether this session still owes a password change.
+ *
+ * <p>Read off the session cookie rather than by asking the platform, because the middleware runs
+ * on every request and a network call there would tax every navigation. It is not the security
+ * boundary either way: such an account holds a token minted with no roles, so the platform refuses
+ * it everywhere regardless of what this cookie says. Forging the cookie to say `false` buys a
+ * fully drawn UI in which every single request comes back 403.
+ */
+function owesAPasswordChange(request: NextRequest): boolean {
+  const raw = request.cookies.get("medsync_user")?.value;
+  if (!raw) return false;
+  try {
+    return (JSON.parse(raw) as { mustChangePassword?: boolean }).mustChangePassword === true;
+  } catch {
+    return false;
+  }
+}
+
 export function middleware(request: NextRequest): NextResponse {
   const { pathname } = request.nextUrl;
   const isPublic =
@@ -47,6 +66,17 @@ export function middleware(request: NextRequest): NextResponse {
   }
   if (hasSession && pathname === "/login") {
     return NextResponse.redirect(new URL("/", request.url));
+  }
+
+  // An account on its initial password is sent to the one screen it can use. Signing out has to
+  // stay reachable, or the only way off this screen would be to clear cookies by hand.
+  if (
+    hasSession
+    && !isPublic
+    && pathname !== "/change-password"
+    && owesAPasswordChange(request)
+  ) {
+    return NextResponse.redirect(new URL("/change-password", request.url));
   }
 
   const nonce = crypto.randomUUID();

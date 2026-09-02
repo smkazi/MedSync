@@ -43,6 +43,13 @@ public class TokenService {
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final int REFRESH_TOKEN_BYTES = 32;
 
+    /**
+     * Set on a token minted for an account that has not yet changed its initial password. It tells
+     * a client why its session can do nothing; the enforcement is the empty {@code roles} claim
+     * beside it, not this flag, so a client that ignores it gains nothing.
+     */
+    public static final String PASSWORD_CHANGE_REQUIRED_CLAIM = "pwd_change_required";
+
     private final RefreshTokenRepository refreshTokens;
     private final RefreshTokenRevoker revoker;
     private final KeyService keys;
@@ -140,7 +147,22 @@ public class TokenService {
         return refreshTokens.findByTokenHash(sha256Hex(rawRefreshToken));
     }
 
-    /** Builds and signs the access token. Claims here are what every other service authorises on. */
+    /**
+     * Builds and signs the access token. Claims here are what every other service authorises on.
+     *
+     * <p>An account still on its initial password gets a token with <strong>no roles</strong>. That
+     * is the whole gate, and it is deliberately structural rather than a list of blocked paths:
+     * every endpoint on this platform outside {@code /auth/**} is behind a {@code @PreAuthorize}
+     * naming at least one role, so a role-less token is refused everywhere by the authorisation
+     * rules that already exist — in all five services, including ones written later. Refusing the
+     * login outright would be simpler and useless: {@code POST /auth/change-password} needs a
+     * token, so the only way out of the state would be an administrator.
+     *
+     * <p>The token is still a real session: {@code /auth/me}, {@code /auth/logout} and
+     * {@code /auth/change-password} carry no role requirement, so the account can see who it is,
+     * fix its password and sign out. Changing it clears the flag and revokes every session, so the
+     * next sign-in mints a token with the roles.
+     */
     private String signAccessToken(User user) {
         // Stated rather than assumed: every caller passes a persisted user, and an id is null only
         // before the insert. Without this, an unpersisted user would produce a token with the
@@ -158,7 +180,8 @@ public class TokenService {
                 .claim("preferred_username", user.getUsername())
                 .claim("name", user.getFullName())
                 .claim("email", user.getEmail())
-                .claim("roles", List.copyOf(user.roleCodes()))
+                .claim("roles", user.isMustChangePassword() ? List.of() : List.copyOf(user.roleCodes()))
+                .claim(PASSWORD_CHANGE_REQUIRED_CLAIM, user.isMustChangePassword())
                 .build();
         JWSHeader header = new JWSHeader.Builder(JWSAlgorithm.RS256)
                 .keyID(keys.activeKey().getKeyID())

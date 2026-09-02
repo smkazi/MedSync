@@ -41,6 +41,11 @@ async function Nav() {
               {role}
             </Badge>
           ))}
+          {/* Beside Sign out rather than in a menu: it belongs to the account, not to a module,
+              and it is the one screen a locked-out account is sent to. */}
+          <Link href="/change-password" className="text-ink-muted hover:text-ink hover:underline">
+            Change password
+          </Link>
           <form action="/api/auth/logout" method="post">
             <button
               type="submit"
@@ -56,17 +61,15 @@ async function Nav() {
 }
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const user = await currentUser();
   return (
     <html lang="en">
       <body className="min-h-dvh antialiased">
         <Nav />
-        {user?.mustChangePassword && (
-          <div className="border-b border-warn/30 bg-warn-soft px-6 py-2 text-center text-sm text-warn">
-            This account is still using its initial password. Change it before recording clinical
-            data.
-          </div>
-        )}
+        {/* The initial-password banner used to live here. It is gone because it was the whole
+            of the enforcement and it enforced nothing: the account carried on working, and an API
+            client never saw the banner at all. Such an account is now issued a role-less token and
+            the middleware sends it to /change-password, so a banner on every other screen would
+            be advice about a screen the account cannot reach. */}
         <main className="mx-auto max-w-7xl px-6 py-6">{children}</main>
       </body>
     </html>

@@ -10,6 +10,10 @@ import { expect, type Page } from "@playwright/test";
 export const PASSWORD = process.env.SEED_PASSWORD ?? "ChangeMe!Dev2026";
 
 export async function signIn(page: Page, username: string): Promise<void> {
+  // Cleared first so a spec can switch users mid-test. Without this, /login redirects a session
+  // that already exists straight back to the dashboard, and the sign-in form never appears - which
+  // surfaces as a 30-second timeout on the username field rather than anything resembling a clue.
+  await page.context().clearCookies();
   await page.goto("/login");
   await page.getByLabel("Username").fill(username);
   await page.getByLabel("Password").fill(PASSWORD);

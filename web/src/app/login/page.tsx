@@ -9,9 +9,9 @@ import { ErrorNote } from "@/components/ui";
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string }>;
+  searchParams: Promise<{ error?: string; done?: string }>;
 }) {
-  const { error } = await searchParams;
+  const { error, done } = await searchParams;
 
   return (
     <div className="mx-auto mt-16 max-w-sm">
@@ -19,6 +19,15 @@ export default async function LoginPage({
         Med<span className="text-accent">Sync</span>
       </h1>
       <p className="mt-1 text-sm text-ink-muted">Sign in to continue.</p>
+
+      {done && (
+        <p
+          role="status"
+          className="mt-4 rounded-md border border-good/40 bg-good-soft px-3 py-2 text-sm text-good"
+        >
+          {done}
+        </p>
+      )}
 
       <form action="/api/auth/login" method="post" className="mt-6 space-y-4">
         {error && <ErrorNote>{error}</ErrorNote>}
