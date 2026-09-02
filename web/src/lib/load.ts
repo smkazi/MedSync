@@ -28,3 +28,40 @@ export async function load<T>(path: string): Promise<{ data: T | null; error: st
     return { data: null, error: caught instanceof Error ? caught.message : "Request failed" };
   }
 }
+
+/**
+ * Every page of a paged collection, concatenated.
+ *
+ * <p>For pick-lists, and only for pick-lists. A `<select>` of clinicians or logins has to contain
+ * the row somebody is looking for or the screen is simply wrong — there is no "next page" inside a
+ * dropdown — and the platform caps a page at 100 rows whatever `size` a caller asks for
+ * (`Math.min(size, 100)` in the controllers). So `?size=200` does not mean what it looks like it
+ * means: it returns the first hundred and drops the rest silently.
+ *
+ * <p>That is not theoretical. A browser test creating one account per run tipped a development
+ * database past a hundred logins, and the staff screen then could not link a staff record to any
+ * account whose username sorted after the hundredth. The screen had been green for weeks and was
+ * wrong for any hospital with more than a hundred staff.
+ *
+ * <p>Bounded at {@link MAX_PICKLIST_PAGES} pages rather than trusting the server's own count: a
+ * dropdown with two thousand options is a broken screen anyway, and this way a paging bug cannot
+ * turn one render into an unbounded loop. Requests are sequential because they are cheap and
+ * because the total is not known until the first answer arrives.
+ */
+const MAX_PICKLIST_PAGES = 20;
+
+export async function loadAll<T>(
+  path: string,
+): Promise<{ data: T[] | null; error: string | null }> {
+  const joiner = path.includes("?") ? "&" : "?";
+  const rows: T[] = [];
+  for (let page = 0; page < MAX_PICKLIST_PAGES; page++) {
+    const answer = await load<{ content: T[]; totalPages: number }>(
+      `${path}${joiner}page=${page}&size=100`,
+    );
+    if (answer.error) return { data: null, error: answer.error };
+    rows.push(...(answer.data?.content ?? []));
+    if (page + 1 >= (answer.data?.totalPages ?? 1)) break;
+  }
+  return { data: rows, error: null };
+}

@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { openBookableDay } from "./chart";
 import { FIXTURE_SURNAME } from "./global-setup";
 import { signIn } from "./sign-in";
 
@@ -12,16 +13,6 @@ import { signIn } from "./sign-in";
  */
 
 const CLINICIAN = "Dr Anika Rao";
-
-/** The seeded weekly pattern is Mon-Fri 09:00-13:00, so a booking test needs a weekday. */
-function nextWeekday(offsetDays = 7): string {
-  const day = new Date();
-  day.setUTCDate(day.getUTCDate() + offsetDays);
-  while (day.getUTCDay() === 0 || day.getUTCDay() === 6) {
-    day.setUTCDate(day.getUTCDate() + 1);
-  }
-  return day.toISOString().slice(0, 10);
-}
 
 async function openSlots(page: import("@playwright/test").Page, date: string, mrn: string) {
   await page.goto(`/appointments/new?mrn=${encodeURIComponent(mrn)}`);
@@ -48,11 +39,17 @@ async function openSlots(page: import("@playwright/test").Page, date: string, mr
  */
 async function bookFirstFreeSlot(
   page: import("@playwright/test").Page,
-  date: string,
+  offsetDays: number,
   mrn: string,
   options: { room?: string; reason?: string } = {},
-): Promise<{ time: string; instant: string }> {
-  await openSlots(page, date, mrn);
+): Promise<{ date: string; time: string; instant: string }> {
+  // Walked forward from the offset rather than pinned to it, and the day it settles on is returned
+  // so the caller can filter the book by it. One clinician has sixteen slots a day, each of these
+  // tests books one on its own fixed day every run, and nothing cleans up — so after enough runs
+  // against the same development database the day is full and the suite fails on a fixture rather
+  // than on booking. It was green for weeks and then four of these went red at once, which is the
+  // worst way for a test to be wrong. Same fix, and same reasoning, as `openBookableDay`.
+  const date = await openBookableDay(page, mrn, offsetDays);
   const radio = page.locator('input[name="startsAt"]:not([disabled])').first();
   await expect(radio).toBeVisible();
   const instant = await radio.inputValue();
@@ -66,7 +63,7 @@ async function bookFirstFreeSlot(
   if (options.reason) await page.getByLabel("Reason for attendance").fill(options.reason);
   await page.getByRole("button", { name: "Book appointment" }).click();
   await expect(page.getByRole("status")).toContainText(/Booked/);
-  return { time, instant };
+  return { date, time, instant };
 }
 
 /**
@@ -95,9 +92,8 @@ test.describe("booking an appointment", () => {
   test("a slot the platform offered can be booked, and it holds the room", async ({ page }) => {
     await signIn(page, "reception");
     const mrn = await fixtureMrn(page);
-    const date = nextWeekday(8);
     // The slot's value is the platform's own instant. Nothing here builds a timestamp.
-    const { time } = await bookFirstFreeSlot(page, date, mrn, {
+    const { date, time } = await bookFirstFreeSlot(page, 8, mrn, {
       room: "GF-GEN",
       reason: "Routine review",
     });
@@ -115,8 +111,7 @@ test.describe("booking an appointment", () => {
   }) => {
     await signIn(page, "reception");
     const mrn = await fixtureMrn(page);
-    const date = nextWeekday(15);
-    const { instant } = await bookFirstFreeSlot(page, date, mrn, { room: "GF-MAS" });
+    const { date, instant } = await bookFirstFreeSlot(page, 15, mrn, { room: "GF-MAS" });
 
     // Same instant, offered again: the grid must now show it as taken with the reason.
     await openSlots(page, date, mrn);
@@ -144,7 +139,9 @@ test.describe("booking an appointment", () => {
 
   test("an unknown MRN is a field error, not a booking against nothing", async ({ page }) => {
     await signIn(page, "reception");
-    await openSlots(page, nextWeekday(22), "MRN-0000-000000");
+    // Walked forward like the booking helper, for the same reason: this test needs one enabled
+    // slot to select, and a day that earlier runs filled has none.
+    await openBookableDay(page, "MRN-0000-000000", 22);
 
     await page.locator('input[name="startsAt"]:not([disabled])').first().check();
 
@@ -160,8 +157,7 @@ test.describe("moving an appointment through its lifecycle", () => {
   test("check in, start, complete — each step offered only when it is legal", async ({ page }) => {
     await signIn(page, "admin");
     const mrn = await fixtureMrn(page);
-    const date = nextWeekday(29);
-    const { time } = await bookFirstFreeSlot(page, date, mrn);
+    const { date, time } = await bookFirstFreeSlot(page, 29, mrn);
     await page.goto(`/appointments?from=${date}&to=${date}`);
 
     // BOOKED offers check-in and no-show, and not start.
@@ -191,8 +187,7 @@ test.describe("moving an appointment through its lifecycle", () => {
   test("a cancellation records its reason and frees the slot", async ({ page }) => {
     await signIn(page, "reception");
     const mrn = await fixtureMrn(page);
-    const date = nextWeekday(36);
-    const { time, instant } = await bookFirstFreeSlot(page, date, mrn, { room: "GF-GEN" });
+    const { date, time, instant } = await bookFirstFreeSlot(page, 36, mrn, { room: "GF-GEN" });
 
     await page.goto(`/appointments?from=${date}&to=${date}`);
     const row = bookedRow(page, mrn, time);
@@ -209,8 +204,7 @@ test.describe("moving an appointment through its lifecycle", () => {
   test("a receptionist is not offered the clinical steps", async ({ page }) => {
     await signIn(page, "reception");
     const mrn = await fixtureMrn(page);
-    const date = nextWeekday(43);
-    const { time } = await bookFirstFreeSlot(page, date, mrn);
+    const { date, time } = await bookFirstFreeSlot(page, 43, mrn);
     await page.goto(`/appointments?from=${date}&to=${date}`);
     await bookedRow(page, mrn, time).getByRole("button", { name: "Check in" }).click();
 

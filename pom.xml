@@ -26,6 +26,7 @@
     <module>services/laboratory-service</module>
     <module>services/scheduling-service</module>
     <module>services/notification-service</module>
+    <module>services/admissions-service</module>
   </modules>
 
   <properties>

@@ -53,6 +53,18 @@ public class RouteConfig {
                 .route("notification", r -> r
                         .path("/notifications/**")
                         .uri(services.notification()))
+                // Casualty and in-patient care, including the bed map.
+                //
+                // Two prefixes and no more. The bed map lives at `/casualty/beds` and
+                // `/admissions/beds` rather than the better-reading `/beds/casualty`, because
+                // `/beds/**` already belongs to patient-service — which owns beds as master data —
+                // and the gateway takes the first predicate that matches. Claiming a slice of
+                // another service's prefix answered 405 from the wrong service, and ordering the
+                // routes to fix it would have left an invisible dependency for whoever next adds
+                // a bed sub-resource over there.
+                .route("admissions", r -> r
+                        .path("/casualty/**", "/admissions/**")
+                        .uri(services.admissions()))
                 // Clinical decision support: summarisation, triage, no-show risk, coding.
                 .route("ai", r -> r
                         .path("/ai/**")

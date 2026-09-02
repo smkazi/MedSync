@@ -568,3 +568,87 @@ export type PublicQueueBoard = {
   nowServing: number | null;
   upcoming: number[];
 };
+
+// ---- casualty and in-patient admissions -------------------------------------
+
+export type AttendanceStatus =
+  | "WAITING"
+  | "IN_BED"
+  | "ADMITTED"
+  | "DISCHARGED"
+  | "LEFT_WITHOUT_BEING_SEEN";
+
+/**
+ * A casualty attendance.
+ *
+ * `triageAcuity` is 1 (immediate) to 5 (non-urgent), and the board is ordered by it before
+ * arrival time — a queue served in the order people arrived kills the person who arrived last and
+ * is the sickest. `waitingMinutes` is computed by the service on every read rather than stored,
+ * so it is right whenever the board is looked at.
+ */
+export type CasualtyAttendance = {
+  id: string;
+  patientId: string;
+  patientMrn: string;
+  arrivedAt: string;
+  triageAcuity: number;
+  presentingComplaint: string;
+  bedId: string | null;
+  bedCode: string | null;
+  roomCode: string | null;
+  status: AttendanceStatus;
+  admissionId: string | null;
+  closedAt: string | null;
+  triagedBy: string;
+  waitingMinutes: number;
+};
+
+export type AdmissionSource = "CASUALTY" | "ELECTIVE" | "TRANSFER" | "MATERNITY";
+
+export type BedTransfer = {
+  id: string;
+  fromBedCode: string;
+  toBedCode: string;
+  movedAt: string;
+  movedBy: string;
+  reason: string;
+};
+
+export type Admission = {
+  id: string;
+  patientId: string;
+  patientMrn: string;
+  attendanceId: string | null;
+  bedId: string;
+  bedCode: string;
+  roomCode: string;
+  admittingClinicianId: string;
+  source: AdmissionSource;
+  admittedAt: string;
+  expectedDischarge: string | null;
+  dischargedAt: string | null;
+  dischargeSummary: string | null;
+  status: "ADMITTED" | "DISCHARGED";
+  lengthOfStayDays: number;
+  transfers: BedTransfer[];
+};
+
+/**
+ * A bed and whether anybody is in it.
+ *
+ * Composed by admissions-service from the facility directory and its own occupancy table:
+ * patient-service deliberately keeps no occupancy flag on a bed, because a flag written by one
+ * service and maintained by another goes stale.
+ */
+export type BedState = {
+  bedId: string;
+  bedCode: string;
+  label: string;
+  roomCode: string;
+  roomName: string;
+  floorName: string;
+  occupied: boolean;
+  occupantType: "CASUALTY" | "ADMISSION" | null;
+  occupantId: string | null;
+  occupiedSince: string | null;
+};

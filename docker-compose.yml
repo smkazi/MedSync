@@ -168,6 +168,23 @@ services:
     expose:
       - "8085"
 
+  admissions-service:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: Dockerfile.java
+      args:
+        SERVICE: admissions-service
+    environment:
+      <<: *platform-env
+      SERVER_PORT: 8086
+      HMS_ADMISSIONS_PORT: 8086
+      # The facility directory. The client fails closed, so an unreachable patient-service
+      # refuses an admission rather than allocating a bed nobody has confirmed exists.
+      HMS_PATIENT_URI: http://patient-service:8082
+    expose:
+      - "8086"
+
   ai-service:
     build:
       context: ./services/ai-service
@@ -195,6 +212,7 @@ services:
       HMS_SCHEDULING_URI: http://scheduling-service:8083
       HMS_LABORATORY_URI: http://laboratory-service:8084
       HMS_NOTIFICATION_URI: http://notification-service:8085
+      HMS_ADMISSIONS_URI: http://admissions-service:8086
       HMS_AI_URI: http://ai-service:8000
       HMS_CORS_ALLOWED_ORIGINS: http://localhost:3000
     ports:
@@ -209,6 +227,8 @@ services:
       laboratory-service:
         condition: service_started
       notification-service:
+        condition: service_started
+      admissions-service:
         condition: service_started
     restart: unless-stopped
 

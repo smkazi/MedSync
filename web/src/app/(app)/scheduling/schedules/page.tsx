@@ -1,5 +1,5 @@
-import { load } from "@/lib/load";
-import type { Page, Staff } from "@/lib/types";
+import { load, loadAll } from "@/lib/load";
+import type { Staff } from "@/lib/types";
 import { Card, Empty, ErrorNote, Table } from "@/components/ui";
 
 type Schedule = {
@@ -28,8 +28,8 @@ export default async function SchedulesPage({
 }) {
   const { clinicianId = "" } = await searchParams;
 
-  const { data: staff } = await load<Page<Staff>>("/staff?size=100");
-  const clinicians = (staff?.content ?? []).filter((member) => member.userId && member.active);
+  const { data: staff } = await loadAll<Staff>("/staff");
+  const clinicians = (staff ?? []).filter((member) => member.userId && member.active);
 
   let schedules: Schedule[] | null = null;
   let error: string | null = null;

@@ -1,4 +1,4 @@
-import { load } from "@/lib/load";
+import { load, loadAll } from "@/lib/load";
 import { currentUser, hasRole } from "@/lib/session";
 import type { AdminUser, Department, Page, Staff } from "@/lib/types";
 import { Badge, Card, Empty, ErrorNote, Table } from "@/components/ui";
@@ -22,7 +22,10 @@ export default async function StaffPage({
     load<Page<Staff>>(`/staff?${params}`),
     load<Department[]>("/departments"),
     // Only an administrator may read accounts, and only they can link one, so nobody else asks.
-    mayEdit ? load<Page<AdminUser>>("/admin/users?size=200") : Promise.resolve({ data: null, error: null }),
+    // Every page, not the first: the platform caps a page at 100 rows however large a `size`
+    // asks for, and a hospital with more than a hundred logins would find the account it wanted
+    // simply missing from this dropdown.
+    mayEdit ? loadAll<AdminUser>("/admin/users") : Promise.resolve({ data: null, error: null }),
   ]);
 
   const departmentOptions = (departments ?? []).map((entry) => ({
@@ -42,7 +45,7 @@ export default async function StaffPage({
     const taken = new Set(
       (staff?.content ?? []).map((member) => member.userId).filter((id): id is string => id !== null),
     );
-    return (accounts?.content ?? [])
+    return (accounts ?? [])
       .filter((account) => account.id === current || !taken.has(account.id))
       .map((account) => ({ value: account.id, label: `${account.fullName} (${account.username})` }));
   };

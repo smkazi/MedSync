@@ -1,5 +1,5 @@
-import { load } from "@/lib/load";
-import type { Page, Slot, Staff } from "@/lib/types";
+import { load, loadAll } from "@/lib/load";
+import type { Slot, Staff } from "@/lib/types";
 import { Badge, Card, Empty, ErrorNote, formatTime } from "@/components/ui";
 
 type Availability = { clinicianId: string; date: string; slots: Slot[] };
@@ -20,9 +20,9 @@ export default async function AvailabilityPage({
   const today = new Date().toISOString().slice(0, 10);
   const chosenDate = date || today;
 
-  const { data: staff } = await load<Page<Staff>>("/staff?size=100");
+  const { data: staff } = await loadAll<Staff>("/staff");
   // Only staff with a login can be a clinician on an appointment.
-  const clinicians = (staff?.content ?? []).filter((member) => member.userId && member.active);
+  const clinicians = (staff ?? []).filter((member) => member.userId && member.active);
 
   let availability: Availability | null = null;
   let error: string | null = null;

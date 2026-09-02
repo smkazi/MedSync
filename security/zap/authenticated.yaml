@@ -152,6 +152,31 @@ jobs:
       # numbers and an appointment id - less than the appointment book they can already read.
       - url: "${ZAP_TARGET}/queue/GF-GEN"
         method: GET
+      # Casualty and the in-patient census. A doctor holds BED_MANAGE, so these are 200 and are
+      # here to put the surface in front of the active scan: the board carries a presenting
+      # complaint and an acuity, which is the most sensitive free text the platform serves in a
+      # list, and the injection rules should be aimed at it. Who is refused is asserted in
+      # tests/api instead - ZAP logs in as one user and cannot express "403 as reception".
+      - url: "${ZAP_TARGET}/casualty"
+        method: GET
+      - url: "${ZAP_TARGET}/casualty?status=WAITING"
+        method: GET
+      - url: "${ZAP_TARGET}/casualty/beds"
+        method: GET
+      - url: "${ZAP_TARGET}/admissions"
+        method: GET
+      - url: "${ZAP_TARGET}/admissions/beds"
+        method: GET
+      # A triage re-grade and a bed placement against ids that do not exist: 404, and the point is
+      # that the refusal comes from the lookup rather than from the body. A 200 or a 500 here
+      # would mean an unvalidated path parameter reached the allocator.
+      - url: "${ZAP_TARGET}/casualty/00000000-0000-4000-8000-000000000000/triage"
+        method: PATCH
+        data: '{"triageAcuity":1}'
+        responseCode: 404
+      - url: "${ZAP_TARGET}/admissions/00000000-0000-4000-8000-000000000000"
+        method: GET
+        responseCode: 404
 
   - type: spider
     parameters:

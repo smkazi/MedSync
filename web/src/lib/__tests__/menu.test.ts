@@ -66,7 +66,6 @@ const EXPECTED_TOP_LEVEL: Record<RoleName, string[]> = {
     "Dashboard",
     "Patients",
     "Scheduling",
-    "Clinical",
     "Laboratory",
     "Facility",
     "Pharmacy",
@@ -76,7 +75,6 @@ const EXPECTED_TOP_LEVEL: Record<RoleName, string[]> = {
     "Dashboard",
     "Patients",
     "Scheduling",
-    "Clinical",
     "Laboratory",
     "Facility",
     "Pharmacy",
@@ -105,11 +103,12 @@ describe("menusFor", () => {
   });
 
   it("filters items rather than disabling them, so an unreachable route is never serialised", () => {
-    // A lab technician has no triage rights. The Clinical menu survives on its not-built items,
-    // but the item they cannot act on must be absent - not present and greyed out, which would
-    // disclose what exists and that somebody else can reach it.
-    const clinical = menusFor(userWith("LAB_TECH")).find((menu) => menu.label === "Clinical");
-    expect(clinical?.items?.map((item) => item.label)).not.toContain("Triage");
+    // A receptionist triages but must not read the casualty board or the in-patient census - both
+    // are a chart in table form. The Clinical menu survives on Triage, and the two items they
+    // cannot act on are absent, not present and greyed out, which would disclose what exists and
+    // that somebody else can reach it.
+    const clinical = menusFor(userWith("RECEPTIONIST")).find((menu) => menu.label === "Clinical");
+    expect(clinical?.items?.map((item) => item.label)).toEqual(["Triage"]);
 
     const patients = menusFor(userWith("LAB_TECH")).find((menu) => menu.label === "Patients");
     expect(patients?.items?.map((item) => item.label)).toEqual(["Patient register"]);
@@ -144,6 +143,10 @@ describe("reachableHrefs", () => {
     expect(reachableHrefs(userWith("RECEPTIONIST"))).not.toContain("/admin/users");
     expect(reachableHrefs(userWith("RECEPTIONIST"))).not.toContain("/laboratory");
     expect(reachableHrefs(userWith("LAB_TECH"))).not.toContain("/triage");
+    // The casualty board and the census are clinical reading, and the bench and the front desk
+    // are both outside it.
+    expect(reachableHrefs(userWith("LAB_TECH"))).not.toContain("/casualty");
+    expect(reachableHrefs(userWith("RECEPTIONIST"))).not.toContain("/admissions");
   });
 
   it("is empty with no session", () => {

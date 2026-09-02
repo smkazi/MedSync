@@ -10,9 +10,9 @@ haematology analyzer over its own wire protocol and released by a pathologist.
 
 > **Status:** the clinical core, the laboratory (including analyzer integration), the AI service
 > and the web UI are implemented and verified end to end against a real stack, and so are the
-> containerisation, TLS, security-testing and performance-testing layers. **768 tests pass** —
-> 435 Java unit and integration, 91 Python, 40 web unit, 121 black-box API and security abuse cases,
-> and 81 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
+> containerisation, TLS, security-testing and performance-testing layers. **812 tests pass** —
+> 453 Java unit and integration, 91 Python, 40 web unit, 141 black-box API and security abuse cases,
+> and 87 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
 > [Security](#security); what is left is in the [Roadmap](#roadmap).
 
 ---
@@ -45,15 +45,21 @@ haematology analyzer over its own wire protocol and released by a pathologist.
                           └──┬──────┬──────┬──────┬──────┬───┘
              ┌───────────────┘      │      │      │      │
              ▼                      ▼      ▼      ▼      ▼
-      identity :8081   patient :8082  scheduling :8083  laboratory :8084  notification :8085  ai :8000
-      users · roles    patients       appointments      lab orders        delivery log        FastAPI
-      RS256 + JWKS     staff          encounters        ASTM + K-DPS      SMTP · HTTP SMS     4 capabilities
-      audit trail      departments    notes · vitals    results           no PHI outbound     (Claude + models)
-             │                 │            │                │                  │                 │
-             └──── Kafka: hms.patient · hms.appointment · hms.lab · hms.audit ──────────────────────┘
+      identity :8081     patient :8082      scheduling :8083    laboratory :8084
+      users · roles      patients           appointments        lab orders
+      RS256 + JWKS       staff              encounters          ASTM + K-DPS
+      audit trail        departments        notes · vitals      results
+                         rooms · beds       NEWS2 · OPD queue
+
+      notification :8085   admissions :8086    ai :8000
+      delivery log         casualty board      FastAPI
+      SMTP · HTTP SMS      bed occupancy       4 capabilities
+      no PHI outbound      transfers           (Claude + models)
+             │                 │            │
+             └── Kafka: hms.patient · hms.appointment · hms.lab · hms.admission · hms.audit ──┘
                                      │
                     PostgreSQL 16 — one schema per service
-         identity · patient · scheduling · laboratory · notification
+    identity · patient · scheduling · laboratory · notification · admissions
 ```
 
 **Authentication.** `identity-service` is the only holder of passwords and the only issuer of
@@ -79,7 +85,7 @@ order) are plain columns, not foreign keys, so a service survives another's outa
 .
 ├── pom.xml                      Maven aggregator; -Pquality / -Psecurity / -Pmutation / -Pautomation
 ├── Makefile                     every task, one place. `make help`
-├── docker-compose.yml           postgres, kafka (KRaft), six services, ai-service, web
+├── docker-compose.yml           postgres, kafka (KRaft), eight services, ai-service, web
 ├── Dockerfile.java              shared multi-stage build, ARG SERVICE, non-root
 ├── config/                      SpotBugs exclusions and Dependency-Check suppressions, each with a reason
 ├── platform/hms-common/         security, errors, events, audit, crypto, pagination
@@ -90,6 +96,7 @@ order) are plain columns, not foreign keys, so a service survives another's outa
 │   ├── scheduling-service/      appointments, encounters, notes, vitals, diagnoses
 │   ├── laboratory-service/      orders, results, reference ranges, ASTM + K-DPS parsers
 │   ├── notification-service/    channels, delivery log, message templates
+│   ├── admissions-service/      casualty board, bed occupancy, admissions, transfers
 │   └── ai-service/              FastAPI: summarisation, no-show risk, triage, ICD-10
 ├── web/                         Next.js 16 app, Playwright suite in e2e/
 ├── tests/
@@ -246,18 +253,73 @@ a chart, and the access appears in the audit trail in the same place as every ot
 default, and that is a working configuration: with no service account the module composes and
 records every message and sends none, saying so in the row.
 
+### `admissions-service` — schema `admissions`
+Casualty and in-patient care: the emergency board, bed occupancy, admissions, ward transfers and
+discharge.
+
+**One service, because they contend for the same beds.** An appointment is a point on a calendar
+and an admission is a stay lasting days, driven by acuity rather than by a clock — they share no
+query shape, which is why this is not folded into scheduling. But casualty and the wards do share
+something that matters more: the beds. Splitting them would leave two services writing occupancy
+and nothing stopping one bed appearing in both.
+
+**The board is ordered `triage_acuity ASC, arrived_at ASC`, and the ordering lives in the query.**
+Sickest first, ties to whoever has waited longest. A casualty queue served in arrival order kills
+the person who arrived last and is the sickest, so the sort is not a caller's choice: there is no
+sort parameter on the endpoint and the screen has no sortable column header, because a column
+somebody could sort by arrival at three in the morning would defeat the point of triage. What the
+colour on the board means is the wait *against that level's own target* — two hours is fine for a
+level 5 and a catastrophe for a level 2 — so a board coloured by minutes alone would shout about
+the wrong patients.
+
+**One bed, one patient, enforced by the database.** Both paths write through a single
+`bed_occupancy` table carrying one partial unique index:
+
+```sql
+CREATE UNIQUE INDEX uq_bed_occupied ON bed_occupancy (bed_id) WHERE released_at IS NULL;
+```
+
+Not a check-then-act in application code, because two nurses on two terminals reach that check at
+the same instant on a busy night and only the database sees both. The 409 says what to do next —
+`Bed CAS-1 in GF-CAS has just been taken. Pick another from the free list.` — rather than reporting
+a constraint name. A transfer releases and claims inside one transaction, so there is no moment in
+which the patient reads as being in two beds and none in which they are in neither; if the
+destination has just been taken the whole move rolls back and the patient stays where they were.
+
+**A move is a row, not an overwrite.** `bed_transfers` keeps every move with its reason, because
+"how many times was this patient moved overnight" is an infection-control question that an
+overwritten bed code cannot answer.
+
+**`LEFT_WITHOUT_BEING_SEEN` is a real outcome.** It is a standard emergency-department quality
+metric — a department where it rises is a department people are giving up on — and recording it as
+a discharge would delete the only signal that says so.
+
+**It owns no beds.** The bed rows belong to patient-service's facility directory and are fetched
+over HTTP with the caller's token, **failing closed**: if the directory cannot be reached the
+allocation is refused, because allocating a bed nobody has verified is worse than refusing one.
+patient-service deliberately keeps no occupancy flag on a bed — a flag written by one service and
+maintained by another is a flag that goes stale, and a stale bed map is how two patients are sent
+to one bed.
+
+The board and the census are gated on `BED_MANAGE` (admin, doctor, nurse) rather than the platform's
+wider clinical read. A list of who is in casualty, with what complaint, and how sick somebody judged
+them is a chart in table form; the front desk books and registers, and the laboratory has less
+reason still.
+
 ### `web` — Next.js 16, React 19
 The clinical interface. Server components call the gateway; **the browser never receives an access
 token** — the session lives in httpOnly cookies and every platform call is made server-side.
 
-Nine top-level menus, defined once as data in `src/lib/menu.ts`:
+Nine top-level menus, defined once as data in `src/lib/menu.ts`. What a role sees is a subset: the
+laboratory accounts get no Clinical menu at all, because every one of its items is gated away from
+them and an empty dropdown is worse than an absent one.
 
 | Menu | Screens |
 | --- | --- |
 | Dashboard | today's board |
 | Patients | register (search), register a patient, edit a record, the allergy list |
 | Scheduling | appointment book, clinician availability, lapsed appointments, clinician schedules, the OPD token queue, and a link to the corridor display |
-| Clinical | triage intake, encounter charting — vitals with a NEWS2 score, the SOAP note, signing, amendments, ICD-10 coding, laboratory ordering — with AI assistance beside the note |
+| Clinical | triage intake, encounter charting — vitals with a NEWS2 score, the SOAP note, signing, amendments, ICD-10 coding, laboratory ordering — with AI assistance beside the note; the casualty board and the admissions census with its bed map, both gated to clinicians rather than to everybody who may look a patient up |
 | Laboratory | worklist, an order's report with collection, result entry and release, specimen labels, scan a tube, test catalogue, reference ranges and interpretation rules — both retunable by a pathologist — analyzers, device messages |
 | Facility | room directory, rooms, floors, room types, beds, departments — all editable by an administrator |
 | Messaging | delivery log with the send form, message wording — readable by anybody who may send, editable by an administrator |
@@ -419,7 +481,7 @@ Flyway creates and migrates every schema on service start.
 
 ```bash
 mvn -q package -DskipTests
-scripts/local.sh start          # identity, patient, scheduling, laboratory, gateway
+scripts/local.sh start          # identity, patient, scheduling, laboratory, notification, admissions, gateway
 scripts/local.sh status
 scripts/local.sh logs identity-service
 scripts/local.sh stop
@@ -663,12 +725,12 @@ make help          # everything else
 Or directly:
 
 ```bash
-mvn -q verify                                     # 435 Java unit and integration tests
+mvn -q verify                                     # 453 Java unit and integration tests
 cd services/ai-service && uv run pytest -q        # 91 Python tests
 cd web && npm run lint && npm run typecheck       # web static checks
 cd web && npm test                                # 40 web unit tests
-cd web && npx playwright test                     # 81 browser tests, no skips
-mvn -Pautomation -pl tests/api verify             # 121 API and security abuse cases
+cd web && npx playwright test                     # 87 browser tests, no skips
+mvn -Pautomation -pl tests/api verify             # 141 API and security abuse cases
 ```
 
 | Layer | What runs | Where |
@@ -825,6 +887,22 @@ set; when it is not, the job writes an explicit notice and a run-summary entry s
 
 Worth writing down, because it is the argument for having built them:
 
+- **A pick-list silently lost every row past the hundredth.** The staff screen asked for
+  `/admin/users?size=200` to fill its "Platform login" dropdown, and the controller answers
+  `Math.min(size, 100)` — so the request looked like it asked for everything and got the first
+  hundred by username. A browser test that creates one account per run tipped this development
+  database past a hundred logins and the test went red; until then the screen had been green for
+  weeks and wrong for any hospital with more than a hundred staff. Four pick-lists had the same
+  shape. They now page through with `loadAll`, which is bounded rather than trusting the server's
+  count.
+- **Four booking tests filled the calendar and failed on their own fixture.** Each booked on a
+  fixed day offset — +8, +15, +29, +43 — the seeded clinic gives one clinician sixteen slots a day,
+  and nothing cleans up. After enough runs against the same database those days were full and the
+  suite failed on a missing slot rather than on booking. The charting helper had already learned
+  this and walked forward to the next day with a slot; the booking and queue specs now do the same.
+  A test that is green until an invisible counter runs out is the worst kind, because the day it
+  breaks has nothing to do with the change that is being blamed.
+
 - **Concurrent sign-ins for one account returned 500.** The login path stamped `last_login_at` by
   mutating the optimistically locked `users` row, so two simultaneous logins collided on the version
   column and one failed its commit — a shared front-desk account on two workstations, intermittently.
@@ -908,6 +986,20 @@ SAST/DAST tooling, and performance profiles. Dependency scanning covers Python (
   verbatim on signed reports. There is no critical-value concept anywhere in the service — no
   column, field, flag or notification — so there is no critical-range editor to build yet.
 - **Further clinical modules** — billing and claims, pharmacy and inventory, imaging/PACS.
+- **In-patient care beyond the bed.** admissions-service records where a patient is and how they
+  got there; it does not hold a ward round, a nursing care plan, a fluid balance chart or a
+  discharge-summary document. A discharge takes a free-text summary and that is all — enough to say
+  what happened, not a structured transfer-of-care document. Observations and NEWS2 stay in
+  scheduling-service against the encounter, so a ward view reads a score rather than owning one.
+- **Nightly bed-day charging.** admissions-service publishes `hms.admission.events` and the events
+  carry what a bed-day charge needs, but nothing consumes them: there is no billing service yet, so
+  a stay currently costs nothing anywhere. The event is emitted rather than added later so that the
+  service does not have to learn billing exists.
+- **Casualty triage from the AI service.** `POST /ai/triage` already returns an acuity and the
+  arrival form does not offer it. The acuity on the board is a person's judgement, typed by the
+  nurse who saw the patient, and wiring a suggestion into that field is a decision about how much
+  a model should influence the number that decides who is seen first — worth making deliberately,
+  with the assessment shown beside the field rather than filled into it.
 - **NEWS2 Scale 2.** The alternative SpO2 scale, for patients with a prescribed target range of
   88–92%, is not implemented: using it requires a documented prescription for that target and the
   platform records no such prescription. Scoring a patient with chronic hypoxaemic respiratory

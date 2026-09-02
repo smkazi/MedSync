@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { CLINICIAN, fixtureMrn, nextWeekday } from "./chart";
+import { fixtureMrn, openBookableDay } from "./chart";
 import { FIXTURE_SURNAME } from "./global-setup";
 import { signIn } from "./sign-in";
 
@@ -76,14 +76,12 @@ test.describe("the OPD token queue", () => {
     // The staff board takes a date, so it shows the future day's queue quite happily. The
     // corridor display deliberately does not: it shows today and nothing else, which is why the
     // display's own properties are asserted separately below.
-    const date = nextWeekday(3);
-
-    await page.goto(`/appointments/new?mrn=${encodeURIComponent(mrn)}`);
-    await page
-      .getByRole("combobox", { name: "Clinician" })
-      .selectOption({ label: `${CLINICIAN} — Consultant Physician` });
-    await page.getByLabel("Date").fill(date);
-    await page.getByRole("button", { name: "Show slots" }).click();
+    //
+    // Walked forward rather than fixed at +3 days, for the reason `openBookableDay` records: one
+    // clinician has sixteen slots a day, every spec books on a fixed offset, and nothing cleans
+    // up — so against a long-lived development database the day eventually fills and this test
+    // starts failing on a fixture rather than on the queue. It did.
+    const date = await openBookableDay(page, mrn, 3);
 
     const radio = page.locator('input[name="startsAt"]:not([disabled])').first();
     await expect(radio).toBeVisible();

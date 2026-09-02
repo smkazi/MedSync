@@ -42,6 +42,7 @@ hms:
     scheduling: ${HMS_SCHEDULING_URI:http://localhost:8083}
     laboratory: ${HMS_LABORATORY_URI:http://localhost:8084}
     notification: ${HMS_NOTIFICATION_URI:http://localhost:8085}
+    admissions: ${HMS_ADMISSIONS_URI:http://localhost:8086}
     ai: ${HMS_AI_URI:http://localhost:8000}
 
 management:

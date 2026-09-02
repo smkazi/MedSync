@@ -44,7 +44,7 @@ export async function fixtureMrn(page: Page): Promise<string> {
  *
  * @return the date it settled on, so the caller can filter the appointment book by it
  */
-async function openBookableDay(page: Page, mrn: string, offsetDays: number): Promise<string> {
+export async function openBookableDay(page: Page, mrn: string, offsetDays: number): Promise<string> {
   for (let attempt = 0; attempt < 20; attempt++) {
     const date = nextWeekday(offsetDays + attempt * 7);
     await page.goto(`/appointments/new?mrn=${encodeURIComponent(mrn)}`);

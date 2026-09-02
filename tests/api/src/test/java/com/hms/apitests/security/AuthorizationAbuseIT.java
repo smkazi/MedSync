@@ -95,6 +95,26 @@ class AuthorizationAbuseIT extends RequiresRunningStack {
             // The platform's voice to a patient is administrative.
             "dr.rao,        PATCH,  /notifications/templates/00000000-0000-0000-0000-000000000000",
             "reception,     PATCH,  /notifications/templates/00000000-0000-0000-0000-000000000000",
+            // The casualty board and the in-patient census are a chart in table form: who is in
+            // the department, what they came in with, and how sick somebody judged them. The
+            // front desk registers and books, and has no business reading it; the bench has less
+            // reason still. This is the narrowing BED_MANAGE exists for, and the row that would
+            // catch it being widened back to CLINICAL_READ.
+            "reception,     GET,    /casualty",
+            "lab.tech,      GET,    /casualty",
+            "dr.pathan,     GET,    /casualty",
+            "reception,     GET,    /admissions",
+            "lab.tech,      GET,    /admissions",
+            "dr.pathan,     GET,    /admissions",
+            "reception,     POST,   /casualty",
+            "lab.tech,      POST,   /casualty",
+            "reception,     POST,   /admissions",
+            // Free-bed lists too: a bed map is a census with the names taken out, and reading
+            // which resus bay is empty is still reading how busy casualty is.
+            "reception,     GET,    /casualty/beds",
+            "lab.tech,      GET,    /admissions/beds",
+            "reception,     GET,    /casualty/patients/00000000-0000-4000-8000-000000000000",
+            "lab.tech,      GET,    /admissions/patients/00000000-0000-4000-8000-000000000000",
     })
     void roleIsEnforcedPerEndpoint(String username, String method, String path) {
         var request = given().spec(Api.as(username.trim()));

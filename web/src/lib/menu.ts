@@ -65,6 +65,10 @@ const TRIAGE: RoleName[] = ["ADMIN", "DOCTOR", "NURSE", "RECEPTIONIST"];
 // purpose: releasing a report triggers a message through the event, not by anybody pressing a
 // button, and the bench has no reason to originate one.
 const NOTIFY: RoleName[] = ["ADMIN", "DOCTOR", "NURSE", "RECEPTIONIST"];
+// Casualty and the wards. Deliberately narrower than CLINICAL_READ: a list of who is in casualty
+// with what complaint and how sick they are is a chart in table form, and the front desk has no
+// business reading it.
+const BED_MANAGE: RoleName[] = ["ADMIN", "DOCTOR", "NURSE"];
 const ADMIN_ONLY: RoleName[] = ["ADMIN"];
 
 /**
@@ -115,8 +119,13 @@ export const MENUS: Menu[] = [
     label: "Clinical",
     items: [
       { label: "Triage", href: "/triage", roles: TRIAGE },
-      { label: "Casualty board", href: "/not-built/casualty", notBuilt: true },
-      { label: "Admissions & beds", href: "/not-built/admissions", notBuilt: true },
+      {
+        label: "Casualty board",
+        href: "/casualty",
+        roles: BED_MANAGE,
+        note: "Sickest first, never arrival order",
+      },
+      { label: "Admissions & beds", href: "/admissions", roles: BED_MANAGE },
     ],
   },
 

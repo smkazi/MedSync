@@ -18,7 +18,10 @@ import { openMenu, signIn } from "./sign-in";
  *
  * A receptionist sees no Laboratory; only the administrator sees Administration. Pharmacy and
  * Billing appear for everyone because they contain nothing but not-built items, which carry no role
- * gate — there is no capability there to authorise.
+ * gate — there is no capability there to authorise. The laboratory roles see no Clinical menu at
+ * all: triage is the front desk and the clinicians, the casualty board and the census are
+ * clinical reading, and a menu whose every child was filtered away is dropped rather than shown
+ * empty.
  */
 const EXPECTED: Record<string, string[]> = {
   admin: [
@@ -69,7 +72,6 @@ const EXPECTED: Record<string, string[]> = {
     "Dashboard",
     "Patients",
     "Scheduling",
-    "Clinical",
     "Laboratory",
     "Facility",
     "Pharmacy",
@@ -79,7 +81,6 @@ const EXPECTED: Record<string, string[]> = {
     "Dashboard",
     "Patients",
     "Scheduling",
-    "Clinical",
     "Laboratory",
     "Facility",
     "Pharmacy",
@@ -102,20 +103,30 @@ test.describe("the menu is role-aware", () => {
     });
   }
 
-  test("a lab technician is not offered triage", async ({ page }) => {
+  test("a lab technician gets no Clinical menu at all", async ({ page }) => {
     await signIn(page, "lab.tech");
-    const clinical = await openMenu(page, "Clinical");
-    await expect(clinical.getByRole("link", { name: "Triage" })).toHaveCount(0);
-    // The menu survives on its not-built items, so this is filtering, not a missing menu.
-    await expect(clinical.getByRole("link", { name: "Casualty board" })).toBeVisible();
+    // Every child is gated away — triage to the front desk and the clinicians, both boards to
+    // BED_MANAGE — and an empty dropdown is worse than an absent one.
+    await expect(page.getByRole("button", { name: "Clinical", exact: true })).toHaveCount(0);
   });
 
-  test("a receptionist is offered triage", async ({ page }) => {
+  test("a receptionist is offered triage and neither board", async ({ page }) => {
     // The other half of the pair, in its own test: a second signIn() in one test lands on the
-    // dashboard rather than the sign-in form, because the session is still valid.
+    // dashboard rather than the sign-in form, because the session is still valid. This is the
+    // filtering case — the menu survives on Triage while the two items reception cannot act on
+    // are absent, not greyed out.
     await signIn(page, "reception");
     const clinical = await openMenu(page, "Clinical");
     await expect(clinical.getByRole("link", { name: "Triage" })).toBeVisible();
+    await expect(clinical.getByRole("link", { name: "Casualty board" })).toHaveCount(0);
+    await expect(clinical.getByRole("link", { name: "Admissions & beds" })).toHaveCount(0);
+  });
+
+  test("a nurse is offered the casualty board and the census", async ({ page }) => {
+    await signIn(page, "nurse.iqbal");
+    const clinical = await openMenu(page, "Clinical");
+    await expect(clinical.getByRole("link", { name: "Casualty board" })).toBeVisible();
+    await expect(clinical.getByRole("link", { name: "Admissions & beds" })).toBeVisible();
   });
 
   test("an item the role cannot reach is absent, not disabled", async ({ page }) => {

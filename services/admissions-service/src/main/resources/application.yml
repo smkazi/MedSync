@@ -1,0 +1,58 @@
+spring:
+  application:
+    name: admissions-service
+  datasource:
+    url: ${HMS_DB_URL:jdbc:postgresql://localhost:5432/hms}
+    username: ${HMS_DB_USER:hms}
+    password: ${HMS_DB_PASSWORD:hms}
+    hikari:
+      schema: admissions
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: admissions
+        jdbc:
+          time_zone: UTC
+  flyway:
+    enabled: true
+    schemas: admissions
+    default-schema: admissions
+    create-schemas: true
+  kafka:
+    bootstrap-servers: ${HMS_KAFKA:localhost:9092}
+
+server:
+  port: ${HMS_ADMISSIONS_PORT:8086}
+  error:
+    include-message: never
+    include-stacktrace: never
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+hms:
+  security:
+    mode: resource-server
+  events:
+    transport: ${HMS_EVENTS_TRANSPORT:log}
+  patient:
+    # The facility directory. Beds are verified against it before anybody is put in one, and the
+    # client fails closed: an unreachable directory refuses the admission rather than allocating a
+    # bed nobody has confirmed exists.
+    base-url: ${HMS_PATIENT_URI:http://localhost:8082}
+
+spring.security.oauth2.resourceserver.jwt.jwk-set-uri: ${HMS_JWKS_URI:http://localhost:8081/.well-known/jwks.json}
+
+logging:
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level [%X{correlationId:-}] %logger{36} - %msg%n"

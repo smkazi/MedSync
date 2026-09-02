@@ -88,6 +88,20 @@ public final class Roles {
      * <p>ADMIN is in because an administrator diagnosing why a message was not delivered needs to
      * see what address it would have gone to.
      */
+    /**
+     * The casualty board and the in-patient census.
+     *
+     * <p>Clinical, and deliberately narrower than {@link #CLINICAL_READ}: the front desk books and
+     * checks in, and has no business reading a list of who is in casualty with what complaint and
+     * how sick they are. That list is a chart in table form.
+     *
+     * <p>The same membership as {@link #CLINICAL_WRITE} today, and a separate name for the same
+     * reason {@code LAB_CONFIG} is separate from {@code LAB_VERIFY} — allocating a bed and writing
+     * a note are different acts that happen to share a role list, and a change to one should not
+     * silently move the other.
+     */
+    public static final String BED_MANAGE = "hasAnyRole('ADMIN','DOCTOR','NURSE')";
+
     public static final String CONTACT_READ = "hasAnyRole('ADMIN','SERVICE')";
 
     /**

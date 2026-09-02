@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { load } from "@/lib/load";
+import { load, loadAll } from "@/lib/load";
 import { currentUser, hasRole } from "@/lib/session";
-import type { Availability, BookableRoom, Department, Page, Staff } from "@/lib/types";
+import type { Availability, BookableRoom, Department, Staff } from "@/lib/types";
 import { Card, ErrorNote } from "@/components/ui";
 import { BookingForm } from "./BookingForm";
 
@@ -35,14 +35,14 @@ export default async function BookAppointmentPage({
   const chosenDate = date || today;
 
   const [staffPage, departments, rooms] = await Promise.all([
-    load<Page<Staff>>("/staff?size=200"),
+    loadAll<Staff>("/staff"),
     load<Department[]>("/departments"),
     load<BookableRoom[]>("/rooms/bookable"),
   ]);
 
   // Only a staff member with a platform login can be the clinician on an appointment: the
   // appointment's clinicianId *is* a user id.
-  const clinicians = (staffPage.data?.content ?? [])
+  const clinicians = (staffPage.data ?? [])
     .filter((member) => member.userId && member.active)
     .sort((a, b) => a.fullName.localeCompare(b.fullName));
 
