@@ -31,7 +31,10 @@ env:
 
 jobs:
   dependencies:
-    name: Dependency vulnerabilities
+    # Dependency-Check only. The gate that runs unconditionally - Trivy over the CycloneDX SBOM -
+    # lives in ci.yml on every push, because it takes seconds and because a scan nobody looks at is
+    # how this job stayed red for weeks without anyone noticing.
+    name: Dependency-Check (second opinion)
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
@@ -44,58 +47,6 @@ jobs:
           distribution: temurin
           cache: maven
 
-      # ---- The gate that always runs -------------------------------------------------------
-      #
-      # Trivy over a CycloneDX SBOM that Maven emits. No API key, no repository secret, seconds
-      # rather than the hours an NVD feed download takes. This is the Java equivalent of what
-      # pip-audit and npm audit already do for Python and the web app.
-      #
-      # An SBOM rather than pointing a scanner at the poms: nearly every version in this build
-      # comes from the imported Spring Boot and Spring Cloud BOMs rather than being written in a
-      # pom, so a scanner that parses pom.xml has to re-implement Maven's resolution to get the
-      # versions right. Maven emits the resolved graph instead.
-      - name: Build the CycloneDX SBOM
-        run: mvn $MAVEN_ARGS -Psbom package -DskipTests
-
-      - name: Scan the SBOM (Trivy, fails on fixable HIGH/CRITICAL)
-        # Same action already used by the container and IaC scans in this workflow, so no new
-        # supply-chain surface. ignore-unfixed matches the image scan: an unfixable transitive CVE
-        # still reaches the code-scanning tab, but it cannot freeze every merge until upstream
-        # ships a release - and the usual answer to that is a blanket suppression, which is worse
-        # than an honest report.
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          scan-type: sbom
-          # The plugin's path, not a choice: a `pom`-packaged root writes the reactor-wide SBOM
-          # here and ignores outputDirectory.
-          scan-ref: target/classes/META-INF/sbom/application.cdx.json
-          format: sarif
-          output: trivy-deps.sarif
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: "1"
-
-      - name: Upload the SBOM scan SARIF
-        # hashFiles guards against the silent pass: a missing report with continue-on-error set
-        # looks exactly like a clean one.
-        if: always() && hashFiles('trivy-deps.sarif') != ''
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: trivy-deps.sarif
-          category: trivy-deps
-        continue-on-error: true
-
-      - name: Upload the SBOM
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: sbom
-          path: target/classes/META-INF/sbom/application.cdx.json
-          retention-days: 30
-          if-no-files-found: warn
-
-      # ---- Dependency-Check: only when there is a key, and loudly skipped when there is not ----
-      #
       # This step used to fail every single nightly run. `<nvdApiKey>${env.NVD_API_KEY}</nvdApiKey>`
       # in the pom turned an unset secret into a zero-length key, and Dependency-Check rejects an
       # empty key outright where it would have degraded gracefully on an absent one. The pom no
@@ -132,12 +83,12 @@ jobs:
         # scanner instead of two, and nothing on the run page says so.
         if: steps.nvd.outputs.available != 'true'
         run: |
-          echo "::notice title=Dependency-Check skipped::NVD_API_KEY is not set, so the NVD feed cannot be fetched. Java dependencies were still scanned by Trivy over the CycloneDX SBOM in this job."
+          echo "::notice title=Dependency-Check skipped::NVD_API_KEY is not set, so the NVD feed cannot be fetched. Java dependencies are still scanned by Trivy over the CycloneDX SBOM in the CI workflow."
           {
             echo "### Dependency-Check skipped"
             echo
             echo "\`NVD_API_KEY\` is not set on this repository, so OWASP Dependency-Check did not run."
-            echo "Java dependencies **were** scanned — by Trivy over the CycloneDX SBOM, earlier in this job."
+            echo "Java dependencies **were** scanned — by Trivy over the CycloneDX SBOM, in the CI workflow on every push."
             echo
             echo "To enable Dependency-Check as well, get a free key from <https://nvd.nist.gov/developers/request-an-api-key>"
             echo "and add it as the \`NVD_API_KEY\` repository secret. Nothing else needs to change."

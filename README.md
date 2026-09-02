@@ -559,9 +559,9 @@ second, seven minutes — for whatever a shared container's numbers are worth as
 no-show scores returned — the last of which matters because a score that vanished under load would
 mean the circuit breaker had opened.
 
-CI runs the fast set on every push; the slow set — PIT, both ZAP plans, the container and IaC scans
-— runs nightly and uploads SARIF, so a new finding appears as a code-scanning alert rather than a
-line in a log nobody opens.
+CI runs the fast set on every push — including dependency scanning; the slow set — PIT, both ZAP
+plans, the container and IaC scans, Dependency-Check's NVD feed — runs nightly and uploads SARIF, so
+a new finding appears as a code-scanning alert rather than a line in a log nobody opens.
 
 **Java dependency scanning is Trivy over an SBOM, and that is a correction rather than a
 preference.** The nightly job originally ran OWASP Dependency-Check alone, and it had **never
@@ -573,10 +573,14 @@ which is why the version here is held at 12.2.2. Because that workflow only runs
 and never on a push, every run went red where nobody was looking.
 
 So the gate is now Trivy against the CycloneDX SBOM Maven emits: no API key, no repository secret,
-seconds instead of the hours an NVD feed download takes. Dependency-Check stays wired as a second
-opinion and runs only when `NVD_API_KEY` is set; when it is not, the job writes an explicit notice
-and a run-summary entry saying so. *A skipped check is not a passed check*, so it is never quietly
-green.
+seconds instead of the hours an NVD feed download takes. It runs in `ci.yml` **on every push**,
+beside the Python and web audits that were always there — the reason the security scans were split
+into a nightly was that they are slow, and this one is not. A gate nobody looks at is how the old
+one stayed red for weeks.
+
+Dependency-Check stays wired in the nightly as a second opinion and runs only when `NVD_API_KEY` is
+set; when it is not, the job writes an explicit notice and a run-summary entry saying so.
+*A skipped check is not a passed check*, so it is never quietly green.
 
 ---
 

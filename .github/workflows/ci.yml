@@ -5,6 +5,12 @@
 # feed, ZAP takes the better part of an hour on the authenticated plan, and PIT rebuilds the
 # world. Those live in security.yml on a nightly schedule, so this workflow stays fast enough
 # that people actually wait for it.
+#
+# Dependency scanning IS here, though, because the criterion was slowness and this is not slow.
+# Trivy over a CycloneDX SBOM takes seconds. It used to live in the nightly alongside
+# Dependency-Check and it failed there, unseen, on every run for weeks - which is the failure mode
+# of putting a gate where nobody looks. Python and web dependency audits already run in their own
+# jobs below, on every push, for the same reason.
 name: CI
 
 on:
@@ -168,6 +174,67 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  dependencies:
+    name: Dependency vulnerabilities
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      # Findings go to the code-scanning tab, not just this log.
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: temurin
+          cache: maven
+
+      # An SBOM rather than pointing a scanner at the poms, for a reason specific to this build:
+      # nearly every version comes from the imported spring-boot-dependencies and
+      # spring-cloud-dependencies BOMs rather than being written in a pom, so a scanner parsing
+      # pom.xml has to re-implement Maven's resolution to get versions right. Maven emits the
+      # resolved graph instead.
+      - name: Build the CycloneDX SBOM
+        run: mvn $MAVEN_ARGS -Psbom package -DskipTests
+
+      - name: Scan the SBOM (Trivy, fails on fixable HIGH/CRITICAL)
+        # ignore-unfixed matches the container scan in security.yml: an unfixable transitive CVE
+        # still reaches the code-scanning tab, but it cannot freeze every merge until upstream
+        # ships a release - and the usual answer to that is a blanket suppression, which is worse
+        # than an honest report.
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: sbom
+          # The plugin's path, not a choice: a `pom`-packaged root writes the reactor-wide SBOM
+          # here and ignores outputDirectory.
+          scan-ref: target/classes/META-INF/sbom/application.cdx.json
+          format: sarif
+          output: trivy-deps.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Upload the SBOM scan SARIF
+        # hashFiles guards the silent pass: a missing report under continue-on-error looks exactly
+        # like a clean one.
+        if: always() && hashFiles('trivy-deps.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-deps.sarif
+          category: trivy-deps
+        continue-on-error: true
+
+      - name: Upload the SBOM
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: target/classes/META-INF/sbom/application.cdx.json
+          retention-days: 30
+          if-no-files-found: warn
 
   secrets:
     name: Secret scan
