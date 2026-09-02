@@ -43,7 +43,7 @@ public class RouteConfig {
                 // visible act here as well as in the service's allowlist.
                 .route("scheduling", r -> r
                         .path("/appointments/**", "/encounters/**", "/schedules/**",
-                              "/queue/**", "/public/queue/**")
+                              "/queue/**", "/public/queue/**", "/escalation-policies/**")
                         .uri(services.scheduling()))
                 // Laboratory: orders, specimens, results, catalog and analyzer message ingest.
                 .route("laboratory", r -> r

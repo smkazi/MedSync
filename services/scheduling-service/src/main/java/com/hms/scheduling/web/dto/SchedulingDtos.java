@@ -161,14 +161,62 @@ public final class SchedulingDtos {
             BigDecimal weightKg,
             BigDecimal heightCm,
             @Min(0) @Max(10) Integer painScore,
-            @Size(max = 16) String consciousness) {
+            @Size(max = 16) String consciousness,
+            /**
+             * Whether the patient is on any supplemental oxygen. Boxed, so an omitted field means
+             * "on air" rather than refusing the whole body — and it is worth two points on NEWS2,
+             * which is why it is recorded rather than inferred from the saturation.
+             */
+            Boolean onSupplementalOxygen) {
     }
 
     public record VitalsResponse(UUID id, Instant recordedAt, String recordedBy, Integer heartRate,
                                  Integer systolicBp, Integer diastolicBp, Integer respiratoryRate,
                                  BigDecimal temperatureC, Integer oxygenSaturation, BigDecimal weightKg,
                                  BigDecimal heightCm, Integer painScore, String consciousness,
-                                 BigDecimal bodyMassIndex) {
+                                 boolean onSupplementalOxygen, BigDecimal bodyMassIndex,
+                                 News2View news2) {
+    }
+
+    /**
+     * The early warning score for one set of observations.
+     *
+     * <p>Returned with the observations rather than fetched separately, because a score without
+     * the numbers behind it is not something a clinician should be asked to act on — and because
+     * the two must not be able to disagree.
+     *
+     * @param missing the parameters that were not recorded. Reported, not hidden: a NEWS2 of 3
+     *                from four observations is a different fact from a NEWS2 of 3 from seven, and
+     *                a screen that could not tell them apart would invite a wrong reading.
+     */
+    public record News2View(int total, String band, boolean anyParameterScoredThree,
+                            List<News2Component> components, List<String> missing,
+                            EscalationView escalation) {
+
+        public News2View {
+            components = components == null ? List.of() : List.copyOf(components);
+            missing = missing == null ? List.of() : List.copyOf(missing);
+        }
+    }
+
+    public record News2Component(String parameter, String value, int score) {
+    }
+
+    /** The hospital's own response to a band. Configuration, unlike the score itself. */
+    public record EscalationView(String monitoring, String response, String setting) {
+    }
+
+    public record EscalationPolicyResponse(UUID id, String band, String monitoring, String response,
+                                           String setting) {
+    }
+
+    /**
+     * Revising one band's response. Sparse; the band is not editable, because it is the
+     * calculator's output rather than a name somebody chose.
+     */
+    public record UpdateEscalationPolicyRequest(@Size(max = 120) String monitoring,
+                                                @Size(max = 400) String response,
+                                                @Size(max = 200) String setting) {
     }
 
     public record DiagnosisRequest(@NotBlank @Size(max = 16) String icd10Code,

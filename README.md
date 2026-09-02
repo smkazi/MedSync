@@ -10,9 +10,9 @@ haematology analyzer over its own wire protocol and released by a pathologist.
 
 > **Status:** the clinical core, the laboratory (including analyzer integration), the AI service
 > and the web UI are implemented and verified end to end against a real stack, and so are the
-> containerisation, TLS, security-testing and performance-testing layers. **677 tests pass** —
-> 354 Java unit and integration, 91 Python, 40 web unit, 115 black-box API and security abuse cases,
-> and 77 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
+> containerisation, TLS, security-testing and performance-testing layers. **768 tests pass** —
+> 435 Java unit and integration, 91 Python, 40 web unit, 121 black-box API and security abuse cases,
+> and 81 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
 > [Security](#security); what is left is in the [Roadmap](#roadmap).
 
 ---
@@ -153,6 +153,30 @@ Fifty simultaneous check-ins produce fifty distinct consecutive numbers with no 
 `QueueTokenIssuanceTest` asserts on fifty real threads against a real PostgreSQL — false for every
 read-then-write implementation and true for this one.
 
+Also **NEWS2**, the National Early Warning Score. The platform captured vitals and scored nothing,
+which left a deteriorating ward patient visible only to whoever happened to read the numbers and
+compare them to the last set. NEWS2 is deterministic, needs no model, and everything it needs was
+already recorded — except one thing: **whether the patient is on supplemental oxygen**, which is
+worth two points and cannot be read off a saturation, since 96% on four litres is a very different
+patient from 96% on air. That is now a field, and without it the score would under-read by 2 for
+everybody on oxygen, which is the direction that gets missed.
+
+The score comes back with the observations rather than from a second call, so the two cannot
+disagree, and it carries its own working: the per-parameter breakdown, the single-parameter rule
+(a total of 3 all from one parameter escalates further than a 3 spread across three), and **what
+was not measured** — because a NEWS2 of 3 from four observations is a different fact from a 3 from
+seven, and nothing is ever assumed normal. It is advisory throughout: nothing here lets a score
+change a status, move a patient or raise an order.
+
+**The cut-offs are in code and the escalation policy is in rows**, which is the one place
+`docs/extensibility.md` argues against a table. NEWS2 is a national standard whose whole value is
+that 6 means the same thing everywhere, so a deployment able to edit the bands could publish a
+number it calls NEWS2 which is not. What every trust genuinely decides for itself is the response —
+who is called, how fast, how often observations repeat — and that is `escalation_policies`, editable
+by an administrator and audited. Scored against the Royal College of Physicians' published chart in
+`News2CalculatorTest`, whose expectations come from that chart rather than from running the
+implementation.
+
 **`GET /public/queue/{roomCode}` is the platform's only unauthenticated endpoint.** It is the
 corridor display, mounted where every visitor, delivery driver and passer-by in the building can
 read it, so what it returns is a room code, the number being called and the next few waiting. No
@@ -233,7 +257,7 @@ Nine top-level menus, defined once as data in `src/lib/menu.ts`:
 | Dashboard | today's board |
 | Patients | register (search), register a patient, edit a record, the allergy list |
 | Scheduling | appointment book, clinician availability, lapsed appointments, clinician schedules, the OPD token queue, and a link to the corridor display |
-| Clinical | triage intake, encounter charting — vitals, the SOAP note, signing, amendments, ICD-10 coding, laboratory ordering — with AI assistance beside the note |
+| Clinical | triage intake, encounter charting — vitals with a NEWS2 score, the SOAP note, signing, amendments, ICD-10 coding, laboratory ordering — with AI assistance beside the note |
 | Laboratory | worklist, an order's report with collection, result entry and release, specimen labels, scan a tube, test catalogue, reference ranges and interpretation rules — both retunable by a pathologist — analyzers, device messages |
 | Facility | room directory, rooms, floors, room types, beds, departments — all editable by an administrator |
 | Messaging | delivery log with the send form, message wording — readable by anybody who may send, editable by an administrator |
@@ -639,11 +663,11 @@ make help          # everything else
 Or directly:
 
 ```bash
-mvn -q verify                                     # 366 Java unit and integration tests
+mvn -q verify                                     # 435 Java unit and integration tests
 cd services/ai-service && uv run pytest -q        # 91 Python tests
 cd web && npm run lint && npm run typecheck       # web static checks
 cd web && npm test                                # 40 web unit tests
-cd web && npx playwright test                     # 77 browser tests, no skips
+cd web && npx playwright test                     # 81 browser tests, no skips
 mvn -Pautomation -pl tests/api verify             # 121 API and security abuse cases
 ```
 
@@ -884,6 +908,11 @@ SAST/DAST tooling, and performance profiles. Dependency scanning covers Python (
   verbatim on signed reports. There is no critical-value concept anywhere in the service — no
   column, field, flag or notification — so there is no critical-range editor to build yet.
 - **Further clinical modules** — billing and claims, pharmacy and inventory, imaging/PACS.
+- **NEWS2 Scale 2.** The alternative SpO2 scale, for patients with a prescribed target range of
+  88–92%, is not implemented: using it requires a documented prescription for that target and the
+  platform records no such prescription. Scoring a patient with chronic hypoxaemic respiratory
+  failure on Scale 1 over-reads rather than under-reads, which is the safer of the two errors, and
+  the gap is named here rather than papered over with a guess.
 - **A named waiting-room display route.** The corridor screen is `/display/{roomCode}` and a
   kiosk has to be pointed at it by hand once; there is no per-screen configuration, no rotation
   between rooms, and no "this floor's clinics" view. A hospital with twenty screens would want

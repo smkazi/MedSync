@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { load } from "@/lib/load";
 import { currentUser, hasRole } from "@/lib/session";
-import type { CatalogEntry, Encounter, LabOrderSummary, Patient } from "@/lib/types";
+import type { CatalogEntry, Encounter, LabOrderSummary, News2, Patient } from "@/lib/types";
 import { AiAssist } from "@/components/AiAssist";
 import { RecordForm } from "@/components/RecordForm";
 import { orderTests } from "../../laboratory/actions";
@@ -338,12 +338,19 @@ export default async function EncounterPage({
                 <Vital label="Temperature" value={latestVitals.temperatureC} unit="°C" />
                 <Vital label="SpO2" value={latestVitals.oxygenSaturation} unit="%" />
                 <Vital label="Pain" value={latestVitals.painScore} unit="/10" />
+                <Vital
+                  label="Oxygen"
+                  value={latestVitals.onSupplementalOxygen ? "supplemental" : "air"}
+                  unit=""
+                />
                 <Vital label="BMI" value={latestVitals.bodyMassIndex} unit="" />
                 <p className="border-t border-line pt-2 text-xs text-ink-muted">
                   {formatDateTime(latestVitals.recordedAt)} by {latestVitals.recordedBy}
                 </p>
               </dl>
             )}
+
+            {latestVitals?.news2 && <News2Panel news2={latestVitals.news2} />}
 
             {mayChart && open && (
               <form action={recordVitals} className="mt-4 space-y-3 border-t border-line pt-4">
@@ -363,6 +370,25 @@ export default async function EncounterPage({
                   <Obs name="weightKg" label="Weight" unit="kg" step="0.1" />
                   <Obs name="heightCm" label="Height" unit="cm" step="0.1" />
                   <Obs name="painScore" label="Pain" unit="/10" />
+                  {/*
+                    Two points on NEWS2, and unreadable from the saturation: 96% on four litres is
+                    a very different patient from 96% on air. Its own field because the score
+                    cannot infer it, and before it existed the score under-read by 2 for everybody
+                    on oxygen — which is the direction that gets missed.
+
+                    The hidden twin after the checkbox, not before: FormData.get returns the first
+                    value for a repeated name, so the order is load-bearing.
+                  */}
+                  <label className="col-span-2 flex items-center gap-2 self-end text-xs">
+                    <input
+                      type="checkbox"
+                      name="onSupplementalOxygen"
+                      value="true"
+                      className="size-4 rounded border-line"
+                    />
+                    <input type="hidden" name="onSupplementalOxygen" value="false" />
+                    <span>On supplemental oxygen</span>
+                  </label>
                   <div>
                     <label htmlFor="consciousness" className="block text-xs font-medium">
                       Consciousness
@@ -416,6 +442,81 @@ export default async function EncounterPage({
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * The early warning score, beside the observations it was derived from.
+ *
+ * <p>Advisory, and the panel says so. Nothing about NEWS2 in this platform changes a status, moves
+ * a patient or raises an order — it is a number next to the numbers, and an early warning score
+ * that acted on its own would be a clinical decision made by a table of ranges.
+ *
+ * <p>Three things are rendered that a bare total would hide, and each is there because leaving it
+ * out would invite a wrong reading: the per-parameter breakdown, because a score whose working
+ * cannot be seen is not one a clinician should act on; what was <em>not</em> measured, because a
+ * NEWS2 of 3 from four observations is a different fact from a 3 from seven; and the
+ * single-parameter rule, because a total of 3 that is all from one parameter escalates further
+ * than a 3 spread across three.
+ */
+function News2Panel({ news2 }: { news2: News2 }) {
+  const tone =
+    news2.band === "HIGH"
+      ? "critical"
+      : news2.band === "MEDIUM"
+        ? "warn"
+        : news2.band === "LOW_MEDIUM"
+          ? "warn"
+          : "neutral";
+
+  return (
+    <div className="mt-4 border-t border-line pt-4">
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="text-xs font-medium uppercase tracking-wide text-ink-muted">NEWS2</span>
+        <span className="flex items-center gap-2">
+          <span className="numeric text-2xl font-semibold">{news2.total}</span>
+          <Badge tone={tone}>{news2.band.replace("_", "–").toLowerCase()}</Badge>
+        </span>
+      </div>
+
+      {news2.anyParameterScoredThree && (
+        <p className="mt-2 rounded-md border border-warn/40 bg-warn-soft px-2 py-1.5 text-xs text-warn">
+          A single parameter scored 3, which escalates on its own whatever the total.
+        </p>
+      )}
+
+      <dl className="mt-2 space-y-0.5 text-xs">
+        {news2.components.map((component) => (
+          <div key={component.parameter} className="flex justify-between gap-2">
+            <dt className="text-ink-muted">{component.parameter}</dt>
+            <dd className="numeric">
+              {component.value}
+              <span className={component.score > 0 ? "ml-2 font-semibold text-critical" : "ml-2"}>
+                {component.score}
+              </span>
+            </dd>
+          </div>
+        ))}
+      </dl>
+
+      {news2.missing.length > 0 && (
+        <p className="mt-2 text-xs text-warn">
+          Not measured: {news2.missing.join(", ")}. Nothing is assumed normal, so the score is
+          lower than a complete set would give.
+        </p>
+      )}
+
+      {news2.escalation && (
+        <p className="mt-2 border-t border-line pt-2 text-xs text-ink-muted">
+          <strong>{news2.escalation.monitoring}.</strong> {news2.escalation.response} (
+          {news2.escalation.setting})
+        </p>
+      )}
+
+      <p className="mt-2 text-xs text-ink-muted">
+        Advisory. The score never changes a status or raises an order on its own.
+      </p>
     </div>
   );
 }

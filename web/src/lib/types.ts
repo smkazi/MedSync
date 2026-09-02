@@ -140,7 +140,36 @@ export type Vitals = {
   heightCm: number | null;
   painScore: number | null;
   consciousness: string | null;
+  /** NEWS2 scores 2 for any supplemental oxygen, so it is recorded rather than inferred. */
+  onSupplementalOxygen: boolean;
   bodyMassIndex: number | null;
+  news2: News2 | null;
+};
+
+/**
+ * The early warning score for one set of observations.
+ *
+ * `missing` is rendered, not hidden: a NEWS2 of 3 from four observations is a different fact from
+ * a NEWS2 of 3 from seven, and a screen that could not tell them apart would invite a wrong
+ * reading. `escalation` is the hospital's own policy and can be absent if no row is configured —
+ * the score is still shown, because a configuration gap is not a reason to withhold a number a
+ * clinician is looking at.
+ */
+export type News2 = {
+  total: number;
+  band: "NONE" | "LOW" | "LOW_MEDIUM" | "MEDIUM" | "HIGH";
+  anyParameterScoredThree: boolean;
+  components: { parameter: string; value: string; score: number }[];
+  missing: string[];
+  escalation: { monitoring: string; response: string; setting: string } | null;
+};
+
+export type EscalationPolicy = {
+  id: string;
+  band: News2["band"];
+  monitoring: string;
+  response: string;
+  setting: string;
 };
 
 export type Diagnosis = {

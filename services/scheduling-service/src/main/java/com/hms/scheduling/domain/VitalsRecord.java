@@ -55,6 +55,17 @@ public class VitalsRecord extends BaseEntity {
     @Column(name = "consciousness", length = 16)
     private String consciousness;
 
+    /**
+     * Whether the patient is on any supplemental oxygen.
+     *
+     * <p>Recorded rather than inferred, because NEWS2 scores 2 for it and it cannot be read off a
+     * saturation: 96% on four litres is a very different patient from 96% on air. Primitive and
+     * defaulted false — "not on oxygen" is the ordinary case, and there is no third state worth
+     * distinguishing from it on this chart.
+     */
+    @Column(name = "on_supplemental_oxygen", nullable = false)
+    private boolean onSupplementalOxygen;
+
     protected VitalsRecord() {
     }
 
@@ -111,10 +122,14 @@ public class VitalsRecord extends BaseEntity {
         return consciousness;
     }
 
+    public boolean isOnSupplementalOxygen() {
+        return onSupplementalOxygen;
+    }
+
     public void record(Integer heartRate, Integer systolicBp, Integer diastolicBp,
                        Integer respiratoryRate, BigDecimal temperatureC, Integer oxygenSaturation,
                        BigDecimal weightKg, BigDecimal heightCm, Integer painScore,
-                       String consciousness) {
+                       String consciousness, Boolean onSupplementalOxygen) {
         this.heartRate = heartRate;
         this.systolicBp = systolicBp;
         this.diastolicBp = diastolicBp;
@@ -125,6 +140,10 @@ public class VitalsRecord extends BaseEntity {
         this.heightCm = heightCm;
         this.painScore = painScore;
         this.consciousness = consciousness;
+        // Boxed on the way in and primitive on the way through: an absent field in the request
+        // means "not on oxygen", which is the ordinary case, while a primitive parameter would
+        // have made Jackson refuse the whole body over an omitted flag.
+        this.onSupplementalOxygen = Boolean.TRUE.equals(onSupplementalOxygen);
     }
 
     /**

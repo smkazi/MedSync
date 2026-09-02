@@ -3,6 +3,7 @@ package com.hms.scheduling.web;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -375,6 +376,118 @@ class SchedulingApiIntegrationTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.bodyMassIndex").value(22.3))
                 .andExpect(jsonPath("$.recordedBy").value("test-user"));
+    }
+
+    @Test
+    @DisplayName("observations come back with a NEWS2 score, its parts, and the local policy")
+    void vitalsCarryAnEarlyWarningScore() throws Exception {
+        String encounterId = openEncounterFor(book(freshClinician(), futureSlot(1080), 15)
+                .get("id").asString());
+
+        // Respirations 22 (2), SpO2 93 (2), air (0), systolic 105 (1), pulse 115 (2),
+        // alert (0), 37.2 (0) = 7, which bands HIGH on the published chart.
+        mockMvc.perform(post("/encounters/" + encounterId + "/vitals").with(as("NURSE"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "respiratoryRate", 22, "oxygenSaturation", 93, "systolicBp", 105,
+                                "heartRate", 115, "consciousness", "ALERT",
+                                "temperatureC", 37.2))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.news2.total").value(7))
+                .andExpect(jsonPath("$.news2.band").value("HIGH"))
+                // The parts, not just the number: a score a clinician cannot see the working of is
+                // not a score they should be asked to act on.
+                .andExpect(jsonPath("$.news2.components.length()").value(7))
+                .andExpect(jsonPath("$.news2.missing").isEmpty())
+                // And the hospital's own response, which is configuration while the score is not.
+                .andExpect(jsonPath("$.news2.escalation.response").value(
+                        org.hamcrest.Matchers.containsString("Emergency assessment")));
+    }
+
+    @Test
+    @DisplayName("supplemental oxygen is worth two points, and it has to be recorded to count")
+    void supplementalOxygenIsRecordedNotInferred() throws Exception {
+        String encounterId = openEncounterFor(book(freshClinician(), futureSlot(1110), 15)
+                .get("id").asString());
+
+        // The same saturation twice. 98% on oxygen is a different patient from 98% on air, and it
+        // cannot be read off the number - which is why the flag exists at all.
+        mockMvc.perform(post("/encounters/" + encounterId + "/vitals").with(as("NURSE"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "respiratoryRate", 16, "oxygenSaturation", 98, "systolicBp", 120,
+                                "heartRate", 70, "consciousness", "ALERT", "temperatureC", 36.8))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.news2.total").value(0))
+                .andExpect(jsonPath("$.onSupplementalOxygen").value(false));
+
+        mockMvc.perform(post("/encounters/" + encounterId + "/vitals").with(as("NURSE"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "respiratoryRate", 16, "oxygenSaturation", 98, "systolicBp", 120,
+                                "heartRate", 70, "consciousness", "ALERT", "temperatureC", 36.8,
+                                "onSupplementalOxygen", true))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.news2.total").value(2))
+                .andExpect(jsonPath("$.onSupplementalOxygen").value(true));
+    }
+
+    @Test
+    @DisplayName("an incomplete set of observations names what is missing rather than assuming it")
+    void missingObservationsAreNamed() throws Exception {
+        String encounterId = openEncounterFor(book(freshClinician(), futureSlot(1140), 15)
+                .get("id").asString());
+
+        // The most dangerous thing this could do is treat an absent respiratory rate as normal,
+        // because that turns an incomplete set into a reassuring number.
+        mockMvc.perform(post("/encounters/" + encounterId + "/vitals").with(as("NURSE"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "systolicBp", 120, "heartRate", 70))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.news2.total").value(0))
+                .andExpect(jsonPath("$.news2.missing").value(
+                        org.hamcrest.Matchers.hasItems("Respiration rate", "SpO2",
+                                "Consciousness", "Temperature")));
+    }
+
+    @Test
+    @DisplayName("the escalation policy is readable by a clinician and writable by an administrator")
+    void escalationPolicyIsConfiguration() throws Exception {
+        String body = mockMvc.perform(get("/escalation-policies").with(as("DOCTOR")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(5))
+                .andReturn().getResponse().getContentAsString();
+        JsonNode high = null;
+        for (JsonNode policy : objectMapper.readTree(body)) {
+            if ("HIGH".equals(policy.get("band").asString())) {
+                high = policy;
+            }
+        }
+        org.assertj.core.api.Assertions.assertThat(high).isNotNull();
+        String id = high.get("id").asString();
+        String original = high.get("monitoring").asString();
+
+        mockMvc.perform(patch("/escalation-policies/" + id).with(as("DOCTOR"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"monitoring\": \"Every 5 minutes\"}"))
+                .andExpect(status().isForbidden());
+
+        try {
+            mockMvc.perform(patch("/escalation-policies/" + id).with(as("ADMIN"))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"monitoring\": \"Continuous, with a consultant at the bedside\"}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.monitoring")
+                            .value("Continuous, with a consultant at the bedside"))
+                    // The band is the calculator's output, not a name somebody chose, so it is not
+                    // editable and a request that tried would be ignored rather than obeyed.
+                    .andExpect(jsonPath("$.band").value("HIGH"));
+        } finally {
+            mockMvc.perform(patch("/escalation-policies/" + id).with(as("ADMIN"))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(Map.of("monitoring", original))));
+        }
     }
 
     @Test

@@ -65,12 +65,29 @@ public final class SchedulingMapper {
                 note.isSigned(), note.getSignedAt(), note.getSignedBy(), note.getAmendsId());
     }
 
-    public static SchedulingDtos.VitalsResponse toResponse(VitalsRecord vitals) {
+    /**
+     * @param escalation the hospital's response to the resulting band, or null when no policy row
+     *                   exists for it — the score is still returned, because a missing local
+     *                   policy is a configuration gap and not a reason to withhold a number a
+     *                   clinician is looking at
+     */
+    public static SchedulingDtos.VitalsResponse toResponse(
+            VitalsRecord vitals, java.util.Map<String, SchedulingDtos.EscalationView> policies) {
+        News2Calculator.Score score = News2Calculator.of(vitals);
+        SchedulingDtos.News2View news2 = new SchedulingDtos.News2View(
+                score.total(), score.band().name(), score.anyThree(),
+                score.components().stream()
+                        .map(component -> new SchedulingDtos.News2Component(
+                                component.parameter(), component.value(), component.score()))
+                        .toList(),
+                score.missing(), policies == null ? null : policies.get(score.band().name()));
+
         return new SchedulingDtos.VitalsResponse(vitals.getId(), vitals.getRecordedAt(),
                 vitals.getRecordedBy(), vitals.getHeartRate(), vitals.getSystolicBp(),
                 vitals.getDiastolicBp(), vitals.getRespiratoryRate(), vitals.getTemperatureC(),
                 vitals.getOxygenSaturation(), vitals.getWeightKg(), vitals.getHeightCm(),
-                vitals.getPainScore(), vitals.getConsciousness(), vitals.bodyMassIndex());
+                vitals.getPainScore(), vitals.getConsciousness(), vitals.isOnSupplementalOxygen(),
+                vitals.bodyMassIndex(), news2);
     }
 
     public static SchedulingDtos.DiagnosisResponse toResponse(Diagnosis diagnosis) {
@@ -84,16 +101,16 @@ public final class SchedulingMapper {
                 schedule.getEndTime(), schedule.getSlotMinutes(), schedule.isActive());
     }
 
-    public static SchedulingDtos.EncounterResponse toResponse(Encounter encounter,
-                                                             List<VitalsRecord> vitals,
-                                                             List<Diagnosis> diagnoses) {
+    public static SchedulingDtos.EncounterResponse toResponse(
+            Encounter encounter, List<VitalsRecord> vitals, List<Diagnosis> diagnoses,
+            java.util.Map<String, SchedulingDtos.EscalationView> policies) {
         return new SchedulingDtos.EncounterResponse(
                 encounter.getId(), encounter.getAppointmentId(), encounter.getPatientId(),
                 encounter.getPatientMrn(), encounter.getClinicianId(), encounter.getDepartmentCode(),
                 encounter.getEncounterType(), encounter.getStartedAt(), encounter.getEndedAt(),
                 encounter.getStatus(),
                 encounter.getNotes().stream().map(SchedulingMapper::toResponse).toList(),
-                vitals.stream().map(SchedulingMapper::toResponse).toList(),
+                vitals.stream().map(record -> toResponse(record, policies)).toList(),
                 diagnoses.stream().map(SchedulingMapper::toResponse).toList());
     }
 

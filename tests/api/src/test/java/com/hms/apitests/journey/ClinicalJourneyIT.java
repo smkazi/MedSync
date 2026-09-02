@@ -139,9 +139,21 @@ class ClinicalJourneyIT extends RequiresRunningStack {
     void chartTheEncounter() {
         given().spec(Api.as(Api.NURSE))
                 .body(Map.of("heartRate", 92, "systolicBp", 138, "diastolicBp", 88,
-                        "temperatureC", 37.8, "respiratoryRate", 18, "oxygenSaturation", 97))
+                        "temperatureC", 37.8, "respiratoryRate", 18, "oxygenSaturation", 97,
+                        "consciousness", "ALERT"))
                 .when().post("/encounters/{id}/vitals", encounterId)
-                .then().statusCode(201);
+                .then().statusCode(201)
+                // NEWS2 comes back with the observations rather than from a second call, so the
+                // two cannot disagree. Heart rate 92 (1), SpO2 97 (0), everything else normal = 1,
+                // which bands LOW on the published chart.
+                .body("news2.total", equalTo(1))
+                .body("news2.band", equalTo("LOW"))
+                // The escalation is the hospital's own policy, and is configuration where the
+                // score itself deliberately is not.
+                .body("news2.escalation.monitoring", notNullValue())
+                // Nothing was left unmeasured here, which is a different fact from a score of 1
+                // out of four observations.
+                .body("news2.missing", org.hamcrest.Matchers.empty());
 
         String subjective = "Patient reports three days of productive cough and intermittent fever. "
                 + "No chest pain, no shortness of breath at rest.";

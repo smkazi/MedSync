@@ -32,21 +32,46 @@ export async function fixtureMrn(page: Page): Promise<string> {
   return ((await cell.textContent()) ?? "").trim();
 }
 
+/**
+ * Opens the booking screen on the first day at or after {@code offsetDays} that has a free slot.
+ *
+ * <p>Walks forward rather than trusting the offset, and that is not defensive coding for its own
+ * sake. The seeded clinic gives one clinician sixteen slots a day, every spec here books on a
+ * fixed day offset, and nothing cleans up — so after enough runs against the same development
+ * database the day is full and the suite starts failing on a fixture rather than on the behaviour
+ * it was testing. It was green for a long time and then it was not, which is the worst way for a
+ * test to be wrong.
+ *
+ * @return the date it settled on, so the caller can filter the appointment book by it
+ */
+async function openBookableDay(page: Page, mrn: string, offsetDays: number): Promise<string> {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const date = nextWeekday(offsetDays + attempt * 7);
+    await page.goto(`/appointments/new?mrn=${encodeURIComponent(mrn)}`);
+    // A combobox, not just a label. `Card` names its <section> with `aria-labelledby`, which is
+    // correct ARIA and what makes a screen full of same-named fields addressable at all - but it
+    // means the region "Clinician and day" answers to getByLabel("Clinician") too. Saying the role
+    // says which of the two is meant.
+    await page
+      .getByRole("combobox", { name: "Clinician" })
+      .selectOption({ label: `${CLINICIAN} — Consultant Physician` });
+    await page.getByLabel("Date").fill(date);
+    await page.getByRole("button", { name: "Show slots" }).click();
+    if ((await page.locator('input[name="startsAt"]:not([disabled])').count()) > 0) {
+      return date;
+    }
+  }
+  throw new Error(
+    `no free slot for ${CLINICIAN} on any of twenty weekdays from +${offsetDays} days. `
+      + "The development database is full of this suite's own appointments; drop the scheduling "
+      + "schema, or run `make dev-test-stack` for a fresh one.",
+  );
+}
+
 /** Books, checks in, starts and opens an encounter, returning its URL and the row's identifiers. */
 export async function encounterFor(page: Page, offsetDays: number) {
   const mrn = await fixtureMrn(page);
-  const date = nextWeekday(offsetDays);
-
-  await page.goto(`/appointments/new?mrn=${encodeURIComponent(mrn)}`);
-  // A combobox, not just a label. `Card` names its <section> with `aria-labelledby`, which is
-  // correct ARIA and what makes a screen full of same-named fields addressable at all - but it
-  // means the region "Clinician and day" answers to getByLabel("Clinician") too. Saying the role
-  // says which of the two is meant.
-  await page
-    .getByRole("combobox", { name: "Clinician" })
-    .selectOption({ label: `${CLINICIAN} — Consultant Physician` });
-  await page.getByLabel("Date").fill(date);
-  await page.getByRole("button", { name: "Show slots" }).click();
+  const date = await openBookableDay(page, mrn, offsetDays);
 
   const radio = page.locator('input[name="startsAt"]:not([disabled])').first();
   await expect(radio).toBeVisible();

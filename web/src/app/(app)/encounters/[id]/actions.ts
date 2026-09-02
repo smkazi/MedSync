@@ -54,9 +54,18 @@ export async function recordVitals(form: FormData): Promise<void> {
   // an unrecorded observation is not the same as a recorded zero, least of all for a pain score.
   const body: Record<string, unknown> = {};
   for (const [field, value] of Object.entries(withoutBlanks(values))) {
-    body[field] = NUMERIC_VITALS.has(field) ? Number(value) : value;
+    body[field] = NUMERIC_VITALS.has(field)
+      ? Number(value)
+      // The oxygen flag is a checkbox, so it arrives as "true"/"false" and the service wants a
+      // boolean. It is worth two points on NEWS2, and "false" is emphatically not false.
+      : value === "true" || value === "false"
+        ? value === "true"
+        : value;
   }
-  if (Object.keys(body).length === 0) {
+  // "On air" alone is not an observation: the checkbox always posts something, so counting it
+  // would let an empty form through as a set of vitals with a NEWS2 of 0 beside it.
+  const measured = Object.keys(body).filter((field) => field !== "onSupplementalOxygen");
+  if (measured.length === 0) {
     finish(id, "Enter at least one observation before recording vitals.", null);
   }
 

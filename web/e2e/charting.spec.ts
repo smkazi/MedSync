@@ -32,6 +32,16 @@ test.describe("charting an encounter", () => {
     const observations = page.locator("dl").first();
     await expect(observations.filter({ hasText: "Pain" })).toContainText("—");
 
+    // ---- the early warning score, derived from what was just recorded ------------------
+    //
+    // Heart rate 104 (1) and SpO2 94 (1) = 2 on the published chart, with respirations,
+    // temperature and consciousness unmeasured. The panel is required to say both things: the
+    // score, and that it is incomplete — a NEWS2 of 2 from four observations is a different fact
+    // from a 2 from seven, and a screen that hid the difference would invite a wrong reading.
+    await expect(page.getByText("NEWS2")).toBeVisible();
+    await expect(page.getByText(/Not measured:/)).toContainText("Respiration rate");
+    await expect(page.getByText(/never changes a status/)).toBeVisible();
+
     // ---- the note -----------------------------------------------------------------------
     await page.getByLabel("Subjective").fill("Chest tightness on exertion for three days.");
     await page.getByLabel("Assessment").fill("Suspected stable angina.");
@@ -149,6 +159,30 @@ test.describe("charting an encounter", () => {
     await expect(page.getByLabel("ICD-10")).not.toHaveValue("");
     // Still nothing recorded: filling the field is not the same as adding the diagnosis.
     await expect(page.getByRole("cell", { name: /^I2/ })).toHaveCount(0);
+  });
+
+  test("supplemental oxygen is asked for, because the score cannot infer it", async ({ page }) => {
+    test.setTimeout(120_000);
+    await signIn(page, "dr.rao");
+    await encounterFor(page, 85);
+
+    // 98% on air scores nothing. The same saturation on oxygen scores 2, and there is no way to
+    // tell the two apart from the number — which is why the form has to ask.
+    await page.getByLabel(/SpO2/).fill("98");
+    await page.getByLabel(/Resp\. rate/).fill("16");
+    await page.getByRole("button", { name: "Record observations" }).click();
+    await expect(page.getByRole("status")).toContainText("Vitals recorded");
+    await expect(page.getByRole("region", { name: "Latest observations" })).toContainText("air");
+
+    await page.getByLabel(/SpO2/).fill("98");
+    await page.getByLabel(/Resp\. rate/).fill("16");
+    await page.getByLabel("On supplemental oxygen").check();
+    await page.getByRole("button", { name: "Record observations" }).click();
+    await expect(page.getByRole("status")).toContainText("Vitals recorded");
+
+    const observations = page.getByRole("region", { name: "Latest observations" });
+    await expect(observations).toContainText("supplemental");
+    await expect(observations).toContainText("Air or oxygen");
   });
 
   test("a receptionist cannot reach a chart at all", async ({ page }) => {

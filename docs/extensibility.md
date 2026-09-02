@@ -39,6 +39,7 @@ services and a room code is cached on appointments, and none of them would learn
 | Morphology cut-offs | `laboratory.morphology_thresholds` | `PATCH /lab/morphology-thresholds/{code}` (the number, not the note) |
 | Analyzers | `laboratory.analyzers` | migration or admin |
 | Clinician schedules and blackouts | `scheduling.clinician_schedules`, `.schedule_blackouts` | `POST /schedules` |
+| **NEWS2 escalation policy** | `scheduling.escalation_policies` | `PATCH /escalation-policies/{id}` — the response to a band, never the band itself |
 | **Message wording** | `notification.message_templates` | `PATCH /notifications/templates/{id}` — with one limit, below |
 | ICD-10 subset | `services/ai-service/data/icd10_subset.json` | replace the file |
 
@@ -138,6 +139,7 @@ cannot act on.
 | `OrderStatus`, `ResultStatus` | Encode separation of duties: a lab technician enters, a pathologist releases. The permitted transitions are the control. |
 | `Protocol` (`ASTM`, `KDPS`) | Each value maps to a parser class. A configured value with no parser behind it is a runtime failure at the worst moment — an analyzer transmitting a real sample. |
 | `NotificationCategory` | Each value is the key to a template *and* the thing a caller is allowed to choose instead of writing text. A configurable list would let somebody add a category with no wording behind it, which the platform records as "no active template" rather than sending — visible, but still a message a patient did not get. |
+| **NEWS2 cut-offs** | The one place this page argues *against* a table. NEWS2 is a national standard, and its whole value is that a score of 6 means the same thing in every hospital using it — so a deployment able to edit the bands could publish a number it calls NEWS2 which is not NEWS2, a wrong answer carrying the authority of a standard. The score lives in `News2Calculator`, tested against the Royal College of Physicians' published chart. What *is* local, and what is therefore a table, is the escalation policy: who responds, how fast, how often observations repeat. A district general and a tertiary centre answer that differently and both are right. |
 | `TokenStatus` | Three states, and they mirror the appointment's: WAITING at check-in, CALLED when the consultation starts, DONE when it ends. There is deliberately no SKIPPED — a patient who does not answer their number is a no-show on the *appointment*, which that state machine already records, and a second place to say the same thing is a second place for the two to disagree. |
 | `NotificationChannel` | Each value maps to an adapter. A configured channel with no adapter is a message that silently becomes a log line. The *presence* of an adapter is configuration — no mail host means no email channel — and `GET /notifications/capabilities` reports which really exist so a screen does not offer one that does not. |
 | Roles | Named in `@PreAuthorize` expressions, which are compiled. The `identity.roles` table is data, but granting a role a capability is a code change. |

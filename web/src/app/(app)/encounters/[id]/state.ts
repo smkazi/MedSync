@@ -20,6 +20,7 @@ export const VITALS_FIELDS = [
   "heightCm",
   "painScore",
   "consciousness",
+  "onSupplementalOxygen",
 ] as const;
 
 /** Vitals the service takes as numbers; everything else on the form is a string. */

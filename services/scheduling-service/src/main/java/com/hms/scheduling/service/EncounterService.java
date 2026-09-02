@@ -45,11 +45,12 @@ public class EncounterService {
     private final AppointmentRepository appointments;
     private final EventPublisher events;
     private final AuditService audit;
+    private final EscalationPolicyService escalations;
 
     public EncounterService(EncounterRepository encounters, ClinicalNoteRepository notes,
                             VitalsRepository vitals, DiagnosisRepository diagnoses,
                             AppointmentRepository appointments, EventPublisher events,
-                            AuditService audit) {
+                            AuditService audit, EscalationPolicyService escalations) {
         this.encounters = encounters;
         this.notes = notes;
         this.vitals = vitals;
@@ -57,6 +58,7 @@ public class EncounterService {
         this.appointments = appointments;
         this.events = events;
         this.audit = audit;
+        this.escalations = escalations;
     }
 
     /**
@@ -105,7 +107,8 @@ public class EncounterService {
                 .orElseThrow(() -> NotFoundException.of("Encounter", id));
         return SchedulingMapper.toResponse(encounter,
                 vitals.findByEncounterIdOrderByRecordedAtDesc(id),
-                diagnoses.findByEncounterIdOrderByCategoryAsc(id));
+                diagnoses.findByEncounterIdOrderByCategoryAsc(id),
+                escalations.byBand());
     }
 
     @Transactional(readOnly = true)
@@ -193,10 +196,18 @@ public class EncounterService {
         VitalsRecord record = new VitalsRecord(encounter, CurrentUser.usernameOrSystem());
         record.record(request.heartRate(), request.systolicBp(), request.diastolicBp(),
                 request.respiratoryRate(), request.temperatureC(), request.oxygenSaturation(),
-                request.weightKg(), request.heightCm(), request.painScore(), request.consciousness());
+                request.weightKg(), request.heightCm(), request.painScore(), request.consciousness(),
+                request.onSupplementalOxygen());
         vitals.save(record);
-        audit.record("VITALS_RECORDED", "Encounter", encounterId, "by " + record.getRecordedBy());
-        return SchedulingMapper.toResponse(record);
+        News2Calculator.Score score = News2Calculator.of(record);
+        // The score goes in the audit detail and the observations do not. A NEWS2 is a derived
+        // number rather than a clinical narrative, and "who was scored 7 and when" is exactly the
+        // question a deterioration review asks — while `detail` must never carry clinical free
+        // text, which is AuditService's own contract.
+        audit.record("VITALS_RECORDED", "Encounter", encounterId,
+                "by %s, NEWS2 %d (%s)".formatted(record.getRecordedBy(), score.total(),
+                        score.band()));
+        return SchedulingMapper.toResponse(record, escalations.byBand());
     }
 
     @Transactional
