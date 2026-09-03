@@ -29,6 +29,7 @@
     <module>services/admissions-service</module>
     <module>services/pharmacy-service</module>
     <module>services/billing-service</module>
+    <module>services/imaging-service</module>
     <module>services/interop-service</module>
   </modules>
 

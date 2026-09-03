@@ -357,6 +357,53 @@ public final class Roles {
      */
     public static final String CARE_TEAM_JOIN = "hasAnyRole('DOCTOR','NURSE')";
 
+    /**
+     * The radiographer: positions the patient, runs the modality, sends the images.
+     *
+     * <p>A separate role from {@link #RADIOLOGIST} for the reason {@code LAB_TECH} is separate from
+     * {@code PATHOLOGIST}: the person who produced the images must not be the person who signs off
+     * what they show. Same shape, same argument, one department along.
+     */
+    public static final String RADIOGRAPHER = "RADIOGRAPHER";
+
+    /**
+     * The radiologist: reads the study and signs the report other clinicians treat from.
+     *
+     * <p>Not folded into {@code PATHOLOGIST} although both sign a diagnostic report. They are
+     * different people with different registrations, and one role for both would let either sign
+     * the other's work — the blurring {@link #CASHIER} refused for billing.
+     */
+    public static final String RADIOLOGIST = "RADIOLOGIST";
+
+    /**
+     * Acquisition: the modality worklist, and registering the studies that come back.
+     *
+     * <p>Deliberately not {@code CLINICAL_WRITE}. Scheduling a scan and filing what came off the
+     * scanner is the radiography room's work, and a ward nurse has no modality to run — while a
+     * radiographer needs the worklist and needs it without a chart write.
+     */
+    public static final String IMAGING_ACQUIRE = "hasAnyRole('ADMIN','RADIOGRAPHER')";
+
+    /**
+     * Reporting: writing the findings, and signing them.
+     *
+     * <p>Signing <em>is</em> release, as it is in the laboratory: there is no second step, and the
+     * moment a report is signed it is what somebody treats from. So this is the narrowest role list
+     * in the module, and the abuse-case suite asserts that a radiographer never reaches it.
+     */
+    public static final String IMAGING_REPORT = "hasAnyRole('ADMIN','RADIOLOGIST')";
+
+    /**
+     * Who may read imaging: the ordering clinician, the ward, and the department.
+     *
+     * <p>Wider than either act above, and it has to be — an image nobody treating the patient can
+     * see is an image that was taken for nothing. The care-relationship narrowing then applies on
+     * top for the clinical roles, exactly as it does to a laboratory order: this list says which
+     * jobs may look at radiology at all, and {@code CareRelationshipClient} says whose patients.
+     */
+    public static final String IMAGING_READ =
+            "hasAnyRole('ADMIN','DOCTOR','NURSE','RADIOLOGIST','RADIOGRAPHER')";
+
     private Roles() {
     }
 }

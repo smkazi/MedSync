@@ -117,6 +117,13 @@ public class RouteConfig {
                 .route("interop", r -> r
                         .path("/consents/**", "/interop/**", "/portal/records/**", "/hl7/**")
                         .uri(services.interop()))
+                // Radiology: the request, the worklist a modality reads, what came back, and the
+                // report. One prefix rather than several top-level nouns, because unlike a consent
+                // or an invoice none of these is a thing anybody asks for by itself -- a study is
+                // always a study of an order, and a report is always a report on a study.
+                .route("imaging", r -> r
+                        .path("/imaging/**")
+                        .uri(services.imaging()))
                 // Clinical decision support: summarisation, triage, no-show risk, coding.
                 .route("ai", r -> r
                         .path("/ai/**")

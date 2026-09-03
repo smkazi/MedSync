@@ -299,6 +299,26 @@ services:
     expose:
       - "8089"
 
+  imaging-service:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: Dockerfile.java
+      args:
+        SERVICE: imaging-service
+    environment:
+      <<: *platform-env
+      HMS_DB_USER: ${HMS_DB_IMAGING_USER:-${HMS_DB_USER:-hms}}
+      HMS_DB_PASSWORD: "${HMS_DB_IMAGING_PASSWORD:-${HMS_DB_PASSWORD}}"
+      SERVER_PORT: 8090
+      HMS_IMAGING_PORT: 8090
+      # Where the pixels go. Unset means studies register from their headers and no image is kept,
+      # which is the honest default for a RIS -- see the README. Point this at a mounted volume (and
+      # add the volume below) to store them.
+      HMS_IMAGING_STORAGE_DIR: ${HMS_IMAGING_STORAGE_DIR:-}
+    expose:
+      - "8090"
+
   ai-service:
     build:
       context: ./services/ai-service
@@ -330,6 +350,7 @@ services:
       HMS_PHARMACY_URI: http://pharmacy-service:8087
       HMS_BILLING_URI: http://billing-service:8088
       HMS_INTEROP_URI: http://interop-service:8089
+      HMS_IMAGING_URI: http://imaging-service:8090
       HMS_AI_URI: http://ai-service:8000
       HMS_CORS_ALLOWED_ORIGINS: http://localhost:3000
     ports:
@@ -352,6 +373,8 @@ services:
       billing-service:
         condition: service_started
       interop-service:
+        condition: service_started
+      imaging-service:
         condition: service_started
     restart: unless-stopped
 

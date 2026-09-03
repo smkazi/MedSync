@@ -18,6 +18,7 @@ SERVICES=(
   "pharmacy-service:8087"
   "billing-service:8088"
   "interop-service:8089"
+  "imaging-service:8090"
   "gateway:8080"
 )
 

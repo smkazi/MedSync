@@ -1,0 +1,81 @@
+spring:
+  application:
+    name: imaging-service
+  datasource:
+    url: ${HMS_DB_URL:jdbc:postgresql://localhost:5432/hms}
+    username: ${HMS_DB_USER:hms}
+    password: ${HMS_DB_PASSWORD:hms}
+    hikari:
+      schema: imaging
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: imaging
+        jdbc:
+          time_zone: UTC
+  flyway:
+    # Migrations run as a role that owns the schemas and holds DDL; the runtime credential
+    # above has none. Defaults to the datasource credential, so a deployment that has not
+    # run scripts/db-roles.sql behaves exactly as it did before the split existed.
+    user: ${HMS_DB_MIGRATION_USER:${HMS_DB_USER:hms}}
+    password: ${HMS_DB_MIGRATION_PASSWORD:${HMS_DB_PASSWORD:hms}}
+    enabled: true
+    schemas: imaging
+    default-schema: imaging
+    create-schemas: true
+  kafka:
+    bootstrap-servers: ${HMS_KAFKA:localhost:9092}
+  servlet:
+    multipart:
+      # A DICOM instance is uploaded whole. A chest film is a few megabytes and a thin-slice CT
+      # series is far larger per instance, so the cap is generous -- but it is a cap: without one
+      # the default 1MB refuses every real study, and without a maximum somebody eventually posts a
+      # whole archive at it.
+      max-file-size: ${HMS_IMAGING_MAX_FILE_SIZE:128MB}
+      max-request-size: ${HMS_IMAGING_MAX_FILE_SIZE:128MB}
+
+server:
+  port: ${HMS_IMAGING_PORT:8090}
+  error:
+    include-message: never
+    include-stacktrace: never
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+hms:
+  security:
+    mode: resource-server
+  events:
+    transport: ${HMS_EVENTS_TRANSPORT:log}
+  imaging:
+    # Where the pixels go, and unset by default.
+    #
+    # This platform is a RIS and not an archive: it records that an instance exists, what it is of,
+    # and where somebody put it. With no directory configured a study is still registered in full --
+    # every UID, the series, the instance geometry -- and `storage_uri` is left null, which the
+    # screens report as "registered, no image stored". Point this at a directory (or a mount backed
+    # by an object store) and the bytes are written there and the URI recorded.
+    #
+    # The same posture as the notification channels and the ABDM gateway: a working default, one
+    # adapter, and no pretence that the unwired half is wired.
+    storage-dir: ${HMS_IMAGING_STORAGE_DIR:}
+    # The prefix an accession number carries. The number itself comes from a sequence, so two
+    # concurrent orders can never be handed the same one.
+    accession-prefix: ${HMS_ACCESSION_PREFIX:IMG}
+
+spring.security.oauth2.resourceserver.jwt.jwk-set-uri: ${HMS_JWKS_URI:http://localhost:8081/.well-known/jwks.json}
+
+logging:
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level [%X{correlationId:-}] %logger{36} - %msg%n"

@@ -103,7 +103,16 @@ public class DevDataSeeder implements ApplicationRunner {
             // separation demonstrable rather than asserted: this account can raise an invoice and
             // take a payment and cannot open a chart, and `dr.rao` is the other way round.
             new SeedUser("33333333-0000-4000-8000-00000000000a", "cashier", "billing@hms.local",
-                    "Farida Noorani", Set.of("CASHIER")));
+                    "Farida Noorani", Set.of("CASHIER")),
+            // Radiology, as two accounts rather than one, because the separation between acquiring
+            // an image and signing what it shows is only demonstrable if two people exist. The
+            // radiographer runs the worklist and files what comes off the modality; the radiologist
+            // reports. Neither can do the other's act, and the abuse-case suite asserts it in both
+            // directions.
+            new SeedUser("33333333-0000-4000-8000-00000000000b", "radiographer",
+                    "radiography@hms.local", "Tejas Kulkarni", Set.of("RADIOGRAPHER")),
+            new SeedUser("33333333-0000-4000-8000-00000000000c", "dr.mistry", "mistry@hms.local",
+                    "Dr Zenobia Mistry", Set.of("RADIOLOGIST")));
 
     private final UserRepository users;
     private final RoleRepository roles;

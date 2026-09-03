@@ -36,6 +36,16 @@ public final class Topics {
      */
     public static final String BILLING = "hms.billing.events";
 
+    /**
+     * Radiology: what was ordered, what was scanned, and what the radiologist signed.
+     *
+     * <p>Its own topic, like the others. The event that carries weight is the signed report —
+     * billing prices it, and notification tells the patient a report is ready without saying a word
+     * about what it says. It carries the procedure code rather than a count, which is the correction
+     * the laboratory's release event needed once billing existed: a count cannot be priced.
+     */
+    public static final String IMAGING = "hms.imaging.events";
+
     private Topics() {
     }
 }

@@ -1,0 +1,31 @@
+# Integration tests run against a real PostgreSQL. The rules this module depends on are database
+# rules — a study's UIDs unique by construction, an accession number from a sequence so two orders
+# can never share one, and a signed report that cannot exist without a signature — and none of them
+# has an in-memory substitute that enforces anything.
+spring:
+  datasource:
+    url: ${HMS_TEST_DB_URL:jdbc:postgresql://localhost:5432/hms_test}
+    username: ${HMS_TEST_DB_USER:hms}
+    password: ${HMS_TEST_DB_PASSWORD:hms}
+    hikari:
+      schema: imaging
+  flyway:
+    enabled: true
+hms:
+  # The care-relationship check calls scheduling-service, which is not running here. It fails
+  # closed, so left on it would refuse every clinician read in this file and every assertion about
+  # imaging would become a 403 about something else entirely. Off here, and proved on its own in
+  # CareRelationshipNarrowingTest, which stands up a stub and asserts both directions — including
+  # that an unreachable scheduling-service refuses rather than opens. Same split as the laboratory.
+  care-team:
+    narrow-patient-records: false
+  events:
+    transport: log
+  imaging:
+    # No archive, which is the default and the case worth covering: a study registers in full and
+    # carries no storage_uri. The storing half is tested on its own against a temporary directory,
+    # so neither path depends on the other having been configured.
+    storage-dir:
+logging:
+  level:
+    org.flywaydb: WARN
