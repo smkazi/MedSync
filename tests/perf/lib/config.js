@@ -17,6 +17,10 @@ export const USERS = {
   // point of the leg is the contention on the counter and the payment statement, and both are
   // reached through the same authorisation a real desk has.
   cashier: { username: __ENV.PERF_CASHIER || 'cashier', password: __ENV.PERF_PASSWORD || 'ChangeMe!Dev2026' },
+  // The radiography room. Its own identity rather than the doctor's, because the worklist is the
+  // one read on the platform a doctor is refused: it is IMAGING_ACQUIRE, and measuring it as an
+  // administrator would measure a query nobody makes.
+  radiographer: { username: __ENV.PERF_RADIOGRAPHER || 'radiographer', password: __ENV.PERF_PASSWORD || 'ChangeMe!Dev2026' },
   // Used by setup() only, to provision the clinician the booking journey needs. Creating staff
   // is an administrative act, so the profile cannot bootstrap itself without it.
   admin: { username: __ENV.PERF_ADMIN || 'admin', password: __ENV.PERF_PASSWORD || 'ChangeMe!Dev2026' },
@@ -83,6 +87,10 @@ export const LATENCY = {
   // patient_read's with room for the second query and the collections — and it is here so that a
   // guard on the busiest read path cannot get slower without the run saying so.
   'http_req_duration{endpoint:chart_read}': ['p(95)<300', 'p(99)<700'],
+  // The modality worklist. Ordered priority-then-time over an index built for exactly that, and
+  // read from a screen beside a scanner that somebody is standing at — so it gets the same budget
+  // as a chart read rather than the looser one a report list would take.
+  'http_req_duration{endpoint:imaging_worklist}': ['p(95)<300', 'p(99)<700'],
   'http_req_duration{endpoint:appointment_search}': ['p(95)<400', 'p(99)<900'],
   'http_req_duration{endpoint:availability}': ['p(95)<400', 'p(99)<900'],
   'http_req_duration{endpoint:lab_worklist}': ['p(95)<400', 'p(99)<900'],

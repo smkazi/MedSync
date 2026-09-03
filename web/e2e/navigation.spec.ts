@@ -31,6 +31,7 @@ const EXPECTED: Record<string, string[]> = {
     "Scheduling",
     "Clinical",
     "Laboratory",
+    "Radiology",
     "Facility",
     "Pharmacy",
     "Billing",
@@ -44,6 +45,7 @@ const EXPECTED: Record<string, string[]> = {
     "Scheduling",
     "Clinical",
     "Laboratory",
+    "Radiology",
     "Facility",
     "Pharmacy",
     "Billing",
@@ -56,6 +58,7 @@ const EXPECTED: Record<string, string[]> = {
     "Scheduling",
     "Clinical",
     "Laboratory",
+    "Radiology",
     "Facility",
     "Pharmacy",
     "Billing",
@@ -92,6 +95,13 @@ const EXPECTED: Record<string, string[]> = {
   // The billing desk. The mirror image of the pharmacist: the module it works in and nothing
   // clinical, which is what makes the separation of duties demonstrable rather than asserted.
   cashier: ["Dashboard", "Billing"],
+  // The radiography room and the reporting room. Two accounts, one menu each, and the same shape
+  // as the pharmacy and the billing desk: the department they work in and nothing clinical. The
+  // *items* inside that one menu are where they differ, and radiology.spec.ts is where that is
+  // asserted — a radiographer is offered the worklist and not the reporting queue, and a
+  // radiologist the reverse.
+  radiographer: ["Dashboard", "Radiology"],
+  "dr.mistry": ["Dashboard", "Radiology"],
 };
 
 test.describe("the menu is role-aware", () => {

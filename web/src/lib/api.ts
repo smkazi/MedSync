@@ -139,6 +139,48 @@ export async function apiBinary(
   };
 }
 
+/**
+ * Posts a file to the gateway, on the server.
+ *
+ * <p>Exists for the DICOM upload, which is the platform's only endpoint that takes a file rather
+ * than JSON. {@link api} sets `Content-Type: application/json` and stringifies the body, which for
+ * a multipart request is two ways wrong at once.
+ *
+ * <p><strong>The boundary is not set by hand.</strong> `fetch` derives it from the `FormData` and
+ * writes the header itself, so no `Content-Type` is passed here — setting one would name a boundary
+ * that does not match the body, and the far end would see an empty part rather than a file. That is
+ * the single easiest mistake to make in this function and the reason it says so.
+ *
+ * <p>The file object comes straight from the server action's own `FormData`, so the bytes are never
+ * loaded into a string on the way through.
+ */
+export async function apiUpload<T>(path: string, file: File): Promise<T> {
+  const token = await accessToken();
+  const body = new FormData();
+  body.append("file", file, file.name);
+  const response = await fetch(`${GATEWAY}${path}`, {
+    method: "POST",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body,
+    cache: "no-store",
+  });
+
+  const text = await response.text();
+  const payload = text ? safeParse(text) : undefined;
+  if (!response.ok) {
+    const problem = payload as
+      | { detail?: string; title?: string; errors?: Record<string, string>; message?: string }
+      | undefined;
+    throw new ApiError(
+      response.status,
+      problem?.detail ?? problem?.message ?? problem?.title ?? `Upload failed (${response.status})`,
+      problem?.errors,
+      payload,
+    );
+  }
+  return payload as T;
+}
+
 function safeParse(text: string): unknown {
   try {
     return JSON.parse(text);

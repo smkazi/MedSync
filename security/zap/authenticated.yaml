@@ -346,6 +346,48 @@ jobs:
       - url: "${ZAP_TARGET}/patients/00000000-0000-4000-8000-000000000000/wristband"
         method: GET
         responseCode: 404
+      # Radiology, from a clinician's side of the department.
+      #
+      # ZAP logs in as one user and cannot express "403 as a radiographer", so the sharpest pair --
+      # a radiographer refused the report and a radiologist refused the acquisition -- is asserted
+      # in tests/api, as the comments above do for reception and the pharmacy. What can be asserted
+      # here is the other half of the same line, and it is not the weaker half: a doctor is the role
+      # most likely to be widened by accident, because they legitimately order the examination and
+      # read the report, and the two acts in between are somebody else's.
+      - url: "${ZAP_TARGET}/imaging/worklist"
+        method: GET
+        responseCode: 403
+      - url: "${ZAP_TARGET}/imaging/studies/unmatched"
+        method: GET
+        responseCode: 403
+      - url: "${ZAP_TARGET}/imaging/reporting-queue"
+        method: GET
+        responseCode: 403
+      # Drafting and signing, with well-formed bodies so that only the role can be what refuses
+      # them: @Valid resolves during argument binding before @PreAuthorize runs, so an empty body
+      # would answer 400 and the row would pass whatever the role rules said.
+      - url: "${ZAP_TARGET}/imaging/studies/00000000-0000-4000-8000-000000000000/report"
+        method: PUT
+        data: '{"findings":"ZAP","impression":"ZAP"}'
+        responseCode: 403
+      - url: "${ZAP_TARGET}/imaging/studies/00000000-0000-4000-8000-000000000000/report/sign"
+        method: POST
+        responseCode: 403
+      #
+      # POST /imaging/orders has no row either, and this one was written before it was removed. The
+      # intent was to give the active scan a free-text field that ends up on a signed report, and
+      # the expectation was 404 for a patient who does not exist. Run against the live stack it
+      # answered 201: a clinical order's patientId is another service's id and is not resolved, on
+      # this service or on the laboratory -- checked, rather than assumed, and it is the platform's
+      # existing posture rather than anything new here. Which makes the row actively harmful: every
+      # scheduled scan would mint a real accession number and put a junk examination on the
+      # department's worklist. The injection surface it was meant to cover is reached by
+      # InjectionAbuseIT instead, which orders against a patient it registered first.
+      #
+      # POST /imaging/studies has no row, and the reason is worth stating rather than leaving as a
+      # silence: it consumes multipart/form-data, which the requestor job cannot compose. Its
+      # refusals are a @ParameterizedTest in tests/api sending a real multipart body -- and they
+      # have to be, because a JSON request there is answered 415 before authorization is reached.
       # The patient portal, every path, refused to the scanning clinician.
       #
       # This block is different in kind from every other 403 above. Elsewhere a 403 says "this

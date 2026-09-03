@@ -327,6 +327,37 @@ export function bookingJourney(token, data) {
  * which is the one assertion that catches a lost update: if two payments could both land, the
  * status would say PAID while `amount_paid` had been silently restored.
  */
+/**
+ * The radiography room's two reads, as a radiographer.
+ *
+ * <p>Its own journey rather than a leg of `readJourney`, because it needs a different identity: a
+ * doctor is refused the worklist, deliberately, so measuring it on the clinical token would measure
+ * a 403. The same reason the billing leg is separate.
+ *
+ * <p>The worklist is the read worth a threshold. It is ordered priority-then-time over
+ * `idx_imaging_worklist`, which is the one index on this platform whose ordering is itself the
+ * clinical rule — a STAT head CT asked for a minute ago goes ahead of a routine knee film booked
+ * this morning — and an ordering that falls off its index still returns the right rows, just
+ * slowly, so nothing but a profile would notice.
+ */
+export function radiologyJourney(token) {
+  const worklist = http.get(`${BASE_URL}/imaging/worklist`, params('imaging_worklist', token));
+  check(worklist, {
+    'imaging worklist returns 200': (r) => r.status === 200,
+    // Ordering asserted rather than assumed, and asserted on what came back rather than on a
+    // count: an empty worklist is a legitimate state on a quiet database and is not a defect, so
+    // the check is that whatever is there is in the right order.
+    'imaging worklist is priority before time': (r) => {
+      const rows = r.json() || [];
+      const rank = { STAT: 0, URGENT: 1, ROUTINE: 2 };
+      return rows.every((row, i) => i === 0 || rank[rows[i - 1].priority] <= rank[row.priority]);
+    },
+  });
+
+  const unmatched = http.get(`${BASE_URL}/imaging/studies/unmatched`, params('imaging_unmatched', token));
+  check(unmatched, { 'unmatched studies return 200': (r) => r.status === 200 });
+}
+
 export function billingJourney(token, data) {
   const started = Date.now();
   const patient = data.patients[Math.floor(Math.random() * data.patients.length)];

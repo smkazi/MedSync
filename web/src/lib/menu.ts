@@ -31,7 +31,9 @@ export type RoleName =
   | "LAB_TECH"
   | "PATHOLOGIST"
   | "PHARMACIST"
-  | "CASHIER";
+  | "CASHIER"
+  | "RADIOGRAPHER"
+  | "RADIOLOGIST";
 
 export type MenuItem = {
   label: string;
@@ -68,6 +70,8 @@ const STAFF: RoleName[] = [
   "PATHOLOGIST",
   "PHARMACIST",
   "CASHIER",
+  "RADIOGRAPHER",
+  "RADIOLOGIST",
 ];
 
 const CLINICAL_READ: RoleName[] = [
@@ -121,6 +125,13 @@ const CONSENT_READ: RoleName[] = ["ADMIN", "DOCTOR", "NURSE", "RECEPTIONIST"];
  * narrower than CONSENT_READ on purpose: reading whether a consent exists is a clinical question,
  * and reading the raw traffic between two hospitals is not.
  */
+// Radiology. Three lists rather than one, because the department is three jobs: anybody looking
+// after the patient may read an examination, the radiography room runs the worklist and files what
+// comes off the modality, and only a radiologist reports. Mirrors Roles.IMAGING_READ,
+// IMAGING_ACQUIRE and IMAGING_REPORT, which is what the platform enforces.
+const IMAGING_READ: RoleName[] = ["ADMIN", "DOCTOR", "NURSE", "RADIOLOGIST", "RADIOGRAPHER"];
+const IMAGING_ACQUIRE: RoleName[] = ["ADMIN", "RADIOGRAPHER"];
+const IMAGING_REPORT: RoleName[] = ["ADMIN", "RADIOLOGIST"];
 const INTERFACE: RoleName[] = ["ADMIN", "DOCTOR"];
 const ADMIN_ONLY: RoleName[] = ["ADMIN"];
 
@@ -209,6 +220,37 @@ export const MENUS: Menu[] = [
         href: "/laboratory/device-messages",
         roles: LAB_WRITE,
         note: "Raw analyzer transmissions",
+      },
+    ],
+  },
+
+  {
+    label: "Radiology",
+    roles: IMAGING_READ,
+    items: [
+      {
+        label: "Worklist",
+        href: "/imaging",
+        roles: IMAGING_ACQUIRE,
+        note: "What is booked and not yet scanned",
+      },
+      {
+        label: "Reporting queue",
+        href: "/imaging/reporting",
+        roles: IMAGING_REPORT,
+        note: "Scanned and unread",
+      },
+      {
+        label: "Unmatched studies",
+        href: "/imaging/unmatched",
+        roles: IMAGING_ACQUIRE,
+        note: "Images that arrived for nobody",
+      },
+      {
+        label: "Examination catalogue",
+        href: "/imaging/catalogue",
+        roles: IMAGING_READ,
+        note: "Read-only",
       },
     ],
   },

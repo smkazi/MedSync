@@ -24,6 +24,7 @@ const EXPECTED_TOP_LEVEL: Record<RoleName, string[]> = {
     "Scheduling",
     "Clinical",
     "Laboratory",
+    "Radiology",
     "Facility",
     "Pharmacy",
     "Billing",
@@ -37,6 +38,7 @@ const EXPECTED_TOP_LEVEL: Record<RoleName, string[]> = {
     "Scheduling",
     "Clinical",
     "Laboratory",
+    "Radiology",
     "Facility",
     "Pharmacy",
     "Billing",
@@ -49,6 +51,7 @@ const EXPECTED_TOP_LEVEL: Record<RoleName, string[]> = {
     "Scheduling",
     "Clinical",
     "Laboratory",
+    "Radiology",
     "Facility",
     "Pharmacy",
     "Billing",
@@ -93,6 +96,13 @@ const EXPECTED_TOP_LEVEL: Record<RoleName, string[]> = {
   // account can raise an invoice and take a payment and cannot open a chart, which is what makes
   // the separation demonstrable rather than asserted.
   CASHIER: ["Dashboard", "Billing"],
+  // The radiography room and the reporting room. Each sees Radiology and nothing else, which is
+  // the same shape as the pharmacist and for the same reason: a radiographer positions patients
+  // and files images, and has no business in a chart, an appointment book or a bill. The
+  // reporting radiologist reads studies, and reaches a patient's other records only through the
+  // care-relationship narrowing, which is a platform check rather than a menu.
+  RADIOGRAPHER: ["Dashboard", "Radiology"],
+  RADIOLOGIST: ["Dashboard", "Radiology"],
 };
 
 describe("menusFor", () => {

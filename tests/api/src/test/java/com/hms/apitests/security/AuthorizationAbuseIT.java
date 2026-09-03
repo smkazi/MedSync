@@ -8,6 +8,7 @@ import static org.hamcrest.Matchers.notNullValue;
 
 import com.hms.apitests.support.Api;
 import com.hms.apitests.support.Fixtures;
+import com.hms.apitests.support.MinimalDicom;
 import com.hms.apitests.support.RequiresRunningStack;
 import java.util.List;
 import java.util.Map;
@@ -189,6 +190,33 @@ class AuthorizationAbuseIT extends RequiresRunningStack {
             "cashier,       GET,    /consents",
             "lab.tech,      GET,    /interop/disclosures",
             "cashier,       GET,    /interop/disclosures",
+            // Radiology is three jobs and no account holds two of them. The department runs the
+            // worklist and acquires; only a radiologist interprets and signs; and a clinician
+            // orders. The same shape as the laboratory one department along, and these rows are
+            // what makes it a separation rather than a convention: the person who produced the
+            // images must not be the person who signs off what they show.
+            "dr.mistry,     POST,   /imaging/orders",
+            "radiographer,  POST,   /imaging/orders",
+            "radiographer,  GET,    /imaging/reporting-queue",
+            "radiographer,  PUT,    /imaging/studies/00000000-0000-4000-8000-000000000000/report",
+            "radiographer,  POST,   /imaging/studies/00000000-0000-4000-8000-000000000000/report/sign",
+            "dr.rao,        POST,   /imaging/studies/00000000-0000-4000-8000-000000000000/report/sign",
+            "dr.pathan,     PUT,    /imaging/studies/00000000-0000-4000-8000-000000000000/report",
+            // A worklist and a slot on a scanner are the radiography room's business. A ward, a
+            // bench and a billing desk each have less claim on them than the last.
+            "dr.mistry,     GET,    /imaging/worklist",
+            "dr.rao,        GET,    /imaging/worklist",
+            "cashier,       GET,    /imaging/worklist",
+            "lab.tech,      GET,    /imaging/worklist",
+            "reception,     GET,    /imaging/worklist",
+            "dr.rao,        POST,   /imaging/orders/00000000-0000-4000-8000-000000000000/schedule",
+            "cashier,       GET,    /imaging/studies/unmatched",
+            "dr.rao,        GET,    /imaging/studies/unmatched",
+            // And an examination is chart content: the billing desk and the pharmacy have no
+            // reason to read what a patient was scanned for.
+            "cashier,       GET,    /imaging/orders/00000000-0000-4000-8000-000000000000",
+            "pharmacist,    GET,    /imaging/orders/00000000-0000-4000-8000-000000000000",
+            "cashier,       GET,    /imaging/encounters/00000000-0000-4000-8000-000000000000/orders",
             // Writing a national health identifier onto a record happens at the desk with the
             // patient's card in front of you, not while reading a chart.
             "lab.tech,      GET,    /patients/00000000-0000-4000-8000-000000000000/identifiers",
@@ -201,6 +229,7 @@ class AuthorizationAbuseIT extends RequiresRunningStack {
             case "GET" -> request.when().get(path.trim());
             case "POST" -> request.body(Map.of()).when().post(path.trim());
             case "PATCH" -> request.body(Map.of()).when().patch(path.trim());
+            case "PUT" -> request.body(Map.of()).when().put(path.trim());
             default -> throw new IllegalArgumentException("unhandled method " + method);
         };
 
@@ -296,6 +325,51 @@ class AuthorizationAbuseIT extends RequiresRunningStack {
         given().spec(Api.as(username))
                 .accept("image/svg+xml")
                 .when().get("/patients/00000000-0000-4000-8000-000000000000/wristband")
+                .then().statusCode(403);
+    }
+
+    @ParameterizedTest(name = "{0} must not file a study")
+    @org.junit.jupiter.params.provider.ValueSource(
+            strings = {"dr.rao", "dr.mistry", "nurse.iqbal", "lab.tech", "cashier", "reception"})
+    void filingAStudyBelongsToTheRadiographyRoom(String username) {
+        // Out of the table above for the third time, and for the third distinct reason — which is
+        // why this pattern keeps earning its own test. Api's spec sends a JSON body and a JSON
+        // content type; this endpoint declares `consumes = multipart/form-data`, so a JSON request
+        // is answered 415 before @PreAuthorize is reached and the row would have passed whatever
+        // the role rules said. The audit export taught this with `produces` and 406, and the
+        // wristband taught it again; the fix is the same both ways round — send what the endpoint
+        // actually accepts, so the only thing left to refuse the call is the role.
+        //
+        // A real multipart body with real bytes, not an empty part: the controller refuses an empty
+        // upload with a 400 of its own, which would be another refusal that is not the role's.
+        given().spec(Api.as(username))
+                .contentType(io.restassured.http.ContentType.MULTIPART)
+                .multiPart("file", "chest.dcm",
+                        MinimalDicom.instance("IMG-AUTHZ", "SOMEBODY", "2.25.1", "2.25.1.1",
+                                "2.25.1.1.1"),
+                        "application/dicom")
+                .when().post("/imaging/studies")
+                .then().statusCode(403);
+    }
+
+    @Test
+    @DisplayName("a radiologist cannot order the examination they would then report on")
+    void aRadiologistCannotOrderTheirOwnWork() {
+        // The table accepts 400 as a pass, because @Valid resolves during argument binding before
+        // @PreAuthorize runs — so the `dr.mistry, POST, /imaging/orders` row above is satisfied by
+        // an empty body being rejected, which proves nothing about the role. This body is
+        // well-formed, so the only thing left to refuse it is who is asking.
+        //
+        // Worth its own test rather than a row because it is the sharpest edge in the department:
+        // a radiologist who could raise the request would be deciding what to be asked and then
+        // answering it, which is the separation the two roles exist to keep.
+        given().spec(Api.as(Api.RADIOLOGIST))
+                .body(Map.of("patientId", "00000000-0000-4000-8000-000000000000",
+                        "patientMrn", patientMrn,
+                        "procedureCode", "XR_CHEST_PA",
+                        "clinicalQuestion", "Query consolidation in the right lower zone.",
+                        "priority", "ROUTINE"))
+                .when().post("/imaging/orders")
                 .then().statusCode(403);
     }
 

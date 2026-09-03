@@ -10,9 +10,9 @@ haematology analyzer over its own wire protocol and released by a pathologist.
 
 > **Status:** the clinical core, the laboratory (including analyzer integration), the AI service
 > and the web UI are implemented and verified end to end against a real stack, and so are the
-> containerisation, TLS, security-testing and performance-testing layers. **1,182 tests pass** —
-> 667 Java unit and integration, 91 Python, 53 web unit, 237 black-box API and security abuse cases,
-> and 134 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
+> containerisation, TLS, security-testing and performance-testing layers. **1,340 tests pass** —
+> 762 Java unit and integration, 91 Python, 70 web unit, 274 black-box API and security abuse cases,
+> and 143 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
 > [Security](#security); what is left is in the [Roadmap](#roadmap).
 
 ---
@@ -56,10 +56,11 @@ haematology analyzer over its own wire protocol and released by a pathologist.
       SMTP · HTTP SMS      bed occupancy       prescribe·dispense  GST invoices
       no PHI outbound      transfers           eMAR, two scans     payments · claims
 
-      interop :8089        ai :8000
-      consent artefacts    FastAPI
-      FHIR R4 bundles      4 capabilities
-      ABDM · EHI export    (Claude + models)
+      interop :8089        imaging :8090        ai :8000
+      consent artefacts    modality worklist    FastAPI
+      FHIR R4 bundles      DICOM header ingest  4 capabilities
+      ABDM · EHI export    reports · sign       (Claude + models)
+      HL7 v2 · MLLP        RIS, not a PACS
 
       /portal/** — the patient's own door, split across the five services that own the
       data. Not a service: assembling one patient's view from a portal service would
@@ -67,11 +68,11 @@ haematology analyzer over its own wire protocol and released by a pathologist.
       from a signed claim on the token, never from the request.
              │                 │                    │                  │
              └── Kafka: hms.patient · hms.appointment · hms.lab · hms.admission ·
-                        hms.pharmacy · hms.billing · hms.audit ────────────────────┘
+                        hms.pharmacy · hms.billing · hms.imaging · hms.audit ──────┘
                                      │
                     PostgreSQL 16 — one schema per service
     identity · patient · scheduling · laboratory · notification · admissions ·
-    pharmacy · billing · interop
+    pharmacy · billing · interop · imaging
 ```
 
 **Authentication.** `identity-service` is the only holder of passwords and the only issuer of
@@ -97,7 +98,7 @@ order) are plain columns, not foreign keys, so a service survives another's outa
 .
 ├── pom.xml                      Maven aggregator; -Pquality / -Psecurity / -Pmutation / -Pautomation
 ├── Makefile                     every task, one place. `make help`
-├── docker-compose.yml           postgres, kafka (KRaft), eleven services, ai-service, web
+├── docker-compose.yml           postgres, kafka (KRaft), twelve services, ai-service, web
 ├── Dockerfile.java              shared multi-stage build, ARG SERVICE, non-root
 ├── config/                      SpotBugs exclusions and Dependency-Check suppressions, each with a reason
 ├── platform/hms-common/         security, errors, events, audit, crypto, pagination
@@ -111,7 +112,8 @@ order) are plain columns, not foreign keys, so a service survives another's outa
 │   ├── admissions-service/      casualty board, bed occupancy, admissions, transfers
 │   ├── pharmacy-service/        formulary, prescribing, dispensing, closed-loop eMAR
 │   ├── billing-service/         charge capture, GST invoicing, payments, payer claims
-│   ├── interop-service/         consent artefacts, FHIR R4 bundles, ABDM, EHI export
+│   ├── interop-service/         consent artefacts, FHIR R4 bundles, ABDM, EHI export, HL7 v2
+│   ├── imaging-service/         radiology: worklist, DICOM header ingest, reports (RIS)
 │   │                            (`/portal/**` is split across the five services above, not a
 │   │                             service of its own — see "The patient portal")
 │   └── ai-service/              FastAPI: summarisation, no-show risk, triage, ICD-10
@@ -711,6 +713,60 @@ network decision a deployment should have to make on purpose. The HTTP endpoint 
 behind the gateway with a bearer token, and is gated to `HEALTH_INFORMATION_SHARE`: that HL7
 traditionally has no auth is a reason to add some, not to match it.
 
+### `imaging-service` — schema `imaging`
+Radiology: the request, the modality worklist, what came back off the machine, and the report.
+
+**This is a RIS and it is not a PACS**, and the schema says so rather than a paragraph nobody
+reads. A PACS stores pixels and serves them over DICOM's own network protocol; what lives here is
+the record around them — the request a clinician raised, the worklist a modality reads before it
+scans, the registry of what arrived, and the report a radiologist signs. Where the pixels live is a
+column, and by default there is nothing in it.
+
+**Matching is by accession number and nothing else.** The modality copies the number off the
+worklist and writes it into every image, so it is the one field that survives the trip out to the
+scanner and back. The patient identifiers in a DICOM header are whatever was typed at the console:
+matching on those would file a study against the wrong visit the first time somebody was scanned
+twice in a day, and against the wrong patient the first time a name was mistyped. So a study whose
+accession names no request is **registered, flagged, and put on a list for somebody to resolve** —
+never guessed at, and never discarded, because the images exist on a scanner's disk whatever this
+platform makes of them.
+
+**Two roles, `RADIOGRAPHER` and `RADIOLOGIST`, because they are two jobs.** The laboratory already
+proves the shape one department along: a technician enters a result and only a pathologist verifies
+it, since the person who produced a number must not be the person who signs off what it means.
+Radiology is identical — a radiographer runs the worklist and acquires, a radiologist interprets and
+signs, and a clinician orders. No account holds two of the three, which the abuse-case suite asserts
+row by row.
+
+**Pixels are stored only when an archive is configured.** With `hms.imaging.storage-dir` unset — the
+shipped default — a study registers in full from its header and the screens say *no archive is
+configured* rather than implying a file exists; point it at a directory and the bytes are written
+and the URI recorded. The same posture as the notification channels and the ABDM gateway: a working
+default, one adapter, and no pretence about the unwired half.
+
+**Signing is release**, as verifying is in the laboratory. There is no second step, because the
+alternative is a report that is finished and invisible. An amendment keeps the whole text that was
+signed — both halves plus who signed it and when — because a report somebody may have treated from
+is part of the record whether or not it was later corrected; `chk_report_amended` makes an amendment
+without its predecessor unrepresentable, and the reason carries the same twenty-character floor
+break-glass uses.
+
+**The care-relationship narrowing applies**, through the client already in `hms-common` rather than a
+seventh copy of the care team: reading a request or a report asks scheduling-service, forwarding the
+caller's own token, and fails closed. The department's own screens are *not* narrowed, deliberately —
+a radiographer's worklist is inherently cross-patient, and an unmatched study has no patient to have
+a relationship with, which is exactly the problem it represents.
+
+**The DICOM parser reads the header and stops at the pixel data.** It handles implicit VR, both byte
+orders, undefined-length sequences, and the transfer-syntax switch a file declares halfway through
+itself — 372 lines, no dependency, and it never allocates the fifteen megabytes it does not need.
+A file it cannot make sense of is a 400 carrying the parser's own message, not a 500 about a file
+somebody uploaded.
+
+Publishes `imaging.report.signed` carrying the procedure code, so billing can price it — the
+correction S7 recorded for the laboratory, where a count could not be priced. notification-service's
+PHI rule applies unchanged: a message says a report is ready and links to the portal.
+
 ### The patient portal — a prefix, not a service
 `/portal/**` is the patient's own door onto their record: their appointments and self-booking,
 released laboratory reports, the visits a clinician has signed, their prescriptions, their bills,
@@ -789,7 +845,7 @@ patient has already seen rather than a list of everybody.
 The clinical interface. Server components call the gateway; **the browser never receives an access
 token** — the session lives in httpOnly cookies and every platform call is made server-side.
 
-Eleven top-level menus, defined once as data in `src/lib/menu.ts`. What a role sees is a subset: the
+Twelve top-level menus, defined once as data in `src/lib/menu.ts`. What a role sees is a subset: the
 laboratory accounts get no Clinical menu at all, because every one of its items is gated away from
 them and an empty dropdown is worse than an absent one.
 
@@ -798,8 +854,9 @@ them and an empty dropdown is worse than an absent one.
 | Dashboard | today's board |
 | Patients | register (search), register a patient, edit a record, the allergy list |
 | Scheduling | appointment book, clinician availability, lapsed appointments, clinician schedules, the OPD token queue, and a link to the corridor display |
-| Clinical | triage intake, encounter charting — vitals with a NEWS2 score, the SOAP note, signing, amendments, ICD-10 coding, laboratory ordering, prescribing, order sets and the care plan — with AI assistance beside the note; the casualty board and the admissions census with its bed map; the drug round, where a dose is given against two scans; and the order-set reference list. All gated to clinicians rather than to everybody who may look a patient up |
+| Clinical | triage intake, encounter charting — vitals with a NEWS2 score, the SOAP note, signing, amendments, ICD-10 coding, laboratory ordering, radiology ordering, prescribing, order sets and the care plan — with AI assistance beside the note; the casualty board and the admissions census with its bed map; the drug round, where a dose is given against two scans; and the order-set reference list. All gated to clinicians rather than to everybody who may look a patient up |
 | Laboratory | worklist, an order's report with collection, result entry and release, specimen labels, scan a tube, test catalogue, reference ranges and interpretation rules — both retunable by a pathologist — analyzers, device messages |
+| Radiology | the modality worklist with a slot to book and a DICOM file to file, the reporting queue, the unmatched studies nobody could attribute, and the examination catalogue. Three lists rather than one, because the department is three jobs: the worklist and the unmatched list are the radiography room's, the reporting queue is a radiologist's, and an examination itself is readable by whoever is looking after the patient |
 | Facility | room directory, rooms, floors, room types, beds, departments — all editable by an administrator |
 | Sharing | the consent register with the four conditions on every row, recording a decision (front desk), sending a record under a consent (clinicians), and what has been released about a patient and under what |
 | Messaging | delivery log with the send form, patient questions (the portal's queue, oldest first, where a reply may say what an SMS may not), message wording — readable by anybody who may send, editable by an administrator |
@@ -1024,6 +1081,8 @@ The dev profile seeds one account per role:
 | `svc.notification` | SERVICE — **not a person.** notification-service signs in as this to find out where to send a message, because the work is triggered by an event and an event carries no caller's token. It holds the platform's narrowest role: a phone number, an email address, and no part of a chart. |
 | `pharmacist` | PHARMACIST — fills prescriptions, keeps the formulary and the stock. Reads a prescription and an allergy list and **cannot open a chart**, cannot prescribe, and cannot record a dose as given. |
 | `cashier` | CASHIER — raises invoices, takes payments, works claims. The mirror image of the pharmacist: it can collect money and **cannot open a chart**, and `dr.rao` can read a bill and cannot take a payment. |
+| `radiographer` | RADIOGRAPHER — runs the modality worklist, books slots and files what comes off the machine. Reads the worklist and the study register and **cannot draft or sign a report**, and cannot raise the request either. |
+| `dr.mistry` | RADIOLOGIST — reports and signs. The other half of the same separation: it can release a finding and **cannot order the examination it is reporting on**, and cannot see the acquisition worklist. The same shape as `lab.tech` and `dr.pathan` one department along, and for the same reason: whoever produced the images must not be whoever signs off what they show. |
 
 **The portal seeds no account either, and cannot.** A portal account has to point at a patient
 record, and the seed runs before there is one — so there is no `patient` in the table above and
@@ -1110,6 +1169,8 @@ Every service is environment-driven. The ones you are most likely to set:
 | `HMS_RATE_LIMIT_RPM` | `600` | Per-client requests a minute at the gateway |
 | `HMS_RATE_LIMIT_AUTH_RPM` | `20` | The same, for `/auth/**` |
 | `HMS_RATE_LIMIT_ENABLED` | `true` | Turn off if something in front already limits |
+| `HMS_IMAGING_STORAGE_DIR` | **unset** | Where DICOM instances are written. Unset means the platform keeps the record of an examination and not the images, and the screens say so — see [imaging-service](#imaging-service--schema-imaging) |
+| `NEXT_PUBLIC_HMS_ZONE` | `Asia/Kolkata` | The zone the web app renders instants in *and* reads a typed wall-clock time in. `NEXT_PUBLIC_` because both directions run in the browser as well as on the server; set it to match `HMS_ZONE` |
 
 ### TLS
 
@@ -1395,12 +1456,12 @@ make help          # everything else
 Or directly:
 
 ```bash
-mvn -q verify                                     # 667 Java unit and integration tests
+mvn -q verify                                     # 762 Java unit and integration tests
 cd services/ai-service && uv run pytest -q        # 91 Python tests
 cd web && npm run lint && npm run typecheck       # web static checks
-cd web && npm test                                # 53 web unit tests
-cd web && npx playwright test                     # 134 browser tests, no skips
-mvn -Pautomation -pl tests/api verify             # 237 API and security abuse cases
+cd web && npm test                                # 70 web unit tests
+cd web && npx playwright test                     # 143 browser tests, no skips
+mvn -Pautomation -pl tests/api verify             # 274 API and security abuse cases
 ```
 
 | Layer | What runs | Where |
@@ -1491,6 +1552,13 @@ Notes that matter more than the table:
   CI's smoke profile exercises it on every push. The profile measures a *member's* read, which is
   the read every clinician looking after a patient makes; a non-member's 403 is a correctness
   question and it is asserted in `tests/api`, not in a profile whose thresholds are about latency.
+- **The modality worklist has its own journey and its own identity.** A doctor is refused it
+  deliberately, so measuring it on the clinical token would have measured a 403 — it runs as a
+  radiographer, the way the billing leg runs as a cashier. It is worth a threshold because the
+  ordering *is* the clinical rule: priority before time, over an index built for exactly that, so a
+  query that fell off the index would still return the right rows and only a profile would notice.
+  The check asserts the ordering rather than a row count, since an empty worklist is a legitimate
+  state on a quiet database and not a defect.
 
 The load profile's last clean run on the development container — 20 reading VUs, 4 bookings a
 second, seven minutes — for whatever a shared container's numbers are worth as a baseline:
@@ -1841,6 +1909,24 @@ Worth writing down, because it is the argument for having built them:
 - **The k6 slot allocation itself was wrong**, and its own hard threshold caught it: 1,229
   self-inflicted booking conflicts in one 20-VU run, because `(VU % 30, ITER % 12)` stops being
   injective the moment k6 hands out VU ids above 30.
+- **Every clinical screen was rendering instants in UTC while every server-side day window counted
+  local days.** `formatDateTime` sliced the ISO string, so a Kolkata deployment showed 18:45 on the
+  3rd for something the day book, the audit report and the disclosure register all agreed happened
+  on the 4th — a date on the screen that could not be typed into the date box beside it. Found by a
+  browser test that asked the disclosure register for "today" and got nothing, because after 18:30
+  UTC today in UTC has already ended. The formatters read the deployment's zone now, and the
+  conversion *back* — a typed wall-clock time to an instant — is pinned to the same zone rather
+  than to the container's `TZ` or the operator's laptop, which is what a radiographer booking a
+  scanner slot depends on.
+- **No clinical order validates the patient id it is given, and I found that out by expecting it
+  to.** A ZAP row was written asserting 404 for a radiology order against a patient who does not
+  exist; run against the live stack it answered 201, and so did the same request to the laboratory.
+  A patient id on an order is another service's id and is a plain column with no foreign key — the
+  same posture `clinician_id` had before the care-team narrowing validated it, and the same
+  posture on both services rather than anything new in radiology. Recorded rather than fixed here:
+  resolving it means a directory client per ordering service and a decision about failing open or
+  closed, which is a slice of its own. The row was deleted, because a scheduled scan minting a real
+  accession number every night would have put a junk examination on the department's worklist.
 
 ---
 
@@ -1875,9 +1961,23 @@ SAST/DAST tooling, and performance profiles. Dependency scanning covers Python (
   created nor deleted; a morphology cut-off's **note** is likewise read-only, since it appears
   verbatim on signed reports. There is no critical-value concept anywhere in the service — no
   column, field, flag or notification — so there is no critical-range editor to build yet.
-- **Imaging and PACS.** Named as a gap rather than half-built, which was the choice made
-  deliberately: DICOM is a storage protocol, a network protocol and a viewer, and a module with
-  the first and neither of the others would be a table pretending to be a modality.
+- **There is no PACS, no viewer, and no DICOM network layer.** Radiology itself is built — the
+  request, the worklist, the study register, the report — and the line this stops at is the one the
+  earlier version of this entry drew: DICOM is a storage protocol, a network protocol *and* a
+  viewer, and what exists here is the record around the images rather than the images. Concretely,
+  four things are absent and each is a real piece of work rather than a switch. **C-STORE and
+  C-FIND**: a modality talks to this platform by HTTP multipart, one instance per call, and cannot
+  push over DICOM's own protocol or query the worklist through DICOM Modality Worklist — a
+  department wiring a real scanner puts a gateway in front. **A viewer**: no pixels are decoded
+  anywhere, no window/level, no series scrolling, and with no archive configured no pixels are even
+  kept. **Structured reporting**: a report is two free-text fields, findings and impression, not a
+  coded SR document, so nothing downstream can compute on a finding. **Re-filing an unmatched
+  study**: they are registered and listed, and attaching one to a request after the fact is a merge
+  — and a merge that guesses is the thing the whole matching rule exists to avoid, so it is named
+  here rather than half-built.
+- **The examination catalogue has no write endpoint.** It is configuration, and a department that
+  starts doing MRI knees adds a row — by migration today. The catalogue screen says read-only
+  rather than fronting a form that would 405.
 - **HL7 v2 routes messages; it does not act on them.** The engine receives, validates,
   acknowledges and records, and publishes an accepted message as a domain event. Nothing on this
   platform consumes those events yet, so an `ADT^A04` does not create a patient and an inbound
@@ -2045,11 +2145,13 @@ SAST/DAST tooling, and performance profiles. Dependency scanning covers Python (
   kiosk has to be pointed at it by hand once; there is no per-screen configuration, no rotation
   between rooms, and no "this floor's clinics" view. A hospital with twenty screens would want
   one, and it is a page rather than a platform gap.
-- **A patient portal.** Every outbound message ends in a link to one, and the link currently
-  points at the clinical web app's origin. The messages are built the way they are *because* there
-  is meant to be somewhere behind a sign-in to say the specific thing — until the portal exists,
-  the platform is telling patients to go somewhere that is not built yet, and that is named here
-  rather than hidden by making the messages say more.
+- **Where an outbound message's link points.** The portal exists now — see
+  [the portal section](#the-patient-portal--a-prefix-not-a-service) — and it is what the messages
+  were always built for: a message says a report is ready and nothing about it, because there is
+  somewhere behind a sign-in to say the specific thing. What is still a gap is narrower than the
+  one this entry used to describe: the link is the web app's origin rather than a deep link to the
+  specific report, so a patient lands on their own front page and finds it, and there is no
+  one-time link that survives a session timeout.
 - **Delivery receipts.** The HTTP gateway channel records a non-2xx as a failure and the response
   body verbatim; it does not consume a provider's delivery-report callback, so "accepted by the
   gateway" is as far as the log goes. That is the cost of being provider-neutral and it is the
@@ -2064,15 +2166,22 @@ SAST/DAST tooling, and performance profiles. Dependency scanning covers Python (
   is the seam a device gateway plugs into.
 - **Distributed rate limiting** — Redis-backed, for more than one gateway instance. See
   [Security](#security) for what the in-process limiter does and does not promise.
-- **Per-service database roles** — the schema-per-service split is there; the least-privilege
-  runtime and migration roles that should own each schema are not, and one superuser is still doing
-  both jobs in dev.
+- **Per-service database roles** — the split by *job* is done: `hms_bootstrap` installs the
+  extensions once, `hms_migrate` owns the schemas and holds the DDL, and `hms_app` holds
+  `SELECT/INSERT/UPDATE/DELETE` and no DDL at all, so neither a superuser nor a schema owner is on
+  the request path any more. What is still a gap is the split by *service*: one runtime role serves
+  all ten schemas, so a SQL-injection hole in one service could still reach another's tables. Nine
+  credentials in nine environments for a platform that ships as one compose file is the reason,
+  and it is a reason rather than an excuse. CI keeps its superuser deliberately — a job running as
+  `hms_app` would be testing a different deployment from the one it builds.
 - **A real reference-range catalogue** — the seeded set covers the CBC parameters the ASTM parser
   emits. A deployment needs its own, per instrument and per population.
-- **HL7 v2** — nothing here speaks it, and an interface engine stays a named gap rather than a
-  half-built module. FHIR R4 is spoken now, one direction: interop-service composes bundles and
-  exports them, and nothing *receives* one — there is no FHIR endpoint, no `$import`, and no
-  reconciliation of an incoming record against a local one.
+- **FHIR R4 goes out and does not come in.** interop-service composes bundles and exports them,
+  and nothing *receives* one: there is no FHIR endpoint, no `$import`, and no reconciliation of an
+  incoming record against a local one. HL7 v2 is a different story and no longer a gap —
+  interop-service receives, validates, acknowledges and records `ADT`, `ORM` and `ORU` messages
+  over HTTP or MLLP, and sends `ADT^A04` and `ORU^R01` on demand. What it does not do is *act* on
+  what arrives, which is its own entry under "Not built" above.
 
 Two things about the AI layer are worth stating plainly rather than leaving in a roadmap: the
 no-show model is trained on **synthetic data** (ROC AUC 0.67, Brier 0.10 on a held-out split — a

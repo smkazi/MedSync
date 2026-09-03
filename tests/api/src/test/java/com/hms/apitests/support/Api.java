@@ -36,6 +36,8 @@ public final class Api {
     public static final String PATHOLOGIST = "dr.pathan";
     public static final String PHARMACIST = "pharmacist";
     public static final String CASHIER = "cashier";
+    public static final String RADIOGRAPHER = "radiographer";
+    public static final String RADIOLOGIST = "dr.mistry";
 
     /**
      * The notification service's own account. Not a person.

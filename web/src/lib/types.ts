@@ -1312,3 +1312,115 @@ export type PortalAccountState = {
   mustChangePassword: boolean;
   lastLoginAt: string | null;
 };
+
+// ---- radiology ---------------------------------------------------------------
+
+export type ImagingPriority = "ROUTINE" | "URGENT" | "STAT";
+
+export type ImagingOrderStatus =
+  | "ORDERED"
+  | "SCHEDULED"
+  | "IN_PROGRESS"
+  | "ACQUIRED"
+  | "REPORTED"
+  | "CANCELLED";
+
+export type ImagingReportStatus = "DRAFT" | "SIGNED" | "AMENDED";
+
+export type ImagingReport = {
+  id: string;
+  studyId: string;
+  findings: string;
+  impression: string;
+  status: ImagingReportStatus;
+  reportedBy: string;
+  reportedAt: string;
+  signedBy: string | null;
+  signedAt: string | null;
+  /** The text that was signed before an amendment superseded it. */
+  amendedFrom: string | null;
+  amendedReason: string | null;
+};
+
+export type ImagingSeries = {
+  id: string;
+  seriesInstanceUid: string;
+  seriesNumber: number | null;
+  modality: string | null;
+  seriesDescription: string | null;
+  bodyPart: string | null;
+  instanceCount: number;
+  /**
+   * Whether the pixels are anywhere. False on a default deployment, which has no archive
+   * configured — the screens say so rather than linking to a viewer that would find nothing.
+   */
+  stored: boolean;
+};
+
+export type ImagingStudy = {
+  id: string;
+  studyInstanceUid: string;
+  /** Null when the accession number on the images matched no order. */
+  orderId: string | null;
+  accessionNo: string | null;
+  patientMrn: string | null;
+  modality: string | null;
+  studyDescription: string | null;
+  studyDate: string | null;
+  institution: string | null;
+  referringPhysician: string | null;
+  receivedAt: string;
+  series: ImagingSeries[];
+  report: ImagingReport | null;
+};
+
+export type ImagingOrder = {
+  id: string;
+  patientId: string;
+  patientMrn: string;
+  encounterId: string | null;
+  modality: string;
+  bodyPart: string | null;
+  procedureCode: string;
+  procedureName: string;
+  clinicalQuestion: string;
+  contrast: boolean;
+  priority: ImagingPriority;
+  status: ImagingOrderStatus;
+  orderedBy: string;
+  orderedAt: string;
+  accessionNo: string;
+  scheduledFor: string | null;
+  cancelledReason: string | null;
+  studies: ImagingStudy[];
+};
+
+/**
+ * A worklist row: deliberately narrower than the order.
+ *
+ * <p>No clinical question and no findings. This is read on a screen beside a scanner, in a room
+ * patients walk through, and what the radiographer needs is who is next and what to do to them.
+ */
+export type ImagingWorklistEntry = {
+  id: string;
+  accessionNo: string;
+  patientMrn: string;
+  patientSex: string;
+  patientBirthDate: string | null;
+  modality: string;
+  procedureCode: string;
+  procedureName: string;
+  contrast: boolean;
+  priority: ImagingPriority;
+  status: ImagingOrderStatus;
+  scheduledFor: string | null;
+};
+
+export type ImagingProcedure = {
+  code: string;
+  name: string;
+  modality: string;
+  bodyPart: string | null;
+  minutes: number;
+  contrast: boolean;
+};

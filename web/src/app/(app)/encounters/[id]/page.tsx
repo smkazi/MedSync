@@ -7,6 +7,8 @@ import type {
   CatalogEntry,
   Encounter,
   FormularyEntry,
+  ImagingOrder,
+  ImagingProcedure,
   LabOrderSummary,
   News2,
   OrderSet,
@@ -15,8 +17,10 @@ import type {
 } from "@/lib/types";
 import { AiAssist } from "@/components/AiAssist";
 import { RecordForm } from "@/components/RecordForm";
+import { orderExamination } from "../../imaging/actions";
 import { orderTests } from "../../laboratory/actions";
 import { prescribe } from "../../pharmacy/actions";
+import { IMAGING_PRIORITIES, QUESTION_MIN } from "../../imaging/state";
 import { PRIORITIES } from "../../laboratory/state";
 import {
   applyOrderSet,
@@ -123,10 +127,21 @@ export default async function EncounterPage({
   // to it may sign, and the service enforces that with hasAnyRole('ADMIN','DOCTOR').
   const maySign = hasRole(user, "ADMIN", "DOCTOR");
 
-  // The laboratory orders raised from this visit, and the catalogue to raise more from. Both are
-  // only fetched for somebody who may chart: an encounter's order list is chart content, and the
-  // service gates `GET /lab/encounters/{id}/orders` on CHART_READ for exactly that reason.
-  const [labOrders, catalog, patient, prescriptions, formulary, orderSets, carePlan] = mayChart
+  // Everything raised from this visit, and the catalogues to raise more from. All of it is fetched
+  // only for somebody who may chart: an encounter's order list is chart content, and the services
+  // gate `GET /lab/encounters/{id}/orders` and its radiology counterpart on CHART_READ for exactly
+  // that reason.
+  const [
+    labOrders,
+    catalog,
+    patient,
+    prescriptions,
+    formulary,
+    orderSets,
+    carePlan,
+    imagingOrders,
+    procedures,
+  ] = mayChart
     ? await Promise.all([
         load<LabOrderSummary[]>(`/lab/encounters/${id}/orders`),
         load<CatalogEntry[]>("/lab/catalog"),
@@ -137,8 +152,12 @@ export default async function EncounterPage({
         // A 404 here is the ordinary case — most encounters have no plan — so the error is
         // rendered as an absence rather than as a failure.
         load<CarePlan>(`/care-plans/encounters/${id}`),
+        load<ImagingOrder[]>(`/imaging/encounters/${id}/orders`),
+        load<ImagingProcedure[]>("/imaging/procedures"),
       ])
     : [
+        { data: null, error: null },
+        { data: null, error: null },
         { data: null, error: null },
         { data: null, error: null },
         { data: null, error: null },
@@ -388,6 +407,103 @@ export default async function EncounterPage({
                         label: "Clinical details for the laboratory",
                         type: "textarea",
                         hint: "Travels with the order. This is the clinical context a pathologist reads, and it is the reason the lab does not need the chart.",
+                      },
+                    ]}
+                  />
+                </div>
+              )}
+            </Card>
+          )}
+
+          {/*
+            Radiology, beside the laboratory and for the same reason: ordering belongs where the
+            assessment that justifies it is. What is different is the clinical question - it is
+            required and it has a floor, because a radiologist reporting a film with no question is
+            guessing at what they were asked, and "?" is what a free-text box collects when it does
+            not insist on a sentence.
+          */}
+          {mayChart && (
+            <Card title="Radiology">
+              {imagingOrders.error && <ErrorNote>{imagingOrders.error}</ErrorNote>}
+
+              {(imagingOrders.data ?? []).length === 0 ? (
+                <Empty>No imaging ordered on this visit.</Empty>
+              ) : (
+                <Table head={["Ordered", "Examination", "Accession", "Status", ""]}>
+                  {(imagingOrders.data ?? []).map((order) => (
+                    <tr key={order.id}>
+                      <td className="numeric px-3 py-2 text-ink-muted">
+                        {formatDateTime(order.orderedAt)}
+                      </td>
+                      <td className="px-3 py-2">
+                        {order.procedureName}
+                        {order.priority !== "ROUTINE" && (
+                          <span className="ml-2">
+                            <Badge tone={statusTone(order.priority)}>{order.priority}</Badge>
+                          </span>
+                        )}
+                        {order.contrast && (
+                          <span className="ml-2">
+                            <Badge tone="warn">contrast</Badge>
+                          </span>
+                        )}
+                      </td>
+                      <td className="numeric px-3 py-2">{order.accessionNo}</td>
+                      <td className="px-3 py-2">
+                        <Badge tone={statusTone(order.status)}>{order.status}</Badge>
+                      </td>
+                      <td className="px-3 py-2">
+                        <Link
+                          href={`/imaging/${order.id}`}
+                          className="text-xs text-accent hover:underline"
+                        >
+                          Open
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </Table>
+              )}
+
+              {open && procedures.data && procedures.data.length > 0 && (
+                <div className="mt-4 border-t border-line pt-4">
+                  <RecordForm
+                    action={orderExamination}
+                    columns={2}
+                    submitLabel="Request the examination"
+                    busyLabel="Requesting…"
+                    hidden={{
+                      encounterId: encounter.id,
+                      patientId: encounter.patientId,
+                      patientMrn: encounter.patientMrn,
+                    }}
+                    fields={[
+                      {
+                        name: "procedureCode",
+                        label: "Examination",
+                        type: "select",
+                        required: true,
+                        options: procedures.data.map((procedure) => ({
+                          value: procedure.code,
+                          label:
+                            `${procedure.modality} — ${procedure.name}` +
+                            (procedure.contrast ? " (contrast)" : ""),
+                        })),
+                        hint: "The modality is part of the examination, not a separate choice: a chest film and a chest CT answer different questions.",
+                      },
+                      {
+                        name: "priority",
+                        label: "Priority",
+                        type: "select",
+                        options: IMAGING_PRIORITIES,
+                        value: "ROUTINE",
+                      },
+                      {
+                        name: "clinicalQuestion",
+                        label: "What you want answered",
+                        type: "textarea",
+                        required: true,
+                        hint: `At least ${QUESTION_MIN} characters. This is what the radiologist reports against, and it is the reason radiology does not need the chart.`,
                       },
                     ]}
                   />

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { useId, type ReactNode } from "react";
+import { DISPLAY_ZONE } from "@/lib/zone";
 
 /** The small set of primitives every screen is built from. */
 
@@ -48,7 +49,7 @@ export function Stat({ label, value, hint }: { label: string; value: ReactNode; 
   );
 }
 
-type BadgeTone = "neutral" | "accent" | "good" | "warn" | "critical";
+export type BadgeTone = "neutral" | "accent" | "good" | "warn" | "critical";
 
 const badgeTones: Record<BadgeTone, string> = {
   neutral: "bg-surface text-ink-muted border-line",
@@ -150,22 +151,11 @@ export function ButtonLink({ href, children }: { href: string; children: ReactNo
 }
 
 /**
- * The zone every screen renders an instant in.
- *
- * <p>The deployment's zone, not the browser's and not UTC, because the platform decides on the
- * server what day something happened on: the day book, the audit report and the disclosure register
- * all window a business day in `HMS_ZONE`. Rendering UTC while the filter beside it counts local
- * days puts a date on the screen that cannot be typed into its own date box — which is exactly the
- * defect this replaced. A browser test asked the disclosure register for "today" and got nothing,
- * because after 18:30 UTC today in UTC has already ended in Kolkata.
- *
- * <p>`NEXT_PUBLIC_` because these formatters run in client components as well as server ones, and a
- * value only the server could read would render two different dates for the same instant.
- */
-const DISPLAY_ZONE = process.env.NEXT_PUBLIC_HMS_ZONE ?? "Asia/Kolkata";
-
-/**
- * The date and time parts of an instant, in the display zone.
+ * The date and time parts of an instant, in `DISPLAY_ZONE` — the deployment's zone, not the
+ * browser's and not UTC. `@/lib/zone` carries the argument for that and the conversion back from a
+ * typed wall-clock time; the short version is that the platform decides on the server what day
+ * something happened on, so rendering UTC puts a date on the screen that cannot be typed into its
+ * own date box.
  *
  * <p>Assembled from `formatToParts` rather than by slicing a formatted string, so no locale can
  * reorder the fields on us — the whole point of these helpers is that a clinical screen shows an

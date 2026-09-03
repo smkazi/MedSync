@@ -186,6 +186,43 @@ class InjectionAbuseIT extends RequiresRunningStack {
     }
 
     @Test
+    @DisplayName("a clinical question comes back as data, and reaches a report as data")
+    void aClinicalQuestionIsNotInterpreted() {
+        // The radiology free-text field, and the one worth its own case rather than a row in the
+        // patient-notes test above: a clinical question travels further than a note does. It is
+        // written by a clinician, read by a radiologist on a different screen, and ends up beside a
+        // signed report — so it crosses two services and three renderings before anybody is done
+        // with it, and each of those is a chance for somebody to inline it.
+        //
+        // Ordered against a patient registered here on purpose. The ZAP requestor job wanted this
+        // path too and could not have it, because an order posted with a made-up patient id is
+        // accepted — a clinical order's patientId is another service's id and is not resolved, on
+        // this service or on the laboratory — so a scheduled scan would have minted a real
+        // accession number and put a junk examination on the department's worklist every night.
+        String payload = "<script>alert('xss')</script> query consolidation";
+        var patient = Fixtures.registerPatient(Api.RECEPTIONIST, "Inject");
+
+        String procedureCode = given().spec(Api.as(Api.DOCTOR))
+                .when().get("/imaging/procedures")
+                .then().statusCode(200)
+                .extract().jsonPath().getString("[0].code");
+
+        var read = given().spec(Api.as(Api.DOCTOR))
+                .body(Map.of("patientId", patient.id(), "patientMrn", patient.mrn(),
+                        "procedureCode", procedureCode,
+                        "clinicalQuestion", payload,
+                        "priority", "ROUTINE"))
+                .when().post("/imaging/orders")
+                .then().statusCode(201)
+                .extract();
+
+        // Round-tripped verbatim, in an application/json response, so no browser will parse it as
+        // markup. Escaping at render time is the UI's job and is asserted in the Playwright suite.
+        assertThat(read.contentType()).contains("application/json");
+        assertThat(read.jsonPath().getString("clinicalQuestion")).isEqualTo(payload);
+    }
+
+    @Test
     @DisplayName("a search by MRN returns that patient and nobody else")
     void searchReturnsOnlyMatchingRows() {
         var results = given().spec(Api.as(Api.DOCTOR))

@@ -15,6 +15,7 @@ import {
   bookingJourney,
   displayJourney,
   login,
+  radiologyJourney,
   readJourney,
   setupJourney,
 } from './lib/journey.js';
@@ -63,6 +64,14 @@ export function setup() {
 export function reads(data) {
   const token = login(USERS.doctor);
   readJourney(token, data);
+  // The radiography room, on its own identity, one iteration in five.
+  //
+  // Its own identity because a doctor is refused the worklist; one in five because it needs its own
+  // sign-in and Argon2id is the most expensive call in the profile. Doing it every iteration would
+  // double this scenario's auth load, which changes what the login numbers mean and brings the
+  // gateway's auth bucket forward — so the instrument would have been measuring itself. A
+  // seven-minute run still leaves hundreds of worklist samples, which is more than p(95) needs.
+  if (__ITER % 5 === 0) radiologyJourney(login(USERS.radiographer));
   // The corridor display, with no token. Its own rate-limit bucket at the gateway is
   // sized for screens rather than for people, and this is what exercises it.
   displayJourney(data);

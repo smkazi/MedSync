@@ -11,6 +11,7 @@ import {
   bookingJourney,
   displayJourney,
   login,
+  radiologyJourney,
   readJourney,
   setupJourney,
 } from './lib/journey.js';
@@ -31,6 +32,7 @@ export function setup() {
 export default function (data) {
   const token = login(USERS.doctor);
   readJourney(token, data);
+  radiologyJourney(login(USERS.radiographer));
   bookingJourney(token, data);
   billingJourney(login(USERS.cashier), data);
   // No token: the corridor display is the platform's one unauthenticated path, and a smoke run
