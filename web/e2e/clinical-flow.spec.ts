@@ -5,7 +5,7 @@ import {
   FIXTURE_SURNAME,
 } from "./global-setup";
 import { fixtureMrn } from "./chart";
-import { openMenu, signIn } from "./sign-in";
+import { openMenu, PASSWORD, signIn } from "./sign-in";
 
 /**
  * The journeys a clinician actually performs, driven through the browser.
@@ -52,6 +52,41 @@ test.describe("authentication", () => {
     // The regression this guards: the app used to disappear mid-sentence with no explanation,
     // which reads as the platform losing your work rather than as a timeout.
     await expect(page.getByRole("main").getByRole("alert")).toContainText(/session timed out/i);
+  });
+
+  test("signing in again lands back on the page the timeout interrupted", async ({ page }) => {
+    await signIn(page, "dr.rao");
+    await page.context().clearCookies({ name: "medsync_at" });
+
+    // A filtered screen, because that is the case worth proving: resuming onto the unfiltered
+    // version of a search is its own small insult, and the query has to survive the round trip
+    // through the sign-in form to avoid it.
+    await page.goto(`/patients?q=${FIXTURE_SURNAME}`);
+    await expect(page).toHaveURL(/\/login/);
+
+    await page.getByLabel("Username").fill("dr.rao");
+    await page.getByLabel("Password").fill(PASSWORD);
+    await page.getByRole("button", { name: "Sign in" }).click();
+
+    await expect(page).toHaveURL(new RegExp(`/patients\\?q=${FIXTURE_SURNAME}`));
+    // The query did not just survive in the address bar: the screen was rendered from it.
+    await expect(page.getByLabel("Search")).toHaveValue(FIXTURE_SURNAME);
+  });
+
+  test("a next parameter pointing off this app is refused", async ({ page }) => {
+    // The open redirect. A crafted link to the hospital's own sign-in page that bounces to a copy
+    // of it is worth more than most phishing, because the copy keeps what is typed into it.
+    await page.context().clearCookies();
+    await page.goto("/login?next=https://elsewhere.example/login");
+
+    await page.getByLabel("Username").fill("dr.rao");
+    await page.getByLabel("Password").fill(PASSWORD);
+    await page.getByRole("button", { name: "Sign in" }).click();
+
+    // Landing on the dashboard is the assertion: had the redirect been honoured, this heading
+    // would not be here to find.
+    await expect(page.getByRole("heading", { name: "Today" })).toBeVisible();
+    await expect(page).not.toHaveURL(/elsewhere\.example/);
   });
 
   test("someone who never signed in is not told their session timed out", async ({ page }) => {

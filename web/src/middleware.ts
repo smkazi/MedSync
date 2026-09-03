@@ -86,7 +86,10 @@ export function middleware(request: NextRequest): NextResponse {
   const hasSession = request.cookies.has("medsync_at");
   if (!hasSession && !isPublic) {
     const url = new URL("/login", request.url);
-    url.searchParams.set("next", pathname);
+    // Path and query, because half of the screens worth being bounced off are a query: an
+    // appointment board on a date, a filtered audit report, a worklist narrowed to one status.
+    // Resuming onto the unfiltered version of a screen is its own small insult.
+    url.searchParams.set("next", `${pathname}${request.nextUrl.search}`);
     // Say which of the two things happened. The access cookie lives fifteen minutes and the
     // refresh cookie thirty days, so a request carrying the second without the first is a session
     // that ran out rather than someone who never signed in. Without this the app simply vanishes

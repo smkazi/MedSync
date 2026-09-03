@@ -1,4 +1,5 @@
 import { ErrorNote } from "@/components/ui";
+import { resumePath } from "@/lib/redirect";
 
 /**
  * Sign-in.
@@ -9,9 +10,19 @@ import { ErrorNote } from "@/components/ui";
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string; done?: string }>;
+  searchParams: Promise<{ error?: string; done?: string; next?: string }>;
 }) {
-  const { error, done } = await searchParams;
+  const { error, done, next } = await searchParams;
+
+  // Where the middleware bounced this request from, travelling through the form as a hidden field
+  // because there is nowhere else to put it: the post goes to a route handler, and a session cookie
+  // cannot hold it — a bookmarked /login is a page anyone may open, and a value stored there would
+  // send the *next* person to sign in somewhere they never asked for.
+  //
+  // Validated here as well as at the post, so a hostile value is never rendered into the page at
+  // all. It would be escaped either way; this keeps it from being repeated back to whoever crafted
+  // the link, which is how a hospital sign-in page ends up quoted in a phishing screenshot.
+  const resume = resumePath(next);
 
   return (
     <div className="mx-auto mt-16 max-w-sm">
@@ -31,6 +42,7 @@ export default async function LoginPage({
 
       <form action="/api/auth/login" method="post" className="mt-6 space-y-4">
         {error && <ErrorNote>{error}</ErrorNote>}
+        <input type="hidden" name="next" value={resume} />
         <div>
           <label htmlFor="username" className="block text-sm font-medium">
             Username

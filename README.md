@@ -10,9 +10,9 @@ haematology analyzer over its own wire protocol and released by a pathologist.
 
 > **Status:** the clinical core, the laboratory (including analyzer integration), the AI service
 > and the web UI are implemented and verified end to end against a real stack, and so are the
-> containerisation, TLS, security-testing and performance-testing layers. **1,158 tests pass** —
-> 657 Java unit and integration, 91 Python, 47 web unit, 233 black-box API and security abuse cases,
-> and 130 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
+> containerisation, TLS, security-testing and performance-testing layers. **1,166 tests pass** —
+> 657 Java unit and integration, 91 Python, 53 web unit, 233 black-box API and security abuse cases,
+> and 132 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
 > [Security](#security); what is left is in the [Roadmap](#roadmap).
 
 ---
@@ -1062,6 +1062,17 @@ to a patient record on its own.
   are, so there is nothing to enumerate and no password to send them off to reset.
 - **Brute force** — lockout after 5 failures. Unknown usernames and wrong passwords return
   identical responses, and a decoy hash is verified so response timing does not leak existence.
+- **The sign-in page will not redirect off this app.** Signing in after a timeout returns you to the
+  screen you were on, which means the sign-in form carries a destination — and a destination that
+  arrives in a URL is caller-supplied. `resumePath` treats it as a claim rather than an instruction:
+  exactly one leading slash (so `//elsewhere.example` and `/\elsewhere.example`, both of which leave
+  this origin, are out), no whitespace or control characters (that value is written into a `Location`
+  header, and a newline in it splits the header), the origin re-checked after a parse rather than by
+  eye, and `/api/**` refused even though it is local — `next=/api/auth/logout` would make signing in
+  sign you straight back out. Anything that fails goes to the dashboard and is never repaired, since
+  a value worth repairing is a value somebody built. It matters more here than on most sites: a
+  sign-in page on the hospital's own domain that bounces anywhere is a phishing page with the
+  hospital's name on it, and the copy it lands on keeps whatever is typed into it.
 - <a id="database-roles"></a>**Database roles — DDL and the superuser out of the request path.**
   One role used to do three jobs: install extensions, run every migration, and serve every runtime
   query for all nine schemas. A SQL-injection hole in any one service therefore reached every other
@@ -1210,8 +1221,8 @@ Or directly:
 mvn -q verify                                     # 657 Java unit and integration tests
 cd services/ai-service && uv run pytest -q        # 91 Python tests
 cd web && npm run lint && npm run typecheck       # web static checks
-cd web && npm test                                # 47 web unit tests
-cd web && npx playwright test                     # 130 browser tests, no skips
+cd web && npm test                                # 53 web unit tests
+cd web && npx playwright test                     # 132 browser tests, no skips
 mvn -Pautomation -pl tests/api verify             # 233 API and security abuse cases
 ```
 
@@ -1690,10 +1701,11 @@ SAST/DAST tooling, and performance profiles. Dependency scanning covers Python (
   of the request path, which is the larger half, and stops there: all nine services share `hms_app`,
   so a SQL-injection hole in one still reaches another's tables. Per-service roles need nine
   credentials in nine environments and this platform ships as one compose file with one database.
-- **A timed-out session does not resume where it left off.** The login bounce now says the session
-  timed out, and it writes a `next` parameter that the sign-in page does not read: after signing in
-  again you land on the dashboard rather than back on the page you were on. Consuming it is an
-  obvious improvement and is a gap rather than something smuggled into the timeout work.
+- **A timed-out session resumes onto the page, not into the work.** Signing in again returns you to
+  the screen the timeout interrupted, filters and all — but a half-written note or a part-filled
+  form is gone, because nothing on the platform holds a draft. Keeping one is a different feature
+  from resuming a location, and it would need somewhere to put clinical text that has not been
+  signed.
 - **ABDM certification.** The platform is integration-ready and **uncertified**, and the gap is
   not a formality: M1/M2/M3 certification needs NHA sandbox credentials and an assessment, and the
   real data flow is a consent manager, a callback, an encrypted payload with a key exchange and an
