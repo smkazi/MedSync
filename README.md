@@ -454,8 +454,9 @@ decide whether a symbol scans — two labels reading those numbers off one class
 a fix reaches the ward and the bench together.
 
 ### `billing-service` — schema `billing`
-Charge capture, GST invoicing, payments and payer claims. Ten tables, and four of them exist to
-answer a way hospitals lose money with a database rule rather than with application care.
+Charge capture, GST invoicing, payments, credit notes, refunds and payer claims. Twelve tables, and
+four of them exist to answer a way hospitals lose money with a database rule rather than with
+application care.
 
 **A charge cannot post twice.** `posted_charges` is keyed by `(source_type, source_id,
 charge_item_code)`, so a redelivered Kafka message collides with the charge it already produced and
@@ -477,6 +478,45 @@ Two cashiers taking the same balance both read the same `amount_paid`; a read-mo
 the second silently restore what the first collected. Deriving PAID in a second statement would
 leave a window in which an invoice was fully paid and still said ISSUED, and a receipt printed in
 that window would be wrong.
+
+**A bill is corrected with a credit note, and money goes back with a refund — two documents, never
+one.** They answer different questions, and a platform that conflates them produces a record nobody
+can reconcile. A credit note changes what is *owed*: the bill was wrong, or the treatment was not
+given. A refund moves *cash*. A bill can be credited with no money having moved, and money can only
+go back once somebody has said in writing that it is not owed. The invoice's own `total` is never
+touched — the same rule the snapshotted prices below follow — so every figure is arithmetic over
+four columns rather than a mutation of one:
+
+```
+still owed = (total - credited) - (amount_paid - refunded)
+owed back  = (amount_paid - refunded) - (total - credited)
+```
+
+Both cannot be positive at once, which is what makes the pair meaningful, and neither is ever
+reported as a negative of the other: money owed back is a different fact from a debt, and a
+receivables total that nets one against the other comes up short without anybody noticing.
+
+Credits and refunds move through the same kind of conditional UPDATE the payment guard uses, for the
+same reason — two administrators crediting one bill at once would otherwise forgive it twice, which
+on a paid invoice is a licence to refund money the hospital never took. The refund statement carries
+the control this slice turns on: `refunded + :amt <= amount_paid` (money cannot go back that never
+arrived) **and** `refunded + :amt <= credited` (money cannot go back beyond what a credit note has
+withdrawn). Both are `CHECK` constraints as well, because this is the statement that moves money out
+of the building. Crediting also moves the status: when a credit leaves nothing owed on a bill that
+has been paid down, it reads PAID, and what is still collectable is capped at `total - credited`, so
+the credited remainder can be settled but the withdrawn part cannot be collected.
+
+Credit notes carry their own number series (`CRN/2026-27/00001`), not a suffix on the invoice's — a
+credit note is a tax document in its own right, and putting it on the invoice sequence would leave
+gaps in the invoice numbering, which is precisely what an auditor reads that sequence to detect. A
+reason is required by the database and not by convention: a credit note with no reason is a discount
+somebody gave without saying why, and the whole point of the document is that it says why.
+
+Issuing a credit note is an administrator's act (`BILLING_CONFIG`) and paying a refund a cashier's
+(`BILLING_WRITE`), so a cashier — the role that handles cash every day — cannot decide a charge is
+not owed and then pay it back. That is half a separation of duties and only half: ADMIN holds both
+roles, which is stated in the gaps rather than dressed up as a control. What holds regardless of who
+acts is that money never leaves without a credit note behind it.
 
 **Prices are snapshotted onto the line, never joined.** The deliberate opposite of the room
 decision elsewhere in this platform: a room's directions must always be current, and a financial
@@ -1809,9 +1849,17 @@ SAST/DAST tooling, and performance profiles. Dependency scanning covers Python (
   method, and nothing signs it off: there is no drawer count, no shift close, no till
   reconciliation and no variance record. The numbers are readable and unsigned, which is named
   here rather than implied to be a control.
-- **Credit notes and refunds.** An invoice with money against it cannot be cancelled, and the
-  platform has no way to give money back. That is the honest state: a cancellation standing in for
-  a refund would make the record say a treatment was never billed while the cash was in the drawer.
+- **A refund's separation of duties is half a control.** A credit note is an administrator's act
+  and a refund a cashier's, so a cashier cannot decide a charge is not owed and then pay it back —
+  but ADMIN holds both roles, as it holds every role, so one administrator can do both halves
+  unaccompanied. The database guarantees only the part that does not depend on who acts: money
+  never leaves without a credit note behind it. A deployment that wants two people in the loop
+  takes ADMIN off the credit-note endpoint, and that is a configuration change rather than
+  something the platform decides.
+- **A refund is recorded, not executed.** `POST /invoices/{id}/refunds` writes the voucher and
+  moves the invoice's numbers; no money moves by itself. Card and UPI reversals are performed in
+  the acquirer's own portal and entered here with their reference, exactly as payments are, so the
+  platform's record and the acquirer's can disagree until somebody reconciles them.
 - **Receivables ageing.** The day book answers what is outstanding as of a date; nothing buckets it
   by how long it has been owed or by payer, which is the report a hospital chases money from.
 - **A dispensed medicine is priced by the charge list, not by the pharmacy.** Charge capture bills

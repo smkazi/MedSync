@@ -71,6 +71,27 @@ public class Invoice extends BaseEntity {
     private BigDecimal amountPaid = Money.scale(BigDecimal.ZERO);
 
     /**
+     * How much of this invoice has been credited — said in writing not to be owed.
+     *
+     * <p>Not managed here, exactly like {@link #amountPaid}: it moves only through the single
+     * statement in {@code InvoiceRepository.applyCredit}, which is what makes two administrators
+     * crediting at once safe. Neither insertable nor updatable through this entity, so a mapping
+     * mistake cannot route around the guard.
+     *
+     * <p>A credit note deliberately leaves {@code total} alone — see {@link CreditNote} — so what
+     * is still owed is arithmetic over four columns rather than a mutation of one. {@link
+     * #outstanding()} and {@link #refundable()} are that arithmetic.
+     */
+    @Column(name = "credited", nullable = false, precision = 14, scale = 2, insertable = false,
+            updatable = false)
+    private BigDecimal credited = Money.scale(BigDecimal.ZERO);
+
+    /** How much has been paid back out, on exactly the same terms as {@link #credited}. */
+    @Column(name = "refunded", nullable = false, precision = 14, scale = 2, insertable = false,
+            updatable = false)
+    private BigDecimal refunded = Money.scale(BigDecimal.ZERO);
+
+    /**
      * The date this invoice belongs to, and no default.
      *
      * <p>Deliberately not {@code LocalDate.now()}: what "today" is belongs to the deployment's own
@@ -160,8 +181,40 @@ public class Invoice extends BaseEntity {
         return status == InvoiceStatus.DRAFT || status == InvoiceStatus.ISSUED;
     }
 
+    /** What was charged, less what has been credited: the amount actually payable. */
+    public BigDecimal payable() {
+        return Money.scale(total.subtract(credited));
+    }
+
+    /** What has been received and kept: paid in, less paid back out. */
+    public BigDecimal received() {
+        return Money.scale(amountPaid.subtract(refunded));
+    }
+
+    /**
+     * What the patient still owes, and never a negative number.
+     *
+     * <p>Credited amounts come off the payable side rather than off {@code total}, so an invoice
+     * fully credited before payment reads as nothing owed while still showing what was originally
+     * charged and why it was withdrawn. When the hospital has been paid more than is now payable,
+     * this is zero and {@link #refundable()} carries the difference — an amount owed *back* is not
+     * a negative debt, and reporting it as one is how a receivables total silently comes up short.
+     */
     public BigDecimal outstanding() {
-        return Money.scale(total.subtract(amountPaid));
+        BigDecimal owed = payable().subtract(received());
+        return owed.signum() > 0 ? Money.scale(owed) : Money.scale(BigDecimal.ZERO);
+    }
+
+    /**
+     * What the hospital owes back, and never a negative number.
+     *
+     * <p>The exact complement of {@link #outstanding()}: at most one of the two is ever positive.
+     * This is money held against a charge that has since been credited, and it is what a refund
+     * draws on.
+     */
+    public BigDecimal refundable() {
+        BigDecimal back = received().subtract(payable());
+        return back.signum() > 0 ? Money.scale(back) : Money.scale(BigDecimal.ZERO);
     }
 
     public UUID getPatientId() {
@@ -206,6 +259,14 @@ public class Invoice extends BaseEntity {
 
     public BigDecimal getAmountPaid() {
         return amountPaid;
+    }
+
+    public BigDecimal getCredited() {
+        return credited;
+    }
+
+    public BigDecimal getRefunded() {
+        return refunded;
     }
 
     public LocalDate getInvoiceDate() {

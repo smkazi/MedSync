@@ -176,6 +176,53 @@ public class BillingController {
     }
 
     /**
+     * Issues a credit note: this much of the bill is not owed.
+     *
+     * <p>{@code BILLING_CONFIG} — an administrator — and not the cashier who takes the money. A
+     * credit note is a pricing decision made after the fact, which is the act the platform already
+     * keeps away from the till: a cashier who could both forgive a charge and pay out against it
+     * would need no accomplice. An administrator holds both halves, since {@code BILLING_WRITE}
+     * includes ADMIN, and that limit is named in the README rather than implied away. The refund
+     * below is the cashier's half, and whoever pays it cannot exceed what a note issued here has
+     * authorised.
+     */
+    @PostMapping("/invoices/{id}/credit-notes")
+    @PreAuthorize(Roles.BILLING_CONFIG)
+    public BillingDtos.CreditNoteResponse credit(@PathVariable UUID id,
+            @Valid @RequestBody BillingDtos.IssueCreditNoteRequest request) {
+        return invoices.credit(id, request);
+    }
+
+    /**
+     * Pays money back.
+     *
+     * <p>The cashier's act, and bounded by the administrator's: the conditional UPDATE behind it
+     * refuses anything beyond what a credit note has said is not owed. A 409 here usually means the
+     * credit note has not been issued yet, and the message says so rather than naming a smaller
+     * amount that would fit.
+     */
+    @PostMapping("/invoices/{id}/refunds")
+    @PreAuthorize(Roles.BILLING_WRITE)
+    public BillingDtos.RefundResponse refund(@PathVariable UUID id,
+            @Valid @RequestBody BillingDtos.PayRefundRequest request) {
+        return invoices.refund(id, request);
+    }
+
+    /** The credit register for one invoice: what was withdrawn from it, and why. */
+    @GetMapping("/invoices/{id}/credit-notes")
+    @PreAuthorize(Roles.BILLING_READ)
+    public List<BillingDtos.CreditNoteResponse> creditNotes(@PathVariable UUID id) {
+        return invoices.creditNotesFor(id);
+    }
+
+    /** What has gone back out against one invoice. */
+    @GetMapping("/invoices/{id}/refunds")
+    @PreAuthorize(Roles.BILLING_READ)
+    public List<BillingDtos.RefundResponse> refunds(@PathVariable UUID id) {
+        return invoices.refundsFor(id);
+    }
+
+    /**
      * Posts a charge from somewhere else in the platform.
      *
      * <p>Called by this service's own event listener, and reachable by an operator replaying a

@@ -87,11 +87,36 @@ export default async function InvoicePage({
         </ErrorNote>
       )}
 
+      {/*
+        Credited and refundable appear only once they are non-zero. On the ordinary bill — which is
+        almost every bill — this is the same four figures it has always been; on a corrected one the
+        two extra numbers are the whole explanation of why the total and the outstanding disagree,
+        and a screen that showed the disagreement without them would be showing a total nobody can
+        account for.
+      */}
       <div className="grid gap-4 sm:grid-cols-4">
         <Stat label="Subtotal" value={money(bill.subtotal)} hint="before tax" />
         <Stat label="Tax" value={money(bill.taxTotal)} hint="at the rates on this invoice's date" />
-        <Stat label="Total" value={money(bill.total)} hint="payable" />
+        <Stat
+          label="Total"
+          value={money(bill.total)}
+          hint={bill.credited > 0 ? `${money(bill.payable)} payable after credit` : "payable"}
+        />
         <Stat label="Outstanding" value={money(bill.outstanding)} hint={`${money(bill.amountPaid)} collected`} />
+        {bill.credited > 0 && (
+          <Stat
+            label="Credited"
+            value={money(bill.credited)}
+            hint="withdrawn in writing; the charged total stands"
+          />
+        )}
+        {bill.refundable > 0 && (
+          <Stat
+            label="Owed back"
+            value={money(bill.refundable)}
+            hint={bill.refunded > 0 ? `${money(bill.refunded)} already paid back` : "held against a credited charge"}
+          />
+        )}
       </div>
 
       <Card title="What is being charged for">
@@ -242,6 +267,53 @@ export default async function InvoicePage({
           </Table>
         )}
       </Card>
+
+      {/*
+        Both registers travel with the invoice rather than being fetched on demand, and they are
+        rendered only when they have something in them: "why is this bill smaller than the
+        treatment" and "where did that money go" are asked while looking at the bill, and an empty
+        card on every uncorrected invoice would bury the answer on the few that need it.
+      */}
+      {bill.creditNotes.length > 0 && (
+        <Card title="Credit notes">
+          <Table head={["Issued", "Number", "Amount", "Why", "By"]}>
+            {bill.creditNotes.map((note) => (
+              <tr key={note.id}>
+                <td className="numeric px-3 py-2">{formatDateTime(note.issuedAt)}</td>
+                <td className="numeric px-3 py-2">{note.number}</td>
+                <td className="numeric px-3 py-2 font-semibold">-{money(note.amount)}</td>
+                <td className="px-3 py-2">{note.reason}</td>
+                <td className="px-3 py-2 text-ink-muted">{note.issuedBy}</td>
+              </tr>
+            ))}
+          </Table>
+          <p className="mt-3 border-t border-line pt-2 text-xs text-ink-muted">
+            A credit note says a charge is not owed; it does not edit the bill. The total above is
+            still what was charged, which is why both numbers are shown and neither has to be
+            trusted over the other.
+          </p>
+        </Card>
+      )}
+
+      {bill.refunds.length > 0 && (
+        <Card title="Refunds">
+          <Table head={["Paid back", "Amount", "Method", "Reference", "By"]}>
+            {bill.refunds.map((refund) => (
+              <tr key={refund.id}>
+                <td className="numeric px-3 py-2">{formatDateTime(refund.paidAt)}</td>
+                <td className="numeric px-3 py-2 font-semibold">-{money(refund.amount)}</td>
+                <td className="px-3 py-2">{refund.method.toLowerCase().replace("_", " ")}</td>
+                <td className="px-3 py-2 text-ink-muted">{refund.reference ?? "—"}</td>
+                <td className="px-3 py-2 text-ink-muted">{refund.paidBy}</td>
+              </tr>
+            ))}
+          </Table>
+          <p className="mt-3 border-t border-line pt-2 text-xs text-ink-muted">
+            Recorded here, not executed here. A card or UPI reversal happens in the acquirer&rsquo;s
+            own portal and is entered with its reference, exactly as a payment is.
+          </p>
+        </Card>
+      )}
 
       {claim && (
         <Card title="The claim">

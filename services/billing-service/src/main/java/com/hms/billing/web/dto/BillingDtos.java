@@ -91,18 +91,31 @@ public final class BillingDtos {
                                      BigDecimal lineTotal) {
     }
 
+    /**
+     * @param credited   how much of this bill has been said in writing not to be owed
+     * @param refunded   how much money has gone back out
+     * @param payable    total less credited: what is actually chargeable
+     * @param refundable held against a charge since credited, and what a refund draws on. At most
+     *                   one of this and {@code outstanding} is ever positive, which is the property
+     *                   that makes the pair worth reporting rather than one signed number.
+     */
     public record InvoiceResponse(UUID id, String number, UUID patientId, String patientMrn,
                                  UUID encounterId, String payerCode,
                                  BillingEnums.InvoiceStatus status, BigDecimal subtotal,
                                  BigDecimal discount, BigDecimal taxTotal, BigDecimal total,
-                                 BigDecimal amountPaid, BigDecimal outstanding,
+                                 BigDecimal amountPaid, BigDecimal credited, BigDecimal refunded,
+                                 BigDecimal payable, BigDecimal outstanding, BigDecimal refundable,
                                  LocalDate invoiceDate, Instant issuedAt, Instant cancelledAt,
                                  String cancelledReason, List<InvoiceLineResponse> lines,
-                                 List<PaymentResponse> payments) {
+                                 List<PaymentResponse> payments,
+                                 List<CreditNoteResponse> creditNotes,
+                                 List<RefundResponse> refunds) {
 
         public InvoiceResponse {
             lines = lines == null ? List.of() : List.copyOf(lines);
             payments = payments == null ? List.of() : List.copyOf(payments);
+            creditNotes = creditNotes == null ? List.of() : List.copyOf(creditNotes);
+            refunds = refunds == null ? List.of() : List.copyOf(refunds);
         }
     }
 
@@ -174,6 +187,45 @@ public final class BillingDtos {
     }
 
     /**
+     * Issues a credit note.
+     *
+     * <p>The reason is required and has a floor, because a credit note's entire purpose is to say
+     * why a charge was withdrawn — and "adjustment" is what a free-text box collects when it does
+     * not insist on a sentence. Same judgement, and the same floor, as the break-glass reason.
+     */
+    public record IssueCreditNoteRequest(@NotNull @DecimalMin(value = "0", inclusive = false)
+                                         @Digits(integer = 12, fraction = 2) BigDecimal amount,
+                                         @NotBlank @Size(min = 20, max = 255) String reason) {
+    }
+
+    public record CreditNoteResponse(UUID id, String number, UUID invoiceId, String invoiceNumber,
+                                     BigDecimal amount, String reason, String issuedBy,
+                                     Instant issuedAt, BigDecimal invoiceCredited,
+                                     BigDecimal invoicePayable, BigDecimal invoiceOutstanding,
+                                     BigDecimal invoiceRefundable) {
+    }
+
+    /**
+     * Pays a refund.
+     *
+     * <p>{@code creditNoteId} records which authorisation the payout draws on and is optional only
+     * because one refund may settle several notes; what actually enforces the authorisation is the
+     * conditional UPDATE and the invoice's own CHECK, on the sum rather than the link.
+     */
+    public record PayRefundRequest(@NotNull @DecimalMin(value = "0", inclusive = false)
+                                   @Digits(integer = 12, fraction = 2) BigDecimal amount,
+                                   @NotNull BillingEnums.PaymentMethod method,
+                                   UUID creditNoteId,
+                                   @Size(max = 64) String reference) {
+    }
+
+    public record RefundResponse(UUID id, UUID invoiceId, String invoiceNumber, UUID creditNoteId,
+                                 BigDecimal amount, BillingEnums.PaymentMethod method,
+                                 String reference, String paidBy, Instant paidAt,
+                                 BigDecimal invoiceRefunded, BigDecimal invoiceRefundable) {
+    }
+
+    /**
      * What the patient owes in total, and across how many bills.
      *
      * <p>One number rather than a list to sum, because the browser summing it would make the figure
@@ -206,12 +258,26 @@ public final class BillingDtos {
     }
 
     /** The day's position: what was billed, what was collected, what is still owed. */
-    public record DayBookResponse(LocalDate on, BigDecimal billed, BigDecimal collected,
-                                  BigDecimal outstanding, int invoices, int payments,
-                                  List<MethodTotal> byMethod) {
+    /**
+     * @param credited  withdrawn from the day's billing by credit note. Reported beside
+     *                  {@code billed} rather than subtracted from it, because what was charged and
+     *                  what was then withdrawn are two facts and a netted figure hides the second.
+     * @param refunded  money paid back out during the day. {@code collected} is gross, so
+     *                  {@code collected - refunded} is what the day actually took — reported as two
+     *                  numbers for the same reason.
+     * @param net       {@code collected - refunded}, computed here so every screen agrees on it.
+     * @param byMethod  collections by method, and {@code refundsByMethod} the payouts, because a
+     *                  drawer is counted against cash in *minus* cash out and a card batch nets
+     *                  its own refunds.
+     */
+    public record DayBookResponse(LocalDate on, BigDecimal billed, BigDecimal credited,
+                                  BigDecimal collected, BigDecimal refunded, BigDecimal net,
+                                  BigDecimal outstanding, int invoices, int payments, int refunds,
+                                  List<MethodTotal> byMethod, List<MethodTotal> refundsByMethod) {
 
         public DayBookResponse {
             byMethod = byMethod == null ? List.of() : List.copyOf(byMethod);
+            refundsByMethod = refundsByMethod == null ? List.of() : List.copyOf(refundsByMethod);
         }
     }
 

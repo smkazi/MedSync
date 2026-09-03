@@ -5,6 +5,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.math.BigDecimal;
@@ -293,6 +294,10 @@ class BillingApiIntegrationTest {
                 .andExpect(status().is4xxClientError())
                 .andReturn().getResponse().getContentAsString();
         assertThat(refusal).contains("100.00");
+        // And it names the way out. This refusal used to end "which this platform does not do yet",
+        // which stopped being true the moment credit notes and refunds landed; a cashier reading it
+        // would have believed a paid bill was simply unfixable.
+        assertThat(refusal).contains("credit-notes");
     }
 
     // ---- charge capture ------------------------------------------------------
@@ -692,6 +697,280 @@ class BillingApiIntegrationTest {
                                 "code", code, "name", "Test rate " + percent,
                                 "percent", percent, "effectiveFrom", from.toString()))))
                 .andExpect(status().isCreated());
+    }
+
+    // ---- credit notes and refunds --------------------------------------------
+
+    @Test
+    @DisplayName("crediting a bill reduces what is owed and leaves the charged total standing")
+    void creditReducesWhatIsOwedWithoutRewritingTheBill() throws Exception {
+        JsonNode issued = issue(addLine(draft(null, null), "CONSULT_OP", "1", null));
+
+        JsonNode note = credit(issued, "200.00", "Consultation billed twice on the same visit", 200);
+        assertThat(note.get("number").asString()).contains("CRN/");
+
+        JsonNode after = read(id(issued));
+        // The bill still says what was charged. That is the platform's rule for a financial record
+        // and it is what keeps chk_not_overpaid true; what moved is a second number beside it.
+        assertThat(money(after, "total")).isEqualByComparingTo("500.00");
+        assertThat(money(after, "credited")).isEqualByComparingTo("200.00");
+        assertThat(money(after, "payable")).isEqualByComparingTo("300.00");
+        assertThat(money(after, "outstanding")).isEqualByComparingTo("300.00");
+        assertThat(money(after, "refundable")).isEqualByComparingTo("0.00");
+        assertThat(after.get("creditNotes").size()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("a credit note cannot forgive more than was charged")
+    void creditCannotExceedTheTotal() throws Exception {
+        JsonNode issued = issue(addLine(draft(null, null), "CONSULT_OP", "1", null));
+        credit(issued, "400.00", "Procedure was not performed after all, billed in error", 200);
+
+        String refusal = mockMvc.perform(post("/invoices/" + id(issued) + "/credit-notes")
+                        .with(as("ADMIN")).contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("amount", "200.00",
+                                "reason", "Trying to credit past the total of the bill"))))
+                .andExpect(status().isConflict())
+                .andReturn().getResponse().getContentAsString();
+        // Names what is left, because the useful next action is a smaller note.
+        assertThat(refusal).contains("100.00");
+    }
+
+    @Test
+    @DisplayName("crediting a paid bill creates a refundable balance rather than an edit")
+    void creditingAPaidBillMakesItRefundable() throws Exception {
+        JsonNode issued = issue(addLine(draft(null, null), "CONSULT_OP", "1", null));
+        pay(issued, "500.00", "CASH", 200);
+        credit(issued, "500.00", "Whole visit billed to the wrong patient's account", 200);
+
+        JsonNode after = read(id(issued));
+        assertThat(money(after, "amountPaid")).isEqualByComparingTo("500.00");
+        assertThat(money(after, "outstanding")).isEqualByComparingTo("0.00");
+        // The complement, and never a negative outstanding: money owed back is a different fact
+        // from a debt, and reporting it as a negative debt is how a receivables total comes up
+        // short without anybody noticing.
+        assertThat(money(after, "refundable")).isEqualByComparingTo("500.00");
+    }
+
+    @Test
+    @DisplayName("a refund needs a credit note behind it, and the refusal says so")
+    void refundWithoutACreditNoteIsRefused() throws Exception {
+        JsonNode issued = issue(addLine(draft(null, null), "CONSULT_OP", "1", null));
+        pay(issued, "500.00", "CASH", 200);
+
+        // The control. Money in the drawer and a bill still recorded as owed in full: paying it
+        // back would leave the patient owing it again the next time anybody read the invoice.
+        String refusal = mockMvc.perform(post("/invoices/" + id(issued) + "/refunds")
+                        .with(as("CASHIER")).contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                Map.of("amount", "100.00", "method", "CASH"))))
+                .andExpect(status().isConflict())
+                .andReturn().getResponse().getContentAsString();
+        assertThat(refusal).contains("credit note");
+    }
+
+    @Test
+    @DisplayName("money cannot go back that never arrived")
+    void refundCannotExceedWhatWasReceived() throws Exception {
+        JsonNode issued = issue(addLine(draft(null, null), "CONSULT_OP", "1", null));
+        pay(issued, "100.00", "CASH", 200);
+        // Credited in full, so the credit condition is satisfied and only the received condition
+        // is left to refuse this - which is the point of the case.
+        credit(issued, "500.00", "Visit cancelled and the whole bill withdrawn in error", 200);
+
+        mockMvc.perform(post("/invoices/" + id(issued) + "/refunds")
+                        .with(as("CASHIER")).contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                Map.of("amount", "200.00", "method", "CASH"))))
+                .andExpect(status().isConflict());
+
+        // And what did arrive goes back.
+        JsonNode paid = refund(issued, "100.00", "BANK_TRANSFER", 200);
+        assertThat(money(paid, "amount")).isEqualByComparingTo("100.00");
+        JsonNode after = read(id(issued));
+        assertThat(money(after, "refunded")).isEqualByComparingTo("100.00");
+        assertThat(money(after, "refundable")).isEqualByComparingTo("0.00");
+        assertThat(after.get("refunds").size()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("two administrators crediting at once: one succeeds, and the bill is forgiven once")
+    void concurrentCreditsCannotBothLand() throws Exception {
+        JsonNode issued = issue(addLine(draft(null, null), "CONSULT_OP", "1", null));
+        int contenders = 6;
+
+        // The same lost update the payment guard exists for, from the other direction — and worse
+        // on a paid invoice, where crediting twice would authorise a refund of money never taken.
+        List<Integer> statuses = inParallel(contenders, () ->
+                mockMvc.perform(post("/invoices/" + id(issued) + "/credit-notes").with(as("ADMIN"))
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(Map.of("amount", "500.00",
+                                        "reason", "Billed in error, withdrawing the whole visit"))))
+                        .andReturn().getResponse().getStatus());
+
+        assertThat(statuses.stream().filter(status -> status == 200).count())
+                .as("exactly one of %d administrators credits the bill", contenders)
+                .isEqualTo(1);
+        JsonNode after = read(id(issued));
+        assertThat(money(after, "credited")).isEqualByComparingTo("500.00");
+        assertThat(after.get("creditNotes").size()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("two cashiers refunding the same balance: one succeeds, and the money leaves once")
+    void concurrentRefundsCannotBothLand() throws Exception {
+        JsonNode issued = issue(addLine(draft(null, null), "CONSULT_OP", "1", null));
+        pay(issued, "500.00", "CASH", 200);
+        credit(issued, "500.00", "Duplicate of an invoice already settled at the desk", 200);
+        int contenders = 6;
+
+        List<Integer> statuses = inParallel(contenders, () ->
+                mockMvc.perform(post("/invoices/" + id(issued) + "/refunds").with(as("CASHIER"))
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(
+                                        Map.of("amount", "500.00", "method", "CASH"))))
+                        .andReturn().getResponse().getStatus());
+
+        assertThat(statuses.stream().filter(status -> status == 200).count())
+                .as("exactly one of %d cashiers pays the money back", contenders)
+                .isEqualTo(1);
+        JsonNode after = read(id(issued));
+        assertThat(money(after, "refunded")).isEqualByComparingTo("500.00");
+        assertThat(after.get("refunds").size()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("a cashier cannot forgive a charge, and an administrator can do both halves")
+    void aCashierCannotForgiveACharge() throws Exception {
+        JsonNode issued = issue(addLine(draft(null, null), "CONSULT_OP", "1", null));
+
+        // The half of the separation that is real, and the reason the refund guard compares against
+        // credited: a cashier handles cash every day and cannot decide that a charge is not owed.
+        // Somebody who could do both would be able to forgive a bill and pay themselves out of the
+        // till with no accomplice, which is the oldest control in the book.
+        mockMvc.perform(post("/invoices/" + id(issued) + "/credit-notes").with(as("CASHIER"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("amount", "100.00",
+                                "reason", "A cashier should not be able to forgive a charge"))))
+                .andExpect(status().isForbidden());
+
+        credit(issued, "100.00", "Radiology item billed against the wrong visit", 200);
+        pay(issued, "400.00", "CASH", 200);
+
+        // And the half that is not, asserted here rather than claimed away: BILLING_WRITE is
+        // hasAnyRole('ADMIN','CASHIER'), so an administrator holds the credit note *and* the
+        // payout. That is the same position the platform takes everywhere else — an administrator
+        // is the account that repairs things, and narrowing it is a separate decision — and it is
+        // named in the README's gaps rather than described as a control it is not. A deployment
+        // that wants two people in the loop takes ADMIN off this endpoint; the refusal above is
+        // what holds for everybody who is not one.
+        mockMvc.perform(post("/invoices/" + id(issued) + "/refunds").with(as("ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                Map.of("amount", "100.00", "method", "CASH"))))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("a reason that says nothing is refused, and a sentence is accepted")
+    void aCreditNoteHasToSayWhy() throws Exception {
+        JsonNode issued = issue(addLine(draft(null, null), "CONSULT_OP", "1", null));
+
+        // "adjustment" is what a free-text box collects when it does not ask for a sentence, and a
+        // credit note whose reason says nothing is a discount nobody has to justify.
+        mockMvc.perform(post("/invoices/" + id(issued) + "/credit-notes").with(as("ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                Map.of("amount", "100.00", "reason", "adjustment"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors.reason").exists());
+    }
+
+    @Test
+    @DisplayName("the credited remainder can be settled, and the invoice then reads as paid")
+    void aCreditedInvoiceCanBePaidOff() throws Exception {
+        JsonNode issued = issue(addLine(draft(null, null), "CONSULT_OP", "1", null));
+        credit(issued, "200.00", "Dressing charged that the ward supplied itself", 200);
+
+        // Paying the full original total would be collecting money for a charge the hospital has
+        // withdrawn in writing, so the cap is the payable amount rather than the total.
+        mockMvc.perform(post("/invoices/" + id(issued) + "/payments").with(as("CASHIER"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                Map.of("amount", "500.00", "method", "CASH"))))
+                .andExpect(status().isConflict());
+
+        pay(issued, "300.00", "CASH", 200);
+        JsonNode after = read(id(issued));
+        // And it says PAID: without moving the status in the same statement, an invoice owing
+        // nothing would sit at ISSUED for ever and every receivables report would list it.
+        assertThat(after.get("status").asString()).isEqualTo("PAID");
+        assertThat(money(after, "outstanding")).isEqualByComparingTo("0.00");
+    }
+
+    @Test
+    @DisplayName("a cancelled invoice has nothing to credit")
+    void aCancelledInvoiceCannotBeCredited() throws Exception {
+        JsonNode issued = issue(addLine(draft(null, null), "CONSULT_OP", "1", null));
+        mockMvc.perform(post("/invoices/" + id(issued) + "/cancel").with(as("CASHIER"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                Map.of("reason", "Registered against the wrong patient"))))
+                .andExpect(status().isOk());
+
+        String refusal = mockMvc.perform(post("/invoices/" + id(issued) + "/credit-notes")
+                        .with(as("ADMIN")).contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("amount", "100.00",
+                                "reason", "Nothing here to forgive, the bill was withdrawn"))))
+                .andExpect(status().isConflict())
+                .andReturn().getResponse().getContentAsString();
+        assertThat(refusal).contains("cancelled");
+    }
+
+    @Test
+    @DisplayName("the day book reports what went out as well as what came in")
+    void theDayBookNetsRefunds() throws Exception {
+        JsonNode issued = issue(addLine(draft(null, null), "CONSULT_OP", "1", null));
+        pay(issued, "500.00", "CASH", 200);
+        credit(issued, "500.00", "Whole visit billed against a cancelled admission", 200);
+        refund(issued, "200.00", "CASH", 200);
+
+        JsonNode book = objectMapper.readTree(
+                mockMvc.perform(get("/day-book").with(as("CASHIER")))
+                        .andExpect(status().isOk())
+                        .andReturn().getResponse().getContentAsString());
+
+        // Three numbers, not one. Gross collections reconcile against receipts, refunds against
+        // the vouchers, and only the net against the drawer - a single figure would balance and
+        // explain nothing.
+        assertThat(money(book, "collected")).isGreaterThanOrEqualTo(new BigDecimal("500.00"));
+        assertThat(money(book, "refunded")).isGreaterThanOrEqualTo(new BigDecimal("200.00"));
+        assertThat(money(book, "collected").subtract(money(book, "refunded")))
+                .isEqualByComparingTo(money(book, "net"));
+        assertThat(money(book, "credited")).isGreaterThanOrEqualTo(new BigDecimal("500.00"));
+        assertThat(book.get("refundsByMethod").size()).isGreaterThanOrEqualTo(1);
+    }
+
+    private JsonNode credit(JsonNode invoice, String amount, String reason, int expected)
+            throws Exception {
+        return objectMapper.readTree(
+                mockMvc.perform(post("/invoices/" + id(invoice) + "/credit-notes").with(as("ADMIN"))
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(
+                                        Map.of("amount", amount, "reason", reason))))
+                        .andExpect(status().is(expected))
+                        .andReturn().getResponse().getContentAsString());
+    }
+
+    private JsonNode refund(JsonNode invoice, String amount, String method, int expected)
+            throws Exception {
+        return objectMapper.readTree(
+                mockMvc.perform(post("/invoices/" + id(invoice) + "/refunds").with(as("CASHIER"))
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(
+                                        Map.of("amount", amount, "method", method))))
+                        .andExpect(status().is(expected))
+                        .andReturn().getResponse().getContentAsString());
     }
 
     private <T> List<T> inParallel(int n, Callable<T> task) throws Exception {

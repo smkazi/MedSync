@@ -1,17 +1,22 @@
 package com.hms.billing.service;
 
+import com.hms.billing.domain.BillingEnums;
 import com.hms.billing.domain.BillingEnums.InvoiceStatus;
 import com.hms.billing.domain.ChargeItem;
+import com.hms.billing.domain.CreditNote;
 import com.hms.billing.domain.Invoice;
 import com.hms.billing.domain.InvoiceLine;
 import com.hms.billing.domain.Money;
 import com.hms.billing.domain.Payer;
 import com.hms.billing.domain.Payment;
 import com.hms.billing.domain.PostedCharge;
+import com.hms.billing.domain.Refund;
+import com.hms.billing.repo.CreditNoteRepository;
 import com.hms.billing.repo.InvoiceCounterRepository;
 import com.hms.billing.repo.InvoiceRepository;
 import com.hms.billing.repo.PaymentRepository;
 import com.hms.billing.repo.PostedChargeRepository;
+import com.hms.billing.repo.RefundRepository;
 import com.hms.billing.web.dto.BillingDtos;
 import com.hms.common.audit.AuditService;
 import com.hms.common.error.BadRequestException;
@@ -36,7 +41,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Invoices, charges and payments.
+ * Invoices, charges, payments, credit notes and refunds.
  *
  * <p>Three things here are database rules rather than code, and each one is the answer to a way
  * hospitals actually lose or double-charge money:
@@ -58,26 +63,34 @@ public class InvoiceService {
     private final InvoiceRepository invoices;
     private final InvoiceCounterRepository counters;
     private final PaymentRepository payments;
+    private final CreditNoteRepository creditNotes;
+    private final RefundRepository refunds;
     private final PostedChargeRepository posted;
     private final BillingConfigService config;
     private final AuditService audit;
     private final EventPublisher events;
     private final String prefix;
+    private final String creditPrefix;
 
     public InvoiceService(BillingClock clock, InvoiceRepository invoices,
                           InvoiceCounterRepository counters,
-                          PaymentRepository payments, PostedChargeRepository posted,
+                          PaymentRepository payments, CreditNoteRepository creditNotes,
+                          RefundRepository refunds, PostedChargeRepository posted,
                           BillingConfigService config, AuditService audit, EventPublisher events,
-                          @Value("${hms.billing.invoice-prefix:INV}") String prefix) {
+                          @Value("${hms.billing.invoice-prefix:INV}") String prefix,
+                          @Value("${hms.billing.credit-note-prefix:CRN}") String creditPrefix) {
         this.clock = clock;
         this.invoices = invoices;
         this.counters = counters;
         this.payments = payments;
+        this.creditNotes = creditNotes;
+        this.refunds = refunds;
         this.posted = posted;
         this.config = config;
         this.audit = audit;
         this.events = events;
         this.prefix = prefix;
+        this.creditPrefix = creditPrefix;
     }
 
     // ---- invoices ------------------------------------------------------------
@@ -202,12 +215,15 @@ public class InvoiceService {
         if (invoice.getAmountPaid().signum() > 0) {
             // Money has changed hands. Cancelling would make the invoice say the treatment was
             // never billed while the payment says it was paid for, and no reconciliation recovers
-            // from that. A refund is the honest answer, and this service has none yet.
+            // from that. Reversing a paid bill is a credit note and a refund: two documents that
+            // leave the charge, the withdrawal and the payout all readable afterwards, which is
+            // exactly what cancelling the invoice would destroy.
             throw new ConflictException(
-                    ("%s has %s against it, so it cannot be cancelled. A paid invoice is reversed "
-                            + "with a refund, which this platform does not do yet — see the "
-                            + "README's gaps.").formatted(invoice.getNumber(),
-                            invoice.getAmountPaid()));
+                    ("%s has %s against it, so it cannot be cancelled. Reverse a paid invoice by "
+                            + "crediting it and refunding what was taken — POST "
+                            + "/invoices/%s/credit-notes, then /refunds.")
+                            .formatted(invoice.getNumber(), invoice.getAmountPaid(),
+                                    invoice.getId()));
         }
         invoice.cancel(reason);
         invoices.save(invoice);
@@ -326,6 +342,137 @@ public class InvoiceService {
         return toResponse(after);
     }
 
+    // ---- credit notes and refunds --------------------------------------------
+
+    /**
+     * Credits part or all of an invoice: this much is not owed.
+     *
+     * <p>Allowed on a paid invoice, which is the whole point — over-billing is discovered after the
+     * money has been taken far more often than before it. The result is a refundable balance rather
+     * than an edit to anything already recorded, and paying that balance back is a separate act by
+     * a separate role.
+     *
+     * <p>Refused on a cancelled invoice: there is nothing to forgive on a bill that was withdrawn
+     * whole, and a credit note against one would be a document with no charge behind it.
+     */
+    @Transactional
+    public BillingDtos.CreditNoteResponse credit(UUID id, BillingDtos.IssueCreditNoteRequest request) {
+        Invoice invoice = require(id);
+        BigDecimal amount = Money.scale(request.amount());
+        if (invoice.getStatus() == BillingEnums.InvoiceStatus.CANCELLED) {
+            throw new ConflictException(("%s was cancelled, so there is nothing on it to credit. A "
+                    + "cancelled invoice was never money the hospital was owed.")
+                    .formatted(invoice.getNumber()));
+        }
+
+        int applied = invoices.applyCredit(id, amount);
+        if (applied == 0) {
+            // Re-read: the reason is a number another administrator may have just moved.
+            Invoice now = require(id);
+            throw new ConflictException(("%s cannot be credited %s: %s of its %s is already "
+                    + "credited, leaving %s that could be. Somebody may have just credited it.")
+                    .formatted(now.getNumber(), amount, now.getCredited(), now.getTotal(),
+                            Money.scale(now.getTotal().subtract(now.getCredited()))));
+        }
+
+        CreditNote note = creditNotes.save(new CreditNote(id, nextCreditNoteNumber(), amount,
+                request.reason().trim(), CurrentUser.usernameOrSystem()));
+        String noteId = Objects.requireNonNull(note.getId(),
+                "a saved credit note must have an id").toString();
+        Invoice after = require(id);
+        audit.record("CREDIT_NOTE_ISSUED", "Invoice", id,
+                "%s credits %s of %s".formatted(note.getNumber(), amount, after.getNumber()));
+        publish("billing.credit-note-issued", after,
+                Map.of("amount", amount.toString(), "creditNote", note.getNumber(),
+                        "creditNoteId", noteId));
+        return toCreditNoteResponse(note, after);
+    }
+
+    /**
+     * Pays money back.
+     *
+     * <p>The UPDATE is the control, and its two conditions answer different questions: money cannot
+     * go back that never arrived, and money cannot go back beyond what a credit note has said is not
+     * owed. The second is why the refusal quotes the credited figure — the fix for the usual refusal
+     * is not a smaller refund but a credit note somebody has to authorise.
+     */
+    @Transactional
+    public BillingDtos.RefundResponse refund(UUID id, BillingDtos.PayRefundRequest request) {
+        require(id);
+        BigDecimal amount = Money.scale(request.amount());
+
+        int applied = invoices.applyRefund(id, amount);
+        if (applied == 0) {
+            Invoice now = require(id);
+            throw new ConflictException(("%s cannot refund %s: %s is refundable. Money goes back "
+                    + "only once a credit note says it is not owed — %s credited, %s received, %s "
+                    + "already paid back.")
+                    .formatted(now.getNumber(), amount, now.refundable(), now.getCredited(),
+                            now.getAmountPaid(), now.getRefunded()));
+        }
+
+        Refund refund = refunds.save(new Refund(id, request.creditNoteId(), amount,
+                request.method(), request.reference(), CurrentUser.usernameOrSystem()));
+        String refundId = Objects.requireNonNull(refund.getId(),
+                "a saved refund must have an id").toString();
+        Invoice after = require(id);
+        audit.record("REFUND_PAID", "Invoice", id,
+                "%s refunded %s by %s".formatted(after.getNumber(), amount, request.method()));
+        publish("billing.refund-paid", after,
+                Map.of("amount", amount.toString(), "method", request.method().name(),
+                        "refundId", refundId));
+        return toRefundResponse(refund, after);
+    }
+
+    @Transactional(readOnly = true)
+    public List<BillingDtos.CreditNoteResponse> creditNotesFor(UUID id) {
+        Invoice invoice = require(id);
+        return creditNotes.findByInvoiceIdOrderByIssuedAt(id).stream()
+                .map(note -> toCreditNoteResponse(note, invoice))
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<BillingDtos.RefundResponse> refundsFor(UUID id) {
+        Invoice invoice = require(id);
+        return refunds.findByInvoiceIdOrderByPaidAt(id).stream()
+                .map(refund -> toRefundResponse(refund, invoice))
+                .toList();
+    }
+
+    /**
+     * The next credit-note number, in its own series.
+     *
+     * <p>Shares the counter table with invoices but not the counter *row*: the series carries its
+     * own prefix, so credit notes count 1, 2, 3 within the financial year independently. Putting
+     * them on the invoice sequence would leave gaps in the invoice numbering, which is precisely
+     * what an auditor reads that sequence to detect.
+     *
+     * <p>Numbered from today rather than from the invoice's date, deliberately: a credit note is a
+     * document of the day it was issued, whatever the bill it corrects belongs to.
+     */
+    private String nextCreditNoteNumber() {
+        LocalDate today = clock.today();
+        int startYear = today.getMonthValue() >= 4 ? today.getYear() : today.getYear() - 1;
+        String year = "%d-%02d".formatted(startYear, (startYear + 1) % 100);
+        int number = counters.issueNext("%s-%s".formatted(creditPrefix, year));
+        return "%s/%s/%05d".formatted(creditPrefix, year, number);
+    }
+
+    private BillingDtos.CreditNoteResponse toCreditNoteResponse(CreditNote note, Invoice invoice) {
+        return new BillingDtos.CreditNoteResponse(note.getId(), note.getNumber(), invoice.getId(),
+                invoice.getNumber(), note.getAmount(), note.getReason(), note.getIssuedBy(),
+                note.getIssuedAt(), invoice.getCredited(), invoice.payable(),
+                invoice.outstanding(), invoice.refundable());
+    }
+
+    private BillingDtos.RefundResponse toRefundResponse(Refund refund, Invoice invoice) {
+        return new BillingDtos.RefundResponse(refund.getId(), invoice.getId(), invoice.getNumber(),
+                refund.getCreditNoteId(), refund.getAmount(), refund.getMethod(),
+                refund.getReference(), refund.getPaidBy(), refund.getPaidAt(),
+                invoice.getRefunded(), invoice.refundable());
+    }
+
     // ---- helpers -------------------------------------------------------------
 
     Invoice require(UUID id) {
@@ -345,7 +492,9 @@ public class InvoiceService {
                 invoice.getPatientId(), invoice.getPatientMrn(), invoice.getEncounterId(),
                 invoice.getPayerCode(), invoice.getStatus(), invoice.getSubtotal(),
                 invoice.getDiscount(), invoice.getTaxTotal(), invoice.getTotal(),
-                invoice.getAmountPaid(), invoice.outstanding(), invoice.getInvoiceDate(),
+                invoice.getAmountPaid(), invoice.getCredited(), invoice.getRefunded(),
+                invoice.payable(), invoice.outstanding(), invoice.refundable(),
+                invoice.getInvoiceDate(),
                 invoice.getIssuedAt(), invoice.getCancelledAt(), invoice.getCancelledReason(),
                 invoice.getLines().stream()
                         .map(line -> new BillingDtos.InvoiceLineResponse(line.getId(),
@@ -357,6 +506,16 @@ public class InvoiceService {
                         .map(payment -> new BillingDtos.PaymentResponse(payment.getId(),
                                 payment.getAmount(), payment.getMethod(), payment.getReference(),
                                 payment.getReceivedBy(), payment.getReceivedAt()))
+                        .toList(),
+                // The two registers travel with the invoice, because "why is this bill smaller
+                // than the treatment" and "where did that money go" are questions asked while
+                // looking at it, and a screen that has to fetch them separately is a screen that
+                // shows a total nobody can explain.
+                creditNotes.findByInvoiceIdOrderByIssuedAt(invoice.getId()).stream()
+                        .map(note -> toCreditNoteResponse(note, invoice))
+                        .toList(),
+                refunds.findByInvoiceIdOrderByPaidAt(invoice.getId()).stream()
+                        .map(refund -> toRefundResponse(refund, invoice))
                         .toList());
     }
 

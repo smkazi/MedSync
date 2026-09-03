@@ -901,6 +901,35 @@ export type Payment = {
   receivedAt: string;
 };
 
+export type CreditNote = {
+  id: string;
+  number: string;
+  invoiceId: string;
+  invoiceNumber: string;
+  amount: number;
+  reason: string;
+  issuedBy: string;
+  issuedAt: string;
+  invoiceCredited: number;
+  invoicePayable: number;
+  invoiceOutstanding: number;
+  invoiceRefundable: number;
+};
+
+export type Refund = {
+  id: string;
+  invoiceId: string;
+  invoiceNumber: string;
+  creditNoteId: string | null;
+  amount: number;
+  method: PaymentMethod;
+  reference: string | null;
+  paidBy: string;
+  paidAt: string;
+  invoiceRefunded: number;
+  invoiceRefundable: number;
+};
+
 export type Invoice = {
   id: string;
   number: string;
@@ -914,13 +943,25 @@ export type Invoice = {
   taxTotal: number;
   total: number;
   amountPaid: number;
+  /** Said in writing not to be owed. `total` itself never moves. */
+  credited: number;
+  refunded: number;
+  /** `total - credited`: what is actually chargeable. */
+  payable: number;
   outstanding: number;
+  /**
+   * Held against a charge since credited, and what a refund draws on. At most one of this and
+   * `outstanding` is ever positive — money owed back is a different fact from a debt.
+   */
+  refundable: number;
   invoiceDate: string;
   issuedAt: string | null;
   cancelledAt: string | null;
   cancelledReason: string | null;
   lines: InvoiceLine[];
   payments: Payment[];
+  creditNotes: CreditNote[];
+  refunds: Refund[];
 };
 
 export type ChargeItem = {
@@ -987,11 +1028,19 @@ export type MethodTotal = {
 export type DayBook = {
   on: string;
   billed: number;
+  /** Withdrawn from the day's billing by credit note, reported beside `billed` rather than netted. */
+  credited: number;
+  /** Gross: what was taken, before anything went back out. */
   collected: number;
+  refunded: number;
+  /** `collected - refunded` — the only one of the three that reconciles against the drawer. */
+  net: number;
   outstanding: number;
   invoices: number;
   payments: number;
+  refunds: number;
   byMethod: MethodTotal[];
+  refundsByMethod: MethodTotal[];
 };
 
 // ---- interoperability ------------------------------------------------------
