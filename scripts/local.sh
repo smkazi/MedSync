@@ -41,10 +41,26 @@ start_one() {
     echo "== $name already running (pid $(cat "$RUN_DIR/$name.pid"))"
     return 0
   fi
+  # This service's own database credential when one is configured, falling back to the shared
+  # HMS_DB_USER. Resolved per service rather than inherited from the shell, so a native run gets the
+  # same isolation the compose file does -- otherwise `scripts/db-roles.sql` would have created nine
+  # roles that only a container ever connects as.
+  local key="${name%-service}"
+  key="${key^^}"
+  local user_var="HMS_DB_${key}_USER" pass_var="HMS_DB_${key}_PASSWORD"
+  local db_user="${!user_var:-${HMS_DB_USER:-hms}}"
+  local db_pass="${!pass_var:-${HMS_DB_PASSWORD:-hms}}"
+  # The gateway routes and holds no data. Reporting a role for it would suggest it connects to the
+  # database, which is the one thing the URL map exists to keep it from needing to do.
+  local db_shown="$db_user"
+  [[ "$name" == "gateway" ]] && db_shown="-"
+
+  HMS_DB_USER="$db_user" HMS_DB_PASSWORD="$db_pass" \
   nohup java -jar "$jar" --spring.profiles.active="${HMS_PROFILE:-dev}" \
     > "$RUN_DIR/$name.log" 2>&1 &
   echo $! > "$RUN_DIR/$name.pid"
-  printf "== %-22s pid %-7s port %s " "$name" "$(cat "$RUN_DIR/$name.pid")" "$port"
+  printf "== %-22s pid %-7s port %-5s db %-16s " "$name" "$(cat "$RUN_DIR/$name.pid")" \
+    "$port" "$db_shown"
   for _ in $(seq 1 60); do
     if curl -fsS "http://127.0.0.1:$port/actuator/health" >/dev/null 2>&1; then
       echo "UP"

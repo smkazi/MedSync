@@ -1157,24 +1157,42 @@ to a patient record on its own.
   | --- | --- | --- |
   | *(a person, once)* | install `pg_trgm` and `btree_gist` | superuser — runs the script, and never appears in a service's environment |
   | `hms_migrate` | owns every schema, runs every migration | DDL. Flyway's credential, and only Flyway's |
-  | `hms_app` | serves every request | `USAGE` on the schemas, `SELECT/INSERT/UPDATE/DELETE` on their tables, `USAGE` on their sequences, **no DDL at all** |
+  | `hms_<service>` — nine of them | serves one service's requests | `USAGE` on **its own schema only**, `SELECT/INSERT/UPDATE/DELETE` on that schema's tables, `USAGE` on its sequences, **no DDL at all** |
+  | `hms_app` | the fallback: serves any service whose own credential is unset | the same, on **every** schema |
 
   ```bash
   psql -d hms -f scripts/db-roles.sql \
-       -v migrate_password="$HMS_DB_MIGRATION_PASSWORD" -v app_password="$HMS_DB_PASSWORD"
-  # then: HMS_DB_USER=hms_app HMS_DB_MIGRATION_USER=hms_migrate, plus the two passwords
+       -v migrate_password="$HMS_DB_MIGRATION_PASSWORD" -v app_password="$HMS_DB_PASSWORD" \
+       -v billing_password="$HMS_DB_BILLING_PASSWORD"   # ...one per service
+  # then: HMS_DB_BILLING_USER=hms_billing, HMS_DB_BILLING_PASSWORD=..., and so on for nine
   ```
+
+  **The nine are the isolation.** Connected as `hms_billing`, an injected
+  `SELECT ... FROM patient.patients` in billing-service is refused by PostgreSQL with *permission
+  denied for schema patient* — not by billing-service remembering not to ask, and not by a `WHERE`
+  clause somebody could get wrong. A service holds no `USAGE` on any schema but its own, so the
+  refusal happens before rows are considered. `hms_billing` is equally refused a `CREATE TABLE` in
+  its *own* schema: DDL belongs to `hms_migrate` and to nothing that serves a request.
+
+  Both `docker-compose.yml` and `scripts/local.sh` prefer `HMS_DB_<SERVICE>_USER`/`_PASSWORD` and
+  fall back to `HMS_DB_USER`, so setting them is the whole migration and it can be done one service
+  at a time. `scripts/local.sh status` prints the role each service is connected as, because a split
+  nobody can see is a split nobody maintains.
 
   The script is idempotent, hands over tables an earlier superuser created, and pre-creates the nine
   schemas so `hms_migrate` never needs `CREATE` on the database. `spring.flyway.user` defaults to
   the datasource credential in all nine services, so a deployment that has not run it behaves
   exactly as before.
 
-  **What this does not do**, stated rather than implied: it does not isolate one service's tables
-  from another's — all nine share `hms_app`. Per-service runtime roles need nine credentials in nine
-  environments, and this platform ships as one compose file with one database; that is in the
-  Roadmap as a named gap. CI keeps its superuser deliberately: a job running as `hms_app` would be
-  testing a different deployment from the one it builds.
+  **What this does not do**, stated rather than implied. The nine runtime roles share one
+  *migration* role: `hms_migrate` owns every schema, so a compromised migration credential reaches
+  everything. That is a deliberate trade — migrations run at startup from files in the image, never
+  from anything a request can influence, so the injection surface this split exists to close is not
+  there, and eight more credentials would guard a door nothing opens. A deployment that leaves the
+  per-service variables unset gets `hms_app` and therefore the DDL split **without** the isolation;
+  the script names every service still sharing a password when it finishes, rather than reporting
+  success and letting the deployment assume otherwise. CI keeps its superuser deliberately: a job
+  running as a restricted role would be testing a different deployment from the one it builds.
 - **PHI at rest** — national id and insurance policy number are AES-256-GCM encrypted, excluded
   from every patient response, and served only by a separately authorised, individually audited
   endpoint.
@@ -1271,8 +1289,8 @@ to a patient record on its own.
   redirected rather than served, `sslmode=verify-full` to the database, `SASL_SSL` to Kafka.
 
 **Before deploying:** supply `HMS_JWT_PRIVATE_KEY` and `HMS_PHI_KEY` from a secret manager (the
-built-in PHI dev key protects nothing and logs a warning), run `scripts/db-roles.sql` and point the services at
-`hms_app` and `hms_migrate` rather than the shared superuser, set `HMS_SEED_ENABLED=false`, generate real
+built-in PHI dev key protects nothing and logs a warning), run `scripts/db-roles.sql` and point each service at
+its own `hms_<service>` role and `hms_migrate` rather than the shared superuser, set `HMS_SEED_ENABLED=false`, generate real
 certificates rather than `make certs` output, and put Redis behind the rate limiter if you run more
 than one gateway (the counters are in-process, so N gateways enforce N times the limit — a
 deliberate trade for the single-gateway deployment here, not an oversight).
@@ -1783,10 +1801,11 @@ SAST/DAST tooling, and performance profiles. Dependency scanning covers Python (
   which works and is honest, but the natural rule — "you are on this ward tonight" — needs a shift
   or assignment model the platform does not have. With one, the ward round would enrol nobody by
   hand and break-glass would be rarer still.
-- **One runtime database role, not nine.** `scripts/db-roles.sql` takes DDL and the superuser out
-  of the request path, which is the larger half, and stops there: all nine services share `hms_app`,
-  so a SQL-injection hole in one still reaches another's tables. Per-service roles need nine
-  credentials in nine environments and this platform ships as one compose file with one database.
+- **One migration role, not nine.** The nine runtime roles are isolated per schema, but Flyway runs
+  as a single `hms_migrate` that owns all of them, so a compromised migration credential still
+  reaches every service's tables. It is a narrower door than the runtime one was — migrations run at
+  startup from files in the image, not from anything a request can reach — which is why it was left
+  as the trade rather than closed with eight more credentials.
 - **A timed-out session resumes onto the page, not into the work.** Signing in again returns you to
   the screen the timeout interrupted, filters and all — but a half-written note or a part-filled
   form is gone, because nothing on the platform holds a draft. Keeping one is a different feature
