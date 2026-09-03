@@ -1,17 +1,21 @@
 package com.hms.billing.web;
 
 import com.hms.billing.service.BillingConfigService;
+import com.hms.billing.service.CashSessionService;
 import com.hms.billing.service.ClaimService;
 import com.hms.billing.service.DayBookService;
 import com.hms.billing.service.InvoiceService;
 import com.hms.billing.web.dto.BillingDtos;
+import com.hms.common.api.PageResponse;
 import com.hms.common.security.Roles;
 import jakarta.validation.Valid;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -43,13 +47,16 @@ public class BillingController {
     private final InvoiceService invoices;
     private final ClaimService claims;
     private final DayBookService dayBook;
+    private final CashSessionService cashSessions;
 
     public BillingController(BillingConfigService config, InvoiceService invoices,
-                             ClaimService claims, DayBookService dayBook) {
+                             ClaimService claims, DayBookService dayBook,
+                             CashSessionService cashSessions) {
         this.config = config;
         this.invoices = invoices;
         this.claims = claims;
         this.dayBook = dayBook;
+        this.cashSessions = cashSessions;
     }
 
     // ---- the price list ------------------------------------------------------
@@ -287,6 +294,76 @@ public class BillingController {
             @RequestParam(required = false)
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate on) {
         return dayBook.on(on);
+    }
+
+    // ---- the cash-up ---------------------------------------------------------
+
+    /**
+     * Opens a drawer for the caller.
+     *
+     * <p>The caller's own, always: there is no path here for opening a shift in somebody else's
+     * name, because the whole point of the row is that one named person is answerable for what is
+     * in that drawer at the end of it.
+     */
+    @PostMapping("/cash-sessions")
+    @ResponseStatus(HttpStatus.CREATED)
+    @PreAuthorize(Roles.BILLING_WRITE)
+    public BillingDtos.CashSessionResponse openCashSession(
+            @Valid @RequestBody BillingDtos.OpenCashSessionRequest request) {
+        return cashSessions.open(request);
+    }
+
+    /**
+     * Counts a drawer and signs the shift off.
+     *
+     * <p>{@code BILLING_WRITE}, which is the cashier whose drawer it is — and an administrator, who
+     * needs to be able to close a shift somebody walked away from at the end of a day. The row
+     * records both names rather than one, so a drawer closed by somebody other than its cashier
+     * says so.
+     */
+    @PostMapping("/cash-sessions/{id}/close")
+    @PreAuthorize(Roles.BILLING_WRITE)
+    public BillingDtos.CashSessionResponse closeCashSession(@PathVariable UUID id,
+            @Valid @RequestBody BillingDtos.CloseCashSessionRequest request) {
+        return cashSessions.close(id, request);
+    }
+
+    /**
+     * The caller's open drawer and what it should hold, or 204 when they have none.
+     *
+     * <p>No content rather than a 404: not having a drawer open is an ordinary state a screen asks
+     * about on every load, and an error status for it would put a red line in every log.
+     */
+    @GetMapping("/cash-sessions/current")
+    @PreAuthorize(Roles.BILLING_WRITE)
+    public ResponseEntity<BillingDtos.CashSessionResponse> currentCashSession() {
+        return cashSessions.current()
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.noContent().build());
+    }
+
+    /**
+     * The register of shifts: the caller's own, or everybody's for an administrator.
+     *
+     * <p>Not a privacy rule — a variance is nobody's private business — but a useful default: a
+     * list of every cashier's shifts is noise to somebody looking for their own last count.
+     */
+    @GetMapping("/cash-sessions")
+    @PreAuthorize(Roles.BILLING_READ)
+    public PageResponse<BillingDtos.CashSessionResponse> cashSessionList(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size,
+            org.springframework.security.core.Authentication authentication) {
+        boolean everyone = authentication != null && authentication.getAuthorities().stream()
+                .anyMatch(granted -> "ROLE_ADMIN".equals(granted.getAuthority()));
+        return PageResponse.of(cashSessions.list(everyone,
+                PageRequest.of(page, Math.min(size, 100))));
+    }
+
+    @GetMapping("/cash-sessions/{id}")
+    @PreAuthorize(Roles.BILLING_READ)
+    public BillingDtos.CashSessionResponse cashSession(@PathVariable UUID id) {
+        return cashSessions.get(id);
     }
 
     /**

@@ -951,6 +951,157 @@ class BillingApiIntegrationTest {
         assertThat(book.get("refundsByMethod").size()).isGreaterThanOrEqualTo(1);
     }
 
+    // ---- the cash-up -----------------------------------------------------------
+
+    @Test
+    @DisplayName("cash taken during a shift is what the drawer is expected to hold")
+    void aShiftExpectsItsFloatPlusTheCashItTook() throws Exception {
+        JsonNode session = openSession("500.00");
+
+        JsonNode issued = issue(addLine(draft(null, null), "CONSULT_OP", "1", null));
+        pay(issued, "500.00", "CASH", 200);
+
+        // Float plus the cash, and nothing else: a card payment is in the same shift and not in
+        // the drawer, which is the distinction the whole table turns on.
+        JsonNode paid = issue(addLine(draft(null, null), "CONSULT_OP", "1", null));
+        pay(paid, "500.00", "CARD", 200);
+
+        assertThat(money(current(), "expectedCash")).isEqualByComparingTo("1000.00");
+        assertThat(current().get("taken").size()).isGreaterThanOrEqualTo(2);
+
+        // Counted exactly: no variance, and no explanation required.
+        JsonNode closed = closeSession(id(session), "1000.00", null, 200);
+        assertThat(money(closed, "variance")).isEqualByComparingTo("0.00");
+        assertThat(closed.get("varianceDescription").asString()).isEqualTo("exact");
+        assertThat(closed.get("status").asString()).isEqualTo("CLOSED");
+    }
+
+    @Test
+    @DisplayName("cash paid back out comes off what the drawer should hold")
+    void aRefundLeavesTheDrawer() throws Exception {
+        JsonNode session = openSession("0.00");
+        JsonNode issued = issue(addLine(draft(null, null), "CONSULT_OP", "1", null));
+        pay(issued, "500.00", "CASH", 200);
+        credit(issued, "500.00", "Consultation was not given; billed against the wrong visit", 200);
+        refund(issued, "200.00", "CASH", 200);
+
+        // 500 in, 200 back out. A cash-up that counted only what arrived would balance against a
+        // figure that was never true.
+        assertThat(money(current(), "expectedCash")).isEqualByComparingTo("300.00");
+        closeSession(id(session), "300.00", null, 200);
+    }
+
+    @Test
+    @DisplayName("a count that disagrees has to say why, and the difference is named")
+    void aVarianceMustBeExplained() throws Exception {
+        JsonNode session = openSession("100.00");
+
+        String refusal = closeSession(id(session), "80.00", null, 400).toString();
+        // The refusal quotes both figures and the difference, because the useful next action is to
+        // recount rather than to guess what the platform was expecting.
+        assertThat(refusal).contains("80.00").contains("100.00");
+
+        JsonNode closed = closeSession(id(session), "80.00",
+                "Twenty short; a taxi fare was paid out of the drawer against a signed chit", 200);
+        assertThat(money(closed, "variance")).isEqualByComparingTo("-20.00");
+        assertThat(closed.get("varianceDescription").asString()).isEqualTo("short");
+    }
+
+    @Test
+    @DisplayName("one drawer at a time, and a closed shift is not counted twice")
+    void oneOpenDrawerPerCashier() throws Exception {
+        JsonNode session = openSession("0.00");
+
+        // Two open drawers cannot both be the one a payment goes into.
+        mockMvc.perform(post("/cash-sessions").with(as("CASHIER"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("openingFloat", "0.00"))))
+                .andExpect(status().isConflict());
+
+        closeSession(id(session), "0.00", null, 200);
+        // A shift is counted once. A correction to it is a note, not a second count.
+        closeSession(id(session), "0.00", null, 409);
+
+        // And closing frees the cashier to open the next one.
+        JsonNode next = openSession("0.00");
+        closeSession(id(next), "0.00", null, 200);
+    }
+
+    @Test
+    @DisplayName("a closed shift keeps the figure it was signed against")
+    void aClosedShiftIsFrozen() throws Exception {
+        JsonNode session = openSession("0.00");
+        JsonNode issued = issue(addLine(draft(null, null), "CONSULT_OP", "1", null));
+        pay(issued, "500.00", "CASH", 200);
+        JsonNode closed = closeSession(id(session), "500.00", null, 200);
+        assertThat(money(closed, "expectedCash")).isEqualByComparingTo("500.00");
+
+        // Crediting the invoice afterwards changes what is owed and must not move a number a
+        // person has already put their name to.
+        credit(issued, "500.00", "Corrected the day after the shift was counted and signed", 200);
+
+        JsonNode reread = objectMapper.readTree(
+                mockMvc.perform(get("/cash-sessions/" + id(session)).with(as("CASHIER")))
+                        .andExpect(status().isOk())
+                        .andReturn().getResponse().getContentAsString());
+        assertThat(money(reread, "expectedCash")).isEqualByComparingTo("500.00");
+        assertThat(money(reread, "variance")).isEqualByComparingTo("0.00");
+    }
+
+    @Test
+    @DisplayName("money taken with no drawer open is still taken, and belongs to no shift")
+    void aPaymentIsNeverRefusedForWantOfAShift() throws Exception {
+        // No session opened. A hospital takes cash at a counter whether or not somebody remembered
+        // the ceremony, and refusing it would teach a busy morning to work around the cash-up.
+        JsonNode issued = issue(addLine(draft(null, null), "CONSULT_OP", "1", null));
+        pay(issued, "500.00", "CASH", 200);
+
+        mockMvc.perform(get("/cash-sessions/current").with(as("CASHIER")))
+                .andExpect(status().isNoContent());
+    }
+
+    @Test
+    @DisplayName("a clinician reads the register and cannot open or close a drawer")
+    void theCashUpIsTheDeskS() throws Exception {
+        mockMvc.perform(get("/cash-sessions").with(as("DOCTOR"))).andExpect(status().isOk());
+        mockMvc.perform(post("/cash-sessions").with(as("DOCTOR"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("openingFloat", "0.00"))))
+                .andExpect(status().isForbidden());
+    }
+
+    private JsonNode openSession(String openingFloat) throws Exception {
+        return objectMapper.readTree(
+                mockMvc.perform(post("/cash-sessions").with(as("CASHIER"))
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(
+                                        Map.of("openingFloat", openingFloat))))
+                        .andExpect(status().isCreated())
+                        .andReturn().getResponse().getContentAsString());
+    }
+
+    private JsonNode closeSession(String id, String declared, String notes, int expected)
+            throws Exception {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("declaredCash", declared);
+        if (notes != null) {
+            body.put("notes", notes);
+        }
+        return objectMapper.readTree(
+                mockMvc.perform(post("/cash-sessions/" + id + "/close").with(as("CASHIER"))
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(body)))
+                        .andExpect(status().is(expected))
+                        .andReturn().getResponse().getContentAsString());
+    }
+
+    private JsonNode current() throws Exception {
+        return objectMapper.readTree(
+                mockMvc.perform(get("/cash-sessions/current").with(as("CASHIER")))
+                        .andExpect(status().isOk())
+                        .andReturn().getResponse().getContentAsString());
+    }
+
     // ---- receivables ageing ----------------------------------------------------
 
     @Test

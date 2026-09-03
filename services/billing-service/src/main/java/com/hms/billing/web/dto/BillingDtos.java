@@ -316,6 +316,59 @@ public final class BillingDtos {
                                BigDecimal total, long invoices) {
     }
 
+    /**
+     * Opens a drawer.
+     *
+     * @param openingFloat what is in it at the start, counted. Zero is legitimate; absent is not,
+     *                     because opening a shift is an act of counting and a default would let
+     *                     somebody skip it without noticing.
+     */
+    public record OpenCashSessionRequest(@NotNull @DecimalMin("0")
+                                         @Digits(integer = 12, fraction = 2)
+                                         BigDecimal openingFloat) {
+    }
+
+    /**
+     * Counts a drawer and closes the shift.
+     *
+     * <p>No expected figure is accepted — the platform computes it. A reconciliation whose
+     * difference is supplied by the person being reconciled is not one.
+     *
+     * @param notes required when the count disagrees with the platform, in the service and again
+     *             in the database
+     */
+    public record CloseCashSessionRequest(@NotNull @DecimalMin("0")
+                                          @Digits(integer = 12, fraction = 2)
+                                          BigDecimal declaredCash,
+                                          @Size(max = 1000) String notes) {
+    }
+
+    /**
+     * One shift.
+     *
+     * @param expectedCash        what the drawer should hold: float, plus cash in, less cash out.
+     *                            Live while the session is open, and the figure frozen at the
+     *                            count once it is closed
+     * @param variance            declared less expected, null while open
+     * @param varianceDescription "over", "short" or "exact" — the word a person uses for the number
+     * @param taken               everything that came in through this drawer, by method. The
+     *                            non-cash rows are ticked against the terminal's own batch rather
+     *                            than counted, which is why they are reported and not declared
+     * @param paidBack            and everything that went back out
+     */
+    public record CashSessionResponse(UUID id, String cashier,
+                                      BillingEnums.CashSessionStatus status, Instant openedAt,
+                                      BigDecimal openingFloat, Instant closedAt, String closedBy,
+                                      BigDecimal declaredCash, BigDecimal expectedCash,
+                                      BigDecimal variance, String varianceDescription, String notes,
+                                      List<MethodTotal> taken, List<MethodTotal> paidBack) {
+
+        public CashSessionResponse {
+            taken = taken == null ? List.of() : List.copyOf(taken);
+            paidBack = paidBack == null ? List.of() : List.copyOf(paidBack);
+        }
+    }
+
     public record MessageResponse(String message) {
     }
 }

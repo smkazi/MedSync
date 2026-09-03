@@ -281,6 +281,70 @@ test.describe("the billing desk", () => {
     await expect(page.getByRole("main")).toContainText(owed.trim());
   });
 
+  test("a drawer is opened, counted and signed off, and a difference must be explained", async ({
+    page,
+  }) => {
+    test.setTimeout(180_000);
+    const mrn = await mrnFromTheFrontDesk(page);
+    await signIn(page, "cashier");
+
+    // A previous run may have left this cashier's drawer open; a shift is counted once, so the
+    // test closes whatever it finds rather than assuming a clean till.
+    await page.goto("/billing/cash-up");
+    if (await page.getByRole("region", { name: "Count it and close the shift" }).count()) {
+      const stale = page.getByRole("region", { name: "Count it and close the shift" });
+      await stale.getByLabel("Cash counted out of the drawer").fill("0.00");
+      await stale
+        .getByLabel("What accounts for a difference")
+        .fill("Closing a drawer left open by an earlier test run.");
+      await stale.getByRole("button", { name: "Close the shift" }).click();
+    }
+
+    const opening = page.getByRole("region", { name: "Open a drawer" });
+    await opening.getByLabel("Opening float").fill("500.00");
+    await opening.getByRole("button", { name: "Open the drawer" }).click();
+    await expect(page.getByRole("main")).toContainText("Expected in the drawer");
+
+    // Cash goes into the drawer; a card payment in the same shift does not.
+    const invoice = await raiseInvoice(page, mrn);
+    await addLine(page, /^Outpatient consultation/, "1");
+    await page.getByRole("button", { name: /^Issue / }).click();
+    const payment = page.getByRole("region", { name: "Take a payment" });
+    await payment.getByLabel("Amount").fill("500.00");
+    await payment.getByLabel("How it arrived").selectOption("CASH");
+    await payment.getByRole("button", { name: "Record the payment" }).click();
+    await expect(page.getByText("paid", { exact: true })).toBeVisible();
+
+    await page.goto("/billing/cash-up");
+    const shift = page.getByRole("region", { name: "This shift" });
+    // 500 float plus 500 cash. Read off the screen rather than added up here: a test that did the
+    // sum would agree with a bug that did it the same way.
+    await expect(shift).toContainText("1,000.00");
+    await expect(shift).toContainText("cash");
+
+    const close = page.getByRole("region", { name: "Count it and close the shift" });
+    await close.getByLabel("Cash counted out of the drawer").fill("950.00");
+    await close.getByRole("button", { name: "Close the shift" }).click();
+    // Short by fifty and nothing said. The platform names both figures and the difference.
+    await expect(close.getByRole("alert")).toContainText("950.00");
+
+    await close.getByLabel("Cash counted out of the drawer").fill("950.00");
+    await close
+      .getByLabel("What accounts for a difference")
+      .fill("Fifty short; a patient was given change from the wrong denomination.");
+    await close.getByRole("button", { name: "Close the shift" }).click();
+
+    // Signed off: the shift leaves the open card and lands in the register with its variance.
+    await page.goto("/billing/cash-up");
+    await expect(page.getByRole("region", { name: "This shift" })).toHaveCount(0);
+    await expect(page.getByRole("region", { name: "Open a drawer" })).toBeVisible();
+    const register = page.getByRole("region", { name: /Your shifts|Every shift/ });
+    await expect(register).toContainText("short");
+    await expect(register).toContainText("950.00");
+    // The invoice link is unused beyond raising it; kept so the flow reads as one shift's work.
+    expect(invoice).toContain("/billing/");
+  });
+
   test("a cashier reads prices and is offered no way to change one", async ({ page }) => {
     await signIn(page, "cashier");
     await page.goto("/billing/charge-items");

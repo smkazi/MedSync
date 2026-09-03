@@ -1025,6 +1025,28 @@ export type MethodTotal = {
   count: number;
 };
 
+export type CashSessionStatus = "OPEN" | "CLOSED";
+
+export type CashSession = {
+  id: string;
+  cashier: string;
+  status: CashSessionStatus;
+  openedAt: string;
+  openingFloat: number;
+  closedAt: string | null;
+  closedBy: string | null;
+  declaredCash: number | null;
+  /** Live while open; the figure frozen at the count once closed. */
+  expectedCash: number;
+  variance: number | null;
+  /** "over", "short" or "exact". */
+  varianceDescription: string;
+  notes: string | null;
+  /** What came in through this drawer, by method. Non-cash rows are ticked, not counted. */
+  taken: MethodTotal[];
+  paidBack: MethodTotal[];
+};
+
 export type AgeingBucket = {
   /** Null when the patient is paying for themselves. */
   payerCode: string | null;

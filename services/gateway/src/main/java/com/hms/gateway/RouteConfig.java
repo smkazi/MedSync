@@ -105,6 +105,7 @@ public class RouteConfig {
                 .route("billing", r -> r
                         .path("/invoices/**", "/charges", "/charge-items/**", "/payers/**",
                                 "/tax-rates/**", "/claims/**", "/day-book", "/receivables",
+                                "/cash-sessions/**",
                                 "/portal/invoices/**")
                         .uri(services.billing()))
                 // Health-information exchange: consent artefacts, FHIR bundles, what leaves.

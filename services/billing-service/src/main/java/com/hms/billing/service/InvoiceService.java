@@ -65,6 +65,7 @@ public class InvoiceService {
     private final PaymentRepository payments;
     private final CreditNoteRepository creditNotes;
     private final RefundRepository refunds;
+    private final CashSessionService cashSessions;
     private final PostedChargeRepository posted;
     private final BillingConfigService config;
     private final AuditService audit;
@@ -75,7 +76,8 @@ public class InvoiceService {
     public InvoiceService(BillingClock clock, InvoiceRepository invoices,
                           InvoiceCounterRepository counters,
                           PaymentRepository payments, CreditNoteRepository creditNotes,
-                          RefundRepository refunds, PostedChargeRepository posted,
+                          RefundRepository refunds, CashSessionService cashSessions,
+                          PostedChargeRepository posted,
                           BillingConfigService config, AuditService audit, EventPublisher events,
                           @Value("${hms.billing.invoice-prefix:INV}") String prefix,
                           @Value("${hms.billing.credit-note-prefix:CRN}") String creditPrefix) {
@@ -85,6 +87,7 @@ public class InvoiceService {
         this.payments = payments;
         this.creditNotes = creditNotes;
         this.refunds = refunds;
+        this.cashSessions = cashSessions;
         this.posted = posted;
         this.config = config;
         this.audit = audit;
@@ -326,8 +329,13 @@ public class InvoiceService {
                             .formatted(now.getNumber(), amount, now.outstanding(), now.getTotal())));
         }
 
-        Payment payment = payments.save(new Payment(id, amount, request.method(),
-                request.reference(), CurrentUser.usernameOrSystem()));
+        Payment received = new Payment(id, amount, request.method(),
+                request.reference(), CurrentUser.usernameOrSystem());
+        // Which drawer it went into, stamped as the money moves. Null when nobody has a shift open,
+        // which is allowed on purpose: refusing a payment because of a missing ceremony would teach
+        // a busy counter to work around the cash-up rather than keep it.
+        received.setCashSessionId(cashSessions.currentSessionId());
+        Payment payment = payments.save(received);
         // Ids are application-assigned in BaseEntity, so this holds — and it is asserted rather
         // than assumed because the alternative is an event carrying the string "null" as the
         // payment a reconciliation is supposed to find. The same guard OrderSetService needed.
@@ -411,8 +419,12 @@ public class InvoiceService {
                             now.getAmountPaid(), now.getRefunded()));
         }
 
-        Refund refund = refunds.save(new Refund(id, request.creditNoteId(), amount,
-                request.method(), request.reference(), CurrentUser.usernameOrSystem()));
+        Refund paidOut = new Refund(id, request.creditNoteId(), amount,
+                request.method(), request.reference(), CurrentUser.usernameOrSystem());
+        // And which drawer it came out of, for the same reason: a cash-up that knew what came in
+        // and not what went back out would balance against a figure that was never true.
+        paidOut.setCashSessionId(cashSessions.currentSessionId());
+        Refund refund = refunds.save(paidOut);
         String refundId = Objects.requireNonNull(refund.getId(),
                 "a saved refund must have an id").toString();
         Invoice after = require(id);

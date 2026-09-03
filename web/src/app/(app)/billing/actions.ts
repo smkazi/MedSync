@@ -6,6 +6,7 @@ import { readForm, refused, withoutBlanks, type FormState } from "@/lib/form";
 import { money } from "@/lib/money";
 import { submit } from "@/lib/mutate";
 import type {
+  CashSession,
   ChargeItem,
   Claim,
   CreditNote,
@@ -18,11 +19,13 @@ import {
   CHARGE_ITEM_EDIT_FIELDS,
   CHARGE_ITEM_FIELDS,
   CLAIM_FIELDS,
+  CLOSE_SESSION_FIELDS,
   CREDIT_NOTE_FIELDS,
   INVOICE_FIELDS,
   LINE_FIELDS,
   NUMBER_FIELDS,
   PAYER_FIELDS,
+  OPEN_SESSION_FIELDS,
   PAYMENT_FIELDS,
   REFUND_FIELDS,
   TARIFF_FIELDS,
@@ -188,6 +191,57 @@ export async function payRefund(_previous: FormState, form: FormData): Promise<F
     done: result.data.invoiceRefundable > 0
       ? `${money(result.data.amount)} paid back. ${money(result.data.invoiceRefundable)} is still owed back.`
       : `${money(result.data.amount)} paid back. Nothing further is owed back on this invoice.`,
+  };
+}
+
+// ---- the cash-up -----------------------------------------------------------
+
+/**
+ * Opens the caller's drawer.
+ *
+ * <p>Always the caller's: there is no field for whose shift this is, because the value of the row
+ * is that one named person is answerable for what is in that drawer at the end of it.
+ */
+export async function openCashSession(_previous: FormState, form: FormData): Promise<FormState> {
+  const values = readForm(form, OPEN_SESSION_FIELDS);
+  const result = await submit<CashSession>("/cash-sessions", "POST", coerceNumbers(values));
+  if (!result.ok) {
+    return refused(values, result);
+  }
+  revalidatePath("/billing/cash-up");
+  return {
+    values: {},
+    fieldErrors: {},
+    error: null,
+    done: `Drawer open with a float of ${money(result.data.openingFloat)}.`,
+  };
+}
+
+/**
+ * Counts the drawer and signs the shift off.
+ *
+ * <p>The confirmation quotes the platform's own variance rather than subtracting here. A cash-up
+ * whose difference is computed by the screen showing it is not a reconciliation, and this layer
+ * would do the sum in a double.
+ */
+export async function closeCashSession(_previous: FormState, form: FormData): Promise<FormState> {
+  const id = String(form.get("sessionId") ?? "");
+  const values = readForm(form, CLOSE_SESSION_FIELDS);
+  const result = await submit<CashSession>(`/cash-sessions/${id}/close`, "POST",
+    coerceNumbers(values));
+  if (!result.ok) {
+    return refused(values, result);
+  }
+  revalidatePath("/billing/cash-up");
+  revalidatePath("/billing/day-book");
+  const closed = result.data;
+  return {
+    values: {},
+    fieldErrors: {},
+    error: null,
+    done: closed.variance === 0
+      ? `Counted ${money(closed.declaredCash)} and signed off. The drawer was exact.`
+      : `Counted ${money(closed.declaredCash)} against ${money(closed.expectedCash)} expected — ${money(Math.abs(closed.variance ?? 0))} ${closed.varianceDescription}.`,
   };
 }
 

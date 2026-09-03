@@ -567,6 +567,33 @@ single-statement counter with `ON CONFLICT … RETURNING`, so a gap in the seque
 auditor reading a numbered series cares about — cannot come from two cashiers raising an invoice at
 once.
 
+**A shift is counted, and somebody signs for the difference.** The day book was readable and
+unsigned: it totalled a day and split collections by method, and nothing ever said "this is what was
+in the drawer, and here is who counted it". A cash session is one cashier from opening float to
+counted close — a shift and not a day, because a drawer is handed over and a day's takings cannot
+say which of three people at that counter is short two hundred.
+
+Only cash is counted. Card and UPI settle into the acquirer's own batch and cannot be short by an
+error of counting, so declaring them would invite somebody to type the expected figure back in and
+call it reconciled; they are listed for the cashier to tick against the terminal, and the variance is
+on cash alone, where a variance can physically exist. Expected is float plus cash in less cash out,
+computed by the platform and never accepted from the caller — a reconciliation whose difference is
+supplied by the person being reconciled is not one. **A variance must be explained in writing**, in
+the service and again as a `CHECK`: the whole value of the count is that somebody accounts for the
+difference while they still remember the shift.
+
+Which drawer a payment went into is stamped as the money moves, not inferred afterwards from
+timestamps — a window query looks equivalent and silently reassigns whatever was taken between one
+shift closing and the next opening. The column is nullable on purpose: **a payment is never refused
+for want of an open drawer**, because a platform that refused one would teach a busy counter to work
+around the cash-up on its first difficult morning, and money with no shift behind it is reported
+rather than absorbed into one. A closed shift keeps the figures it was signed against, so correcting
+an invoice the next day changes what is owed and never moves a number somebody has put their name to.
+One open drawer per cashier is a partial unique index rather than a check two browser tabs would both
+pass, and an administrator can close a drawer somebody walked away from — the row records both names,
+because "who counted this" and "whose drawer was it" stop being the same question the moment that
+happens.
+
 **What is owed is also asked as a list, not only as a total.** The day book answers the receivable
 in one figure, which is right for a cash-up and useless for collecting: this week's billing and a
 claim a payer has sat on since March are the same rupee on that line and are chased in completely
@@ -744,7 +771,7 @@ them and an empty dropdown is worse than an absent one.
 | Sharing | the consent register with the four conditions on every row, recording a decision (front desk), sending a record under a consent (clinicians), and what has been released about a patient and under what |
 | Messaging | delivery log with the send form, patient questions (the portal's queue, oldest first, where a reply may say what an SMS may not), message wording — readable by anybody who may send, editable by an administrator |
 | Pharmacy | dispensing queue with the override reason on the row, formulary with its ingredient lists, the interaction table with what to do about each pairing, stock by batch with what is about to expire — gated to the roles that may read a medication order |
-| Billing | invoices (open bills first, or one patient's whole history), raise an invoice, the day book split by how money arrived, receivables aged by payer, claims, and — administrator-only — the charge list, payers with their agreed tariffs, and dated tax rates. A bill carries its own credit notes and refunds, and the two forms that write them are gated apart: the refund is the cashier's, the credit note the administrator's |
+| Billing | invoices (open bills first, or one patient's whole history), raise an invoice, the day book split by how money arrived, the cash-up, receivables aged by payer, claims, and — administrator-only — the charge list, payers with their agreed tariffs, and dated tax rates. A bill carries its own credit notes and refunds, and the two forms that write them are gated apart: the refund is the cashier's, the credit note the administrator's |
 | Administration | staff directory, users (create, roles, reset a password), roles, audit trail |
 
 **The patient portal is a different application in the same codebase.** It is a route group of its
@@ -1875,10 +1902,11 @@ SAST/DAST tooling, and performance profiles. Dependency scanning covers Python (
   ended yet costs nothing yet. One event and one idempotent charge rather than a nightly job with a
   clock to be wrong about — but it does mean an in-patient's bill cannot be shown mid-stay, which a
   hospital taking interim payments would want.
-- **A cash-up.** The day book totals what was billed and collected and splits collections by
-  method, and nothing signs it off: there is no drawer count, no shift close, no till
-  reconciliation and no variance record. The numbers are readable and unsigned, which is named
-  here rather than implied to be a control.
+- **A cash-up counts one drawer, not a till with several.** A shift is one cashier and one drawer,
+  which is the unit a hospital hands over and signs for. What the platform has no concept of is a
+  counter with two drawers, a float transferred between them mid-shift, or a supervisor's safe that
+  a drawer is banked into at the end — the shift closes with a counted figure and a variance, and
+  where the money goes next is outside it.
 - **A refund's separation of duties is half a control.** A credit note is an administrator's act
   and a refund a cashier's, so a cashier cannot decide a charge is not owed and then pay it back —
   but ADMIN holds both roles, as it holds every role, so one administrator can do both halves

@@ -43,6 +43,10 @@ export const CLAIM_FIELDS = ["invoiceId", "preauthNo"] as const;
 
 export const CREDIT_NOTE_FIELDS = ["amount", "reason"] as const;
 
+export const OPEN_SESSION_FIELDS = ["openingFloat"] as const;
+
+export const CLOSE_SESSION_FIELDS = ["declaredCash", "notes"] as const;
+
 /**
  * `creditNoteId` is posted when the payout draws on a single note, which is the ordinary case and
  * the one somebody asks about afterwards. It is optional because a refund may settle several, and
@@ -58,7 +62,8 @@ export const REFUND_FIELDS = ["amount", "method", "creditNoteId", "reference"] a
  * arithmetic happens to them in between. What must never happen is a screen adding two of them
  * together — every total rendered here is one the service computed.
  */
-export const NUMBER_FIELDS = ["qty", "discount", "unitPrice", "amount", "percent", "price"];
+export const NUMBER_FIELDS = ["qty", "discount", "unitPrice", "amount", "percent", "price",
+  "openingFloat", "declaredCash"];
 
 /**
  * The minimum a credit note's reason may be, matching `@Size(min = 20)` on the request.

@@ -253,6 +253,12 @@ export const MENUS: Menu[] = [
         note: "Billed, collected and outstanding, split by method",
       },
       {
+        label: "Cash-up",
+        href: "/billing/cash-up",
+        roles: BILLING_READ,
+        note: "Open a drawer, count it, and sign the shift off",
+      },
+      {
         label: "Receivables",
         href: "/billing/receivables",
         roles: BILLING_READ,

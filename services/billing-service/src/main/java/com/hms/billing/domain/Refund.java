@@ -59,6 +59,16 @@ public class Refund extends BaseEntity {
     @Column(name = "paid_at", nullable = false, updatable = false)
     private Instant paidAt = Instant.now();
 
+    /**
+     * The drawer this was paid out of, when one was open for the person who paid it.
+     *
+     * <p>The mirror of the same column on {@link Payment}, and needed for the same reason: cash
+     * handed back leaves the drawer the cash total is counted against, so a cash-up that knew what
+     * came in and not what went out would balance against a figure that was never true.
+     */
+    @Column(name = "cash_session_id", updatable = false)
+    private UUID cashSessionId;
+
     protected Refund() {
     }
 
@@ -70,6 +80,14 @@ public class Refund extends BaseEntity {
         this.method = method;
         this.reference = reference;
         this.paidBy = paidBy;
+    }
+
+    public UUID getCashSessionId() {
+        return cashSessionId;
+    }
+
+    public void setCashSessionId(UUID cashSessionId) {
+        this.cashSessionId = cashSessionId;
     }
 
     public UUID getInvoiceId() {

@@ -57,4 +57,9 @@ public final class BillingEnums {
     public enum ChargeSource {
         APPOINTMENT, LAB_ORDER, DISPENSE, ADMISSION, MANUAL
     }
+
+    /** A cash drawer's shift. There is no third state: it is either being used or signed off. */
+    public enum CashSessionStatus {
+        OPEN, CLOSED
+    }
 }

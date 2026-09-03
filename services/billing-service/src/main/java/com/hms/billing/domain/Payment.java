@@ -41,6 +41,17 @@ public class Payment extends BaseEntity {
     @Column(name = "received_at", nullable = false, updatable = false)
     private Instant receivedAt = Instant.now();
 
+    /**
+     * The drawer this went through, when one was open for the person who took it.
+     *
+     * <p>Stamped as the money moves rather than inferred later from timestamps, which looks
+     * equivalent and is not: a window query reassigns whatever was taken between one shift closing
+     * and the next opening. Null is legitimate and means exactly what it says — money taken with no
+     * shift open, which the cash-up reports rather than absorbs.
+     */
+    @Column(name = "cash_session_id", updatable = false)
+    private UUID cashSessionId;
+
     protected Payment() {
     }
 
@@ -51,6 +62,14 @@ public class Payment extends BaseEntity {
         this.method = method;
         this.reference = reference;
         this.receivedBy = receivedBy;
+    }
+
+public UUID getCashSessionId() {
+        return cashSessionId;
+    }
+
+    public void setCashSessionId(UUID cashSessionId) {
+        this.cashSessionId = cashSessionId;
     }
 
     public UUID getInvoiceId() {
