@@ -76,6 +76,13 @@ export const CORRECTNESS = {
 export const LATENCY = {
   'http_req_duration{endpoint:patient_search}': ['p(95)<400', 'p(99)<900'],
   'http_req_duration{endpoint:patient_read}': ['p(95)<200', 'p(99)<500'],
+  // The encounter chart, and the only budget here set by a control rather than by the size of the
+  // read. The record is one encounter with its notes, vitals and diagnoses; on top of that every
+  // read runs a care-team membership query first, because since the narrowing a role no longer
+  // decides who may open a chart. Both are keyed lookups on indexed columns, so the budget is
+  // patient_read's with room for the second query and the collections — and it is here so that a
+  // guard on the busiest read path cannot get slower without the run saying so.
+  'http_req_duration{endpoint:chart_read}': ['p(95)<300', 'p(99)<700'],
   'http_req_duration{endpoint:appointment_search}': ['p(95)<400', 'p(99)<900'],
   'http_req_duration{endpoint:availability}': ['p(95)<400', 'p(99)<900'],
   'http_req_duration{endpoint:lab_worklist}': ['p(95)<400', 'p(99)<900'],

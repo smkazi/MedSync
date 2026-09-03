@@ -129,13 +129,51 @@ export function setupJourney() {
     fail(`could not provision the run's room: ${roomRes.status} ${roomRes.body}`);
   }
 
+  // One encounter, for the read journey's chart read, and it is opened here rather than per
+  // iteration for a reason the other fixtures do not have: an encounter is a clinical record on a
+  // real patient's chart, so a profile that opened one per VU per iteration would leave a soak's
+  // worth of consultations behind on twenty patients. One is enough to measure a read.
+  //
+  // It is opened by, and for, the clinician the read journey signs in as. Since the care-team
+  // narrowing, who may read a chart is decided by membership of encounter_care_team rather than by
+  // a role, and opening an encounter enrols both its clinician and whoever opened it — so this is
+  // also what makes the chart read below a 200. The clinician id is a *login* id, checked against
+  // staff.user_id before it is written, which is why it comes from /auth/me and not from the run's
+  // own staff row: that row has no login, deliberately, and the encounter would be refused.
+  const doctor = login(USERS.doctor);
+  const me = http.get(`${BASE_URL}/auth/me`, params('whoami', doctor));
+  if (me.status !== 200) {
+    fail(`cannot resolve the read journey's clinician: ${me.status} ${me.body}`);
+  }
+  const chartPatient = patients[0];
+  const encounter = http.post(
+    `${BASE_URL}/encounters`,
+    JSON.stringify({
+      patientId: chartPatient.id,
+      patientMrn: chartPatient.mrn,
+      clinicianId: me.json('id'),
+      departmentCode,
+      encounterType: 'OUTPATIENT',
+    }),
+    params('encounter_open', doctor),
+  );
+  if (encounter.status !== 201 && encounter.status !== 200) {
+    fail(`could not open the run's encounter: ${encounter.status} ${encounter.body}`);
+  }
+
   return {
     runTag,
     patients,
+    // The *staff* id, and the booking journey wants it that way only because nothing validates an
+    // appointment's clinician_id: what it needs is a UUID unique to this run, so the exclusion
+    // constraint over (clinician_id, tstzrange) cannot meet the previous run's appointments. The
+    // encounter above is the endpoint where that column is validated, and it uses a login id. If a
+    // later slice validates the booking column too, this is the line that has to become one.
     clinicianId: clinician.id,
     clinicianName: clinician.fullName,
     departmentCode,
     roomCode: roomRes.json('code'),
+    encounterId: encounter.json('id'),
   };
 }
 
@@ -157,6 +195,19 @@ export function readJourney(token, data) {
   check(read, {
     'patient read returns 200': (r) => r.status === 200,
     'patient read returns the right row': (r) => r.json('mrn') === patient.mrn,
+  });
+
+  // The encounter chart. It is here because since the care-team narrowing every chart read runs a
+  // membership query against encounter_care_team before the record is touched, and that is the
+  // hottest read path on the platform — a guard nobody measures is a guard nobody notices slowing
+  // down. The token is the clinician who opened it in setup, so this measures a member's read,
+  // which is the read every clinician looking after a patient makes. A non-member's 403 is a
+  // correctness question and it is asserted in tests/api, not in a profile whose thresholds are
+  // about latency.
+  const chart = http.get(`${BASE_URL}/encounters/${data.encounterId}`, params('chart_read', token));
+  check(chart, {
+    'chart read returns 200': (r) => r.status === 200,
+    'chart read returns the encounter asked for': (r) => r.json('id') === data.encounterId,
   });
 
   const today = new Date().toISOString().slice(0, 10);

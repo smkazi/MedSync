@@ -1296,23 +1296,40 @@ Notes that matter more than the table:
   cause. `booking_conflicts` is therefore a hard threshold rather than a reported number — which is
   exactly how a bad slot allocation got caught (see below).
 - **`make perf-smoke` first.** If the smoke profile is red, the numbers from the others mean nothing.
+- **The read journey reads an encounter chart, and that is there for a control rather than for the
+  record.** Since the care-relationship narrowing, every chart read runs a care-team membership
+  query before the record is touched — on the busiest read path on the platform. A guard nobody
+  measures is a guard nobody notices slowing down, so `chart_read` has its own latency budget and
+  CI's smoke profile exercises it on every push. The profile measures a *member's* read, which is
+  the read every clinician looking after a patient makes; a non-member's 403 is a correctness
+  question and it is asserted in `tests/api`, not in a profile whose thresholds are about latency.
 
 The load profile's last clean run on the development container — 20 reading VUs, 4 bookings a
 second, seven minutes — for whatever a shared container's numbers are worth as a baseline:
 
-| Endpoint | p95 |
-| --- | --- |
-| Patient search (trigram) | 17 ms |
-| Patient read by id | 15 ms |
-| Appointment search | 16 ms |
-| Clinician availability | 14 ms |
-| Lab worklist | 22 ms |
-| Sign-in (Argon2id) | 112 ms |
-| Booking (constraint check, event publish, AI call) | 239 ms |
+| Endpoint | p95 | p99 |
+| --- | --- | --- |
+| Patient read by id | 7 ms | 11 ms |
+| Clinician availability | 7 ms | 13 ms |
+| Encounter chart read (care-team membership check, then the record) | 11 ms | 17 ms |
+| Patient search (trigram) | 11 ms | 17 ms |
+| Lab worklist | 18 ms | 27 ms |
+| Sign-in (Argon2id) | 55 ms | 78 ms |
+| Appointment search | 58 ms | 81 ms |
+| Booking (constraint check, event publish, AI call) | 156 ms | 383 ms |
 
-23,558 requests, **0 failures**, 35,317 of 35,317 checks passed, 0 booking conflicts, and 1,469
+38,023 requests, **0 failures**, 61,197 of 61,197 checks passed, 0 booking conflicts, and 1,469
 no-show scores returned — the last of which matters because a score that vanished under load would
 mean the circuit breaker had opened.
+
+Two things in that table are worth saying out loud rather than leaving to be inferred. **The
+narrowing costs the chart read about four milliseconds**, which is what a keyed lookup on
+`(encounter_id, user_id)` should cost and is the number to compare against if it ever moves. And
+**appointment search is now the slowest read**, where an earlier baseline had it among the
+fastest — the appointments table has grown by every perf run ever made on this container, and a
+paged search pays for that in its count. It is still six times inside its budget, so it is recorded
+as an observation and not as a defect; a machine whose numbers mean something is where it would be
+worth chasing.
 
 CI runs the fast set on every push — including dependency scanning; the slow set — PIT, both ZAP
 plans, the container and IaC scans, Dependency-Check's NVD feed — runs nightly and uploads SARIF, so
