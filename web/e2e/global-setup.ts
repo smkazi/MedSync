@@ -222,6 +222,43 @@ async function ensureVerifiedLabOrder(
   }
 }
 
+/**
+ * One HL7 v2 message through the interface, so the log screen has something to show.
+ *
+ * <p>Seeded here rather than assumed, which is the defect this fixes: the HL7 spec asserted that
+ * the log contains an acknowledgement code, and nothing in the suite had ever put a message in the
+ * log. It passed for whoever wrote it because their stack had messages left over from working on
+ * the codec by hand, and it would have failed on any fresh database — including CI's, which never
+ * got to run it because the Java job failed first and the end-to-end job was skipped.
+ *
+ * <p>An ADT^A08 rather than an order or a result: it is the message every interface engine sees
+ * most of, it carries only demographics, and it is answered AA by a platform that has the patient —
+ * which is what the screen is asserted on.
+ */
+async function ensureHl7Message(clinician: string, patient: FixturePatient): Promise<void> {
+  const existing = await call(clinician, "/hl7/messages?size=1");
+  if (existing.ok && ((await existing.json()) as { totalElements?: number }).totalElements) {
+    return;
+  }
+
+  // Delimiters and a control id of our own. The control id is what the log is searched by, so it
+  // carries the run's stamp rather than a constant two runs could share.
+  const controlId = `E2E${Date.now().toString(36).toUpperCase()}`;
+  const message = [
+    `MSH|^~\\&|PARTNER|PARTNER CLINIC|MEDSYNC|MEDSYNC|20260903120000||ADT^A08|${controlId}|P|2.5`,
+    `PID|1||${patient.mrn}^^^MEDSYNC^MR||${FIXTURE_SURNAME}^Asha||${FIXTURE_DATE_OF_BIRTH.replace(/-/g, "")}|F`,
+    "PV1|1|O",
+  ].join("\r");
+
+  const received = await call(clinician, "/hl7", {
+    method: "POST",
+    body: JSON.stringify({ message }),
+  });
+  if (!received.ok) {
+    throw new Error(`e2e fixtures: could not post an HL7 message (${received.status}) - ${await received.text()}`);
+  }
+}
+
 async function globalSetup(): Promise<void> {
   const health = await fetch(`${GATEWAY}/actuator/health`).catch(() => null);
   if (!health?.ok) {
@@ -238,6 +275,7 @@ async function globalSetup(): Promise<void> {
 
   const patient = await ensurePatient(frontDesk, clinician);
   await ensureVerifiedLabOrder(clinician, technician, pathologist, patient);
+  await ensureHl7Message(clinician, patient);
 }
 
 export default globalSetup;

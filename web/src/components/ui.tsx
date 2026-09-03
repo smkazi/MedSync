@@ -149,15 +149,60 @@ export function ButtonLink({ href, children }: { href: string; children: ReactNo
   );
 }
 
+/**
+ * The zone every screen renders an instant in.
+ *
+ * <p>The deployment's zone, not the browser's and not UTC, because the platform decides on the
+ * server what day something happened on: the day book, the audit report and the disclosure register
+ * all window a business day in `HMS_ZONE`. Rendering UTC while the filter beside it counts local
+ * days puts a date on the screen that cannot be typed into its own date box — which is exactly the
+ * defect this replaced. A browser test asked the disclosure register for "today" and got nothing,
+ * because after 18:30 UTC today in UTC has already ended in Kolkata.
+ *
+ * <p>`NEXT_PUBLIC_` because these formatters run in client components as well as server ones, and a
+ * value only the server could read would render two different dates for the same instant.
+ */
+const DISPLAY_ZONE = process.env.NEXT_PUBLIC_HMS_ZONE ?? "Asia/Kolkata";
+
+/**
+ * The date and time parts of an instant, in the display zone.
+ *
+ * <p>Assembled from `formatToParts` rather than by slicing a formatted string, so no locale can
+ * reorder the fields on us — the whole point of these helpers is that a clinical screen shows an
+ * unambiguous date. Hour 24 is normalised to 00, which is how `hour12: false` reports midnight.
+ */
+function partsIn(iso: string): { date: string; time: string } {
+  const found = new Map(new Intl.DateTimeFormat("en-GB", {
+    timeZone: DISPLAY_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date(iso)).map((part) => [part.type, part.value]));
+  const hour = found.get("hour") === "24" ? "00" : found.get("hour");
+  return {
+    date: `${found.get("year")}-${found.get("month")}-${found.get("day")}`,
+    time: `${hour}:${found.get("minute")}`,
+  };
+}
+
 /** Formats an instant for a clinical screen: unambiguous, no locale surprises. */
 export function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return "—";
-  const date = new Date(iso);
-  return `${date.toISOString().slice(0, 10)} ${date.toISOString().slice(11, 16)}`;
+  const { date, time } = partsIn(iso);
+  return `${date} ${time}`;
 }
 
 export function formatTime(iso: string): string {
-  return new Date(iso).toISOString().slice(11, 16);
+  return partsIn(iso).time;
+}
+
+/** The date alone, in the display zone — which is what a date filter beside it expects. */
+export function formatDate(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  return partsIn(iso).date;
 }
 
 /**

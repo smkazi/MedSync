@@ -298,6 +298,10 @@ test.describe("the billing desk", () => {
         .getByLabel("What accounts for a difference")
         .fill("Closing a drawer left open by an earlier test run.");
       await stale.getByRole("button", { name: "Close the shift" }).click();
+      // Wait for the close to land before touching the next form. A click resolves when the click
+      // is dispatched, not when the server action it triggers finishes, so carrying straight on
+      // races it — and the drawer this is trying to clear stays open.
+      await expect(page.getByRole("region", { name: "Open a drawer" })).toBeVisible();
     }
 
     const opening = page.getByRole("region", { name: "Open a drawer" });
@@ -333,6 +337,15 @@ test.describe("the billing desk", () => {
       .getByLabel("What accounts for a difference")
       .fill("Fifty short; a patient was given change from the wrong denomination.");
     await close.getByRole("button", { name: "Close the shift" }).click();
+
+    // Wait for the close to land before navigating. Without this the goto below raced the server
+    // action and cancelled it: the shift stayed open, and the test failed one line later on a
+    // symptom three steps from the cause.
+    //
+    // The signal is this card going away rather than a confirmation appearing in it. A drawer that
+    // has been counted has nothing left to count, so the form unmounts on success — which is why
+    // looking for a status message inside it waits for something that can never arrive.
+    await expect(close).toHaveCount(0);
 
     // Signed off: the shift leaves the open card and lands in the register with its variance.
     await page.goto("/billing/cash-up");

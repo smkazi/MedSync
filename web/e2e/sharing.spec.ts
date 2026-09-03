@@ -84,10 +84,18 @@ test.describe("consent and sharing", () => {
     await expect(disclosure).toContainText("dr.rao");
 
     // The register can be asked for a period, which is how anybody actually asks the question.
-    // Today's date from the browser's clock rather than a fixed string, so this does not expire.
-    const today = new Date().toISOString().slice(0, 10);
+    //
+    // The day comes off the row the register just rendered, not from the browser's clock, and that
+    // is a fix rather than a flourish. A business day here is a day in the deployment's zone, so
+    // between 18:30 and midnight UTC the browser's "today" has already ended in Kolkata and asking
+    // for it returned nothing: a test that failed for five and a half hours out of every
+    // twenty-four, over a screen whose own date could not be typed into its own filter. The
+    // formatter renders the deployment's zone now, and this reads what it rendered — so the test
+    // asks the question a person would, and cannot drift from the platform's idea of a day.
+    const shownDay = ((await disclosure.first().innerText()).match(/\d{4}-\d{2}-\d{2}/) ?? [])[0];
+    expect(shownDay).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     await page.goto(
-      `/sharing/disclosures?mrn=${encodeURIComponent(mrn)}&from=${today}&to=${today}`,
+      `/sharing/disclosures?mrn=${encodeURIComponent(mrn)}&from=${shownDay}&to=${shownDay}`,
     );
     await expect(page.getByRole("row").filter({ hasText: artefactId })).toBeVisible();
 
