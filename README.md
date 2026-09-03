@@ -1334,6 +1334,18 @@ Worth writing down, because it is the argument for having built them:
   this and walked forward to the next day with a slot; the booking and queue specs now do the same.
   A test that is green until an invisible counter runs out is the worst kind, because the day it
   breaks has nothing to do with the change that is being blamed.
+- **A browser test opened a stranger's report and failed on a haemoglobin it had never written.**
+  The laboratory spec filtered the worklist to released orders and clicked the first one, which was
+  its own for as long as this suite was the only thing releasing reports. The moment another suite
+  released one, "the first released order" became a race between them — and its fixture made the
+  same mistake in the other direction, asking whether *any* released order existed anywhere before
+  deciding it had nothing to provision. So the fixture skipped itself and the spec read somebody
+  else's numbers. It went red in CI on a commit that changed neither file. Both halves now name
+  this suite's own patient: the fixture asks whether *that* patient has a released order, and the
+  spec filters the worklist to *that* MRN. The exact ordering that broke in CI could not be
+  reproduced locally — the worklist re-sorts by urgency in the browser and the tie fell the other
+  way here — which is itself the argument for the fix: a test whose subject depends on a tie-break
+  is a test that will disagree with itself somewhere.
 - **A new rate-limit bucket had a property nobody had wired up.** The portal gets its own counter,
   defaulting to 120 requests a minute, and the constructor read
   `hms.rate-limit.portal-requests-per-minute` — a key that appeared in no YAML file, so the

@@ -4,6 +4,7 @@ import {
   FIXTURE_LOW_HAEMOGLOBIN,
   FIXTURE_SURNAME,
 } from "./global-setup";
+import { fixtureMrn } from "./chart";
 import { openMenu, signIn } from "./sign-in";
 
 /**
@@ -83,8 +84,13 @@ test.describe("patients", () => {
 test.describe("laboratory", () => {
   test("the worklist opens a report showing flags and reference ranges", async ({ page }) => {
     await signIn(page, "dr.pathan");
-    // Filtered to released orders: an order with no results yet correctly shows no result table.
-    await page.goto("/laboratory?status=VERIFIED");
+    // Filtered to released orders *for this suite's own patient*. Released alone was not enough:
+    // every other suite that drives a report to release adds a row to this worklist, and the first
+    // one on it is whichever ran most recently — so this test opened a stranger's report and
+    // failed on a haemoglobin it had never written. Green for months and then not, with nothing in
+    // the change that broke it to point at.
+    const mrn = await fixtureMrn(page);
+    await page.goto(`/laboratory?status=VERIFIED&mrn=${encodeURIComponent(mrn)}`);
     await expect(page.getByRole("heading", { name: "Laboratory", level: 1 })).toBeVisible();
 
     // No conditional skip. globalSetup drives one CBC order through to a released report, so an

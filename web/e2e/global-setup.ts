@@ -159,7 +159,14 @@ async function ensureVerifiedLabOrder(
   pathologist: string,
   patient: FixturePatient,
 ): Promise<void> {
-  const released = await call(pathologist, "/lab/orders?status=VERIFIED&size=1");
+  // Scoped to this patient, and that is a fix rather than a refinement. It used to ask whether
+  // *any* released order existed anywhere, which was true the moment another suite released one —
+  // so the fixture was skipped, the spec opened somebody else's report, and it failed on a
+  // haemoglobin it had never written. Idempotency has to be about this fixture's own row.
+  const released = await call(
+    pathologist,
+    `/lab/orders?status=VERIFIED&mrn=${encodeURIComponent(patient.mrn)}&size=1`,
+  );
   if (!released.ok) {
     throw new Error(`e2e fixtures: lab worklist query failed (${released.status})`);
   }
