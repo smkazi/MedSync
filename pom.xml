@@ -39,6 +39,21 @@
     <spring-cloud.version>2025.1.3</spring-cloud.version>
     <springdoc.version>2.8.13</springdoc.version>
 
+    <!-- Ahead of the version Spring Boot 4.0.8 manages (11.0.24), and not a preference: 11.0.24
+         carries three CRITICAL advisories, all of them authorization bypasses, all fixed in
+         11.0.25.
+
+           CVE-2026-65182 (9.1)  a security constraint for a longer path specified before a more
+                                 restrictive one for a shorter sub-path is bypassed
+           CVE-2026-68525 (9.1)  authorization bypass in FORM authentication
+           CVE-2026-65905 (9.8)  capture-replay against the DIGEST authenticator
+
+         This platform's entire access-control story is per-endpoint authorization, so "the servlet
+         container can be talked out of a security constraint" is about as close to the heart of it
+         as a dependency CVE gets. Overriding the property is how Spring Boot documents changing a
+         managed version; remove it once a Boot release manages 11.0.25 or later. -->
+    <tomcat.version>11.0.25</tomcat.version>
+
     <!-- Analysis tooling. Pinned, because a scanner that changes version under you turns a clean
          build red for reasons nobody changed. -->
     <spotbugs-maven-plugin.version>4.10.4.0</spotbugs-maven-plugin.version>
