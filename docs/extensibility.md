@@ -56,6 +56,7 @@ services and a room code is cached on appointments, and none of them would learn
 | **Where a bundle goes** | `hms.interop.gateway`, `.gateway-url` | configuration: LOG records what would have been sent and sends nothing; HTTP posts it. Which adapter runs is a deployment's decision and not a code change |
 | **The longest a consent may last** | `hms.interop.max-consent-days` | configuration, 180 days by default. Permission to read a medical record is not the kind of thing to grant open-endedly by typing a date |
 | **Message wording** | `notification.message_templates` | `PATCH /notifications/templates/{id}` — with one limit, below |
+| **How long a session lives** | `hms.jwt.idle-timeout`, `.portal-idle-timeout`, `.session-max-lifetime` | configuration: 30 minutes idle, 15 for a portal account, and 7 days absolute. A deployment tightens these; setting one negative disables that bound, which is a deliberate escape hatch and a decision somebody has to make in writing |
 | ICD-10 subset | `services/ai-service/data/icd10_subset.json` | replace the file |
 
 ### Three tiers of threshold, and why none of them collapses into another

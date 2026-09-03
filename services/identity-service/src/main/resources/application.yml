@@ -53,6 +53,16 @@ hms:
     audience: ${HMS_JWT_AUDIENCE:hms}
     access-token-ttl: PT15M
     refresh-token-ttl: P30D
+    # How long a session may sit idle before it has to be signed into again. Measured from the
+    # current refresh token's created_at, which rotation makes the exact moment of last activity.
+    idle-timeout: ${HMS_SESSION_IDLE_TIMEOUT:PT30M}
+    # Shorter for a patient portal account: those sessions are opened on shared and family
+    # machines far more often than a clinical workstation is.
+    portal-idle-timeout: ${HMS_SESSION_PORTAL_IDLE_TIMEOUT:PT15M}
+    # The bound that makes "session timeout" true rather than nominal. refresh-token-ttl slides
+    # forward on every rotation, so a session refreshed daily would otherwise never end; this is
+    # measured from the family's first token and nothing resets it.
+    session-max-lifetime: ${HMS_SESSION_MAX_LIFETIME:P7D}
     # Supply PEMs from a secret manager in production; otherwise a keypair is
     # generated on first boot and stored in identity.signing_keys.
     private-key: ${HMS_JWT_PRIVATE_KEY:}

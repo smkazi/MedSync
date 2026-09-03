@@ -10,9 +10,9 @@ haematology analyzer over its own wire protocol and released by a pathologist.
 
 > **Status:** the clinical core, the laboratory (including analyzer integration), the AI service
 > and the web UI are implemented and verified end to end against a real stack, and so are the
-> containerisation, TLS, security-testing and performance-testing layers. **1,118 tests pass** —
-> 627 Java unit and integration, 91 Python, 47 web unit, 229 black-box API and security abuse cases,
-> and 124 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
+> containerisation, TLS, security-testing and performance-testing layers. **1,123 tests pass** —
+> 630 Java unit and integration, 91 Python, 47 web unit, 229 black-box API and security abuse cases,
+> and 126 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
 > [Security](#security); what is left is in the [Roadmap](#roadmap).
 
 ---
@@ -1044,6 +1044,17 @@ to a patient record on its own.
   verified, `exp`/`iat`/`sub` required, 15-minute lifetime.
 - **Refresh tokens** — stored only as SHA-256 hashes, single-use, rotated, with reuse treated as
   theft: the whole rotation family is revoked. Changing or resetting a password ends every session.
+- **Session timeout — two bounds, because one is not a timeout.** A session idle longer than
+  `HMS_SESSION_IDLE_TIMEOUT` (30 minutes; 15 for a portal account, which is opened on shared and
+  family machines far more often than a clinical workstation is) cannot be refreshed, and neither
+  can one older than `HMS_SESSION_MAX_LIFETIME` (7 days) however active it has been. The second
+  bound is the one that makes the phrase true: a refresh token's own expiry is re-set on every
+  rotation, so without it a session refreshed once a day never ends, and a stolen token that keeps
+  being used keeps itself alive. Neither needed a new column — rotation inserts a row and revokes
+  the old one, so the current token's `created_at` is the exact moment of last activity and the
+  family's first row is the sign-in. Either breach revokes the whole family, and the refusal says
+  which bound it hit rather than "invalid username or password": the caller already proved who they
+  are, so there is nothing to enumerate and no password to send them off to reset.
 - **Brute force** — lockout after 5 failures. Unknown usernames and wrong passwords return
   identical responses, and a decoy hash is verified so response timing does not leak existence.
 - **PHI at rest** — national id and insurance policy number are AES-256-GCM encrypted, excluded
@@ -1107,11 +1118,11 @@ make help          # everything else
 Or directly:
 
 ```bash
-mvn -q verify                                     # 627 Java unit and integration tests
+mvn -q verify                                     # 630 Java unit and integration tests
 cd services/ai-service && uv run pytest -q        # 91 Python tests
 cd web && npm run lint && npm run typecheck       # web static checks
 cd web && npm test                                # 47 web unit tests
-cd web && npx playwright test                     # 124 browser tests, no skips
+cd web && npx playwright test                     # 126 browser tests, no skips
 mvn -Pautomation -pl tests/api verify             # 229 API and security abuse cases
 ```
 
@@ -1431,6 +1442,18 @@ Worth writing down, because it is the argument for having built them:
 - **Parsed analyzer frames were not actually immutable.** `Histogram`, `KdpsSample` and
   `AstmRecord.Sample` handed out the live lists they were built with. This is measured patient data
   that is persisted as JSONB and used to derive MPV, PDW and RDW.
+- **A revocation that had to survive its own rejection deadlocked the platform against itself.**
+  Every refusal on the refresh path revokes tokens in a `REQUIRES_NEW` transaction, because the
+  method then throws and a revocation inside the caller's transaction would roll back with the
+  rejection — leaving a stolen token usable. Adding the session bounds *after* the presented token
+  was marked rotated broke that: the next query flushed the rotation's `UPDATE`, taking a row lock
+  the new transaction then waited on forever. PostgreSQL could not break the tie, because the outer
+  transaction was not waiting on a lock, it was waiting on the application. The test suite hung for
+  half an hour rather than failing, which is how it was found; the fix is to run every check before
+  the rotation, and the reason is now written where the split lives.
+- **A refresh token replayed after rotation — the one event on that path that looks like theft — was
+  logged and never audited.** It burned the whole token family and wrote a `WARN`, so the platform
+  reacted correctly and the audit report, which is where anyone would go looking, showed nothing.
 - **The k6 slot allocation itself was wrong**, and its own hard threshold caught it: 1,229
   self-inflicted booking conflicts in one 20-VU run, because `(VU % 30, ITER % 12)` stops being
   injective the moment k6 hands out VU ids above 30.
@@ -1470,6 +1493,10 @@ SAST/DAST tooling, and performance profiles. Dependency scanning covers Python (
   column, field, flag or notification — so there is no critical-range editor to build yet.
 - **Further clinical modules** — imaging/PACS, and an HL7 v2 interface engine. Both are named
   gaps rather than half-built modules, which was the choice made deliberately.
+- **A timed-out session does not resume where it left off.** The login bounce now says the session
+  timed out, and it writes a `next` parameter that the sign-in page does not read: after signing in
+  again you land on the dashboard rather than back on the page you were on. Consuming it is an
+  obvious improvement and is a gap rather than something smuggled into the timeout work.
 - **ABDM certification.** The platform is integration-ready and **uncertified**, and the gap is
   not a formality: M1/M2/M3 certification needs NHA sandbox credentials and an assessment, and the
   real data flow is a consent manager, a callback, an encrypted payload with a key exchange and an

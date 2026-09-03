@@ -87,6 +87,13 @@ export function middleware(request: NextRequest): NextResponse {
   if (!hasSession && !isPublic) {
     const url = new URL("/login", request.url);
     url.searchParams.set("next", pathname);
+    // Say which of the two things happened. The access cookie lives fifteen minutes and the
+    // refresh cookie thirty days, so a request carrying the second without the first is a session
+    // that ran out rather than someone who never signed in. Without this the app simply vanishes
+    // mid-sentence and the platform gets blamed for losing the user's work.
+    if (request.cookies.has("medsync_rt")) {
+      url.searchParams.set("error", "Your session timed out. Please sign in again.");
+    }
     return NextResponse.redirect(url);
   }
   if (hasSession && pathname === "/login") {

@@ -69,6 +69,16 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.FORBIDDEN, "Forbidden", ex.getMessage(), req);
     }
 
+    /**
+     * A session that timed out, answered as itself rather than as a credential failure. The caller
+     * held a token this service issued, so there is no account to enumerate and no reason to send
+     * them to reset a password that is not the problem.
+     */
+    @ExceptionHandler(SessionExpiredException.class)
+    public ResponseEntity<ApiError> sessionExpired(SessionExpiredException ex, HttpServletRequest req) {
+        return build(HttpStatus.UNAUTHORIZED, "Session Expired", ex.getMessage(), req);
+    }
+
     @ExceptionHandler(AuthenticationException.class)
     public ResponseEntity<ApiError> authentication(AuthenticationException ex, HttpServletRequest req) {
         return build(HttpStatus.UNAUTHORIZED, "Unauthorized", "Authentication failed", req);

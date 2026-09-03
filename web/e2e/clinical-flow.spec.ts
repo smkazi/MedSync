@@ -39,6 +39,29 @@ test.describe("authentication", () => {
     await expect(page).toHaveURL(/\/login/);
   });
 
+  test("a session that timed out says so instead of vanishing", async ({ page }) => {
+    await signIn(page, "dr.rao");
+
+    // Exactly what the fifteen-minute access cookie expiring looks like to the browser: the
+    // access cookie is gone and the thirty-day refresh cookie is not. Deleting both would be
+    // someone who never signed in, which is the other test below.
+    await page.context().clearCookies({ name: "medsync_at" });
+
+    await page.goto("/patients");
+    await expect(page).toHaveURL(/\/login/);
+    // The regression this guards: the app used to disappear mid-sentence with no explanation,
+    // which reads as the platform losing your work rather than as a timeout.
+    await expect(page.getByRole("main").getByRole("alert")).toContainText(/session timed out/i);
+  });
+
+  test("someone who never signed in is not told their session timed out", async ({ page }) => {
+    await page.context().clearCookies();
+    await page.goto("/patients");
+
+    await expect(page).toHaveURL(/\/login/);
+    await expect(page.getByRole("main").getByRole("alert")).toHaveCount(0);
+  });
+
   test("no access token is exposed to client-side script", async ({ page }) => {
     await signIn(page, "dr.rao");
     // The session lives in httpOnly cookies; document.cookie must not see it.

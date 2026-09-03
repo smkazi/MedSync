@@ -88,15 +88,22 @@ public class AuthService {
 
     @Transactional
     public AuthDtos.TokenResponse refresh(String rawRefreshToken, String userAgent) {
-        RefreshToken consumed = tokens.consumeForRotation(rawRefreshToken);
-        User user = users.findById(consumed.getUserId())
+        // Every check first, the rotation last. Each refusal below revokes tokens in its own
+        // transaction so the revocation survives the rejection that follows it, and that only
+        // works while this transaction holds no lock on those rows -- see TokenService.
+        RefreshToken presented = tokens.findForRotation(rawRefreshToken);
+        User user = users.findById(presented.getUserId())
                 .orElseThrow(() -> new NotFoundException("User for this refresh token no longer exists"));
         if (!user.isActive()) {
-            tokens.revokeFamily(consumed.getFamilyId(), "user-disabled");
+            tokens.revokeFamily(presented.getFamilyId(), "user-disabled");
             throw new DisabledException("Account is disabled");
         }
-        TokenService.TokenPair pair = tokens.issueFor(user, consumed.getFamilyId(), userAgent);
-        audit.record("TOKEN_REFRESHED", "User", user.getId(), "family " + consumed.getFamilyId());
+        // After the account is known -- a portal session times out sooner than a clinical one.
+        tokens.enforceSessionBounds(presented, user.isPortalAccount());
+
+        tokens.markRotated(presented);
+        TokenService.TokenPair pair = tokens.issueFor(user, presented.getFamilyId(), userAgent);
+        audit.record("TOKEN_REFRESHED", "User", user.getId(), "family " + presented.getFamilyId());
         return response(pair, user);
     }
 
