@@ -44,6 +44,17 @@ dev-test-stack: build ## Run the stack with rate limits raised, for the API and 
 dev-stop: ## Stop the natively-run services
 	scripts/local.sh stop
 
+# Splits the one database superuser into hms_migrate (owns the schemas, holds DDL) and hms_app
+# (read and write the data, no DDL). Run once, as a superuser; idempotent, so running it again
+# after adding a service grants the new schema. Passwords come from the environment so none is
+# committed -- the defaults in the script match the development credentials and are useless
+# anywhere else.
+.PHONY: db-roles
+db-roles: ## Create the hms_migrate and hms_app database roles (run once, as a superuser)
+	psql "$${HMS_DB_ADMIN_URL:-postgresql://hms:hms@localhost:5432/hms}" -f scripts/db-roles.sql \
+	     -v migrate_password="$${HMS_DB_MIGRATION_PASSWORD:-hms}" \
+	     -v app_password="$${HMS_DB_PASSWORD:-hms}"
+
 # ---- tests -------------------------------------------------------------------
 
 .PHONY: test

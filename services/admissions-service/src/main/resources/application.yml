@@ -17,6 +17,11 @@ spring:
         jdbc:
           time_zone: UTC
   flyway:
+    # Migrations run as a role that owns the schemas and holds DDL; the runtime credential
+    # above has none. Defaults to the datasource credential, so a deployment that has not
+    # run scripts/db-roles.sql behaves exactly as it did before the split existed.
+    user: ${HMS_DB_MIGRATION_USER:${HMS_DB_USER:hms}}
+    password: ${HMS_DB_MIGRATION_PASSWORD:${HMS_DB_PASSWORD:hms}}
     enabled: true
     schemas: admissions
     default-schema: admissions

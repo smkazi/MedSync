@@ -19,9 +19,15 @@ x-service-defaults: &service-defaults
       condition: service_healthy
   environment: &platform-env
     HMS_DB_URL: jdbc:postgresql://postgres:5432/hms
-    HMS_DB_USER: hms
+    # The runtime credential. Point it at hms_app once scripts/db-roles.sql has been run -- see
+    # the Security section of the README. The default is the single role this ships with, so an
+    # unconfigured stack comes up exactly as it did before the split existed.
+    HMS_DB_USER: ${HMS_DB_USER:-hms}
     # Required, no default. See .env.example.
     HMS_DB_PASSWORD: "${HMS_DB_PASSWORD:?set HMS_DB_PASSWORD in .env, see .env.example}"
+    # Flyway's credential, which owns the schemas and holds DDL. Defaults to the runtime one.
+    HMS_DB_MIGRATION_USER: ${HMS_DB_MIGRATION_USER:-${HMS_DB_USER:-hms}}
+    HMS_DB_MIGRATION_PASSWORD: "${HMS_DB_MIGRATION_PASSWORD:-${HMS_DB_PASSWORD}}"
     HMS_KAFKA: kafka:9092
     HMS_EVENTS_TRANSPORT: ${HMS_EVENTS_TRANSPORT:-kafka}
     HMS_JWKS_URI: http://identity-service:8081/.well-known/jwks.json
@@ -45,6 +51,10 @@ services:
       POSTGRES_PASSWORD: "${HMS_DB_PASSWORD:?set HMS_DB_PASSWORD in .env, see .env.example}"
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      # Read-only, and not in /docker-entrypoint-initdb.d on purpose: the role split is a decision
+      # somebody makes, with passwords they choose, not something a first boot does silently. The
+      # README's Security section gives the one command that runs it.
+      - ./scripts/db-roles.sql:/opt/db-roles.sql:ro
     # Not published by default: nothing outside the compose network needs the database.
     expose:
       - "5432"

@@ -837,6 +837,11 @@ psql -d hms -c "CREATE USER hms WITH PASSWORD 'hms' SUPERUSER;"   # dev only; se
 Superuser is needed **on first run only**, to install the `pg_trgm` and `btree_gist` extensions.
 Flyway creates and migrates every schema on service start.
 
+For anything beyond local work, split that one role into two — see
+[the role split](#database-roles) — with one command and four environment variables. Skipping it
+leaves the platform behaving exactly as it did before the split existed, which is why it is a step
+rather than a prerequisite.
+
 ### 2. Build and start the Java services
 
 ```bash
@@ -1057,6 +1062,34 @@ to a patient record on its own.
   are, so there is nothing to enumerate and no password to send them off to reset.
 - **Brute force** — lockout after 5 failures. Unknown usernames and wrong passwords return
   identical responses, and a decoy hash is verified so response timing does not leak existence.
+- <a id="database-roles"></a>**Database roles — DDL and the superuser out of the request path.**
+  One role used to do three jobs: install extensions, run every migration, and serve every runtime
+  query for all nine schemas. A SQL-injection hole in any one service therefore reached every other
+  service's tables, and a Hibernate mapping mistake could drop one. `scripts/db-roles.sql` splits it
+  by job:
+
+  | Role | Job | Holds |
+  | --- | --- | --- |
+  | *(a person, once)* | install `pg_trgm` and `btree_gist` | superuser — runs the script, and never appears in a service's environment |
+  | `hms_migrate` | owns every schema, runs every migration | DDL. Flyway's credential, and only Flyway's |
+  | `hms_app` | serves every request | `USAGE` on the schemas, `SELECT/INSERT/UPDATE/DELETE` on their tables, `USAGE` on their sequences, **no DDL at all** |
+
+  ```bash
+  psql -d hms -f scripts/db-roles.sql \
+       -v migrate_password="$HMS_DB_MIGRATION_PASSWORD" -v app_password="$HMS_DB_PASSWORD"
+  # then: HMS_DB_USER=hms_app HMS_DB_MIGRATION_USER=hms_migrate, plus the two passwords
+  ```
+
+  The script is idempotent, hands over tables an earlier superuser created, and pre-creates the nine
+  schemas so `hms_migrate` never needs `CREATE` on the database. `spring.flyway.user` defaults to
+  the datasource credential in all nine services, so a deployment that has not run it behaves
+  exactly as before.
+
+  **What this does not do**, stated rather than implied: it does not isolate one service's tables
+  from another's — all nine share `hms_app`. Per-service runtime roles need nine credentials in nine
+  environments, and this platform ships as one compose file with one database; that is in the
+  Roadmap as a named gap. CI keeps its superuser deliberately: a job running as `hms_app` would be
+  testing a different deployment from the one it builds.
 - **PHI at rest** — national id and insurance policy number are AES-256-GCM encrypted, excluded
   from every patient response, and served only by a separately authorised, individually audited
   endpoint.
@@ -1108,8 +1141,8 @@ to a patient record on its own.
   redirected rather than served, `sslmode=verify-full` to the database, `SASL_SSL` to Kafka.
 
 **Before deploying:** supply `HMS_JWT_PRIVATE_KEY` and `HMS_PHI_KEY` from a secret manager (the
-built-in PHI dev key protects nothing and logs a warning), give each service its own least-privilege
-database role instead of the shared superuser, set `HMS_SEED_ENABLED=false`, generate real
+built-in PHI dev key protects nothing and logs a warning), run `scripts/db-roles.sql` and point the services at
+`hms_app` and `hms_migrate` rather than the shared superuser, set `HMS_SEED_ENABLED=false`, generate real
 certificates rather than `make certs` output, and put Redis behind the rate limiter if you run more
 than one gateway (the counters are in-process, so N gateways enforce N times the limit — a
 deliberate trade for the single-gateway deployment here, not an oversight).
@@ -1482,6 +1515,23 @@ Worth writing down, because it is the argument for having built them:
   81 of their own actions **plus 16 credential-stuffing attempts against names that do not exist**.
   An audit report that looks authoritative while answering a different question is worse than one
   that is missing.
+- **The dependency gate earned its keep, and its output was unreadable from here.** Tomcat
+  11.0.24 — the version Spring Boot 4.0.8 manages — picked up three CRITICAL advisories, all
+  authorization bypasses (CVE-2026-65182, CVE-2026-68525, CVE-2026-65905), and the scan went red
+  on the exact commit after the last green one with no dependency change between them: the
+  vulnerability database had moved, not the code. Diagnosing it took the long way round, because
+  the failing step writes SARIF to a file with `TRIVY_QUIET` set and so logs nothing, and this
+  development container's egress proxy denies the log blob host, `api.osv.dev`, `nvd.nist.gov` and
+  Trivy's own release assets. What was left was the locally generated SBOM — 200 components — and
+  the public advisory database. `tomcat.version` is now pinned to 11.0.25, with a note to remove
+  the override once a Boot release manages it.
+- **Locking down the `public` schema broke a fresh install, and only a fresh install.** The role
+  split revokes everything on `public`, because every table on this platform lives in a named schema
+  and a writable `public` is where an injected `CREATE TABLE` would go. But `pg_trgm` and
+  `btree_gist` install their operator classes there, so patient V1's
+  `USING gin (... gin_trgm_ops)` failed with "operator class does not exist for access method gin".
+  Invisible on any database that has been running — every index already exists and the migration is
+  a no-op — and fatal on an empty one. `USAGE` stays, `CREATE` does not.
 - **The portal's downloads were silently redirected away.** Both of them — "Download my record"
   and a released report — go through a route handler in the web app rather than a link at the
   gateway, because the bearer token is in an httpOnly cookie the browser will not attach to a
@@ -1541,6 +1591,10 @@ SAST/DAST tooling, and performance profiles. Dependency scanning covers Python (
   column, field, flag or notification — so there is no critical-range editor to build yet.
 - **Further clinical modules** — imaging/PACS, and an HL7 v2 interface engine. Both are named
   gaps rather than half-built modules, which was the choice made deliberately.
+- **One runtime database role, not nine.** `scripts/db-roles.sql` takes DDL and the superuser out
+  of the request path, which is the larger half, and stops there: all nine services share `hms_app`,
+  so a SQL-injection hole in one still reaches another's tables. Per-service roles need nine
+  credentials in nine environments and this platform ships as one compose file with one database.
 - **A timed-out session does not resume where it left off.** The login bounce now says the session
   timed out, and it writes a `next` parameter that the sign-in page does not read: after signing in
   again you land on the dashboard rather than back on the page you were on. Consuming it is an
