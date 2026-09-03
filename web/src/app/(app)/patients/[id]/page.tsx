@@ -12,6 +12,8 @@ import {
   formatDateTime,
   statusTone,
 } from "@/components/ui";
+import { RecordForm } from "@/components/RecordForm";
+import { linkAbha } from "../../sharing/actions";
 import { archivePatient, removeAllergy, restorePatient } from "./actions";
 import { AllergyForm } from "./AllergyForm";
 
@@ -56,6 +58,9 @@ export default async function PatientChart({
   // the platform will refuse to dispense. That is CLINICAL_WRITE, and the service enforces it.
   const mayRecordAllergies = hasRole(user, "ADMIN", "DOCTOR", "NURSE");
   const mayArchive = hasRole(user, "ADMIN");
+  // Linking a national health identifier happens at the desk, with the patient's card or phone in
+  // front of you — not while reading a chart. The service draws the same line.
+  const mayLinkAbha = hasRole(user, "ADMIN", "RECEPTIONIST");
 
   return (
     <div className="space-y-6">
@@ -159,9 +164,40 @@ export default async function PatientChart({
             <Row label="Next of kin phone" value={patient.emergencyContactPhone} />
           </dl>
           <p className="mt-3 border-t border-line pt-2 text-xs text-ink-muted">
-            National id and insurance policy number are encrypted at rest and released only through
-            a separately audited request.
+            National id, insurance policy number and ABHA are encrypted at rest and released only
+            through a separately audited request — which is why none of them appears above.
           </p>
+
+          {mayLinkAbha && (
+            <div className="mt-4 border-t border-line pt-4">
+              <p className="mb-2 text-xs font-medium">Link an ABHA</p>
+              <RecordForm
+                action={linkAbha}
+                hidden={{ patientId: patient.id }}
+                submitLabel="Link it"
+                busyLabel="Linking…"
+                columns={1}
+                fields={[
+                  {
+                    name: "abhaNumber",
+                    label: "ABHA number",
+                    placeholder: "12-3456-7890-1234",
+                    hint: "Fourteen digits. Grouping is allowed and ignored.",
+                  },
+                  {
+                    name: "abhaAddress",
+                    label: "ABHA address",
+                    placeholder: "name@sbx",
+                  },
+                ]}
+              />
+              <p className="mt-2 text-xs text-ink-muted">
+                Stored encrypted and never shown on this page afterwards. Both halves go together:
+                a number with no address cannot be sent anything, and an address with no number
+                cannot be resolved.
+              </p>
+            </div>
+          )}
         </Card>
 
         <Card title="Allergies">

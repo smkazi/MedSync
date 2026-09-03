@@ -34,6 +34,7 @@ const EXPECTED: Record<string, string[]> = {
     "Facility",
     "Pharmacy",
     "Billing",
+    "Sharing",
     "Messaging",
     "Administration",
   ],
@@ -46,6 +47,7 @@ const EXPECTED: Record<string, string[]> = {
     "Facility",
     "Pharmacy",
     "Billing",
+    "Sharing",
     "Messaging",
   ],
   "nurse.iqbal": [
@@ -57,6 +59,7 @@ const EXPECTED: Record<string, string[]> = {
     "Facility",
     "Pharmacy",
     "Billing",
+    "Sharing",
     "Messaging",
   ],
   reception: [
@@ -66,6 +69,7 @@ const EXPECTED: Record<string, string[]> = {
     "Clinical",
     "Facility",
     "Billing",
+    "Sharing",
     "Messaging",
   ],
   "lab.tech": [

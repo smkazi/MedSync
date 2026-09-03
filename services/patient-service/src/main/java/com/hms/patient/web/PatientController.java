@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -96,6 +97,20 @@ public class PatientController {
      * of the record. The same line {@code CHART_READ} draws between looking a patient up and
      * reading their chart, drawn once more a level lower.
      */
+    /**
+     * Links an ABHA to a record that already exists.
+     *
+     * <p>{@code PUT} rather than {@code PATCH} because it replaces both halves together: a number
+     * with no address cannot be sent anything and an address with no number cannot be resolved, so
+     * there is no partial state worth expressing.
+     */
+    @PutMapping("/{id}/abha")
+    @PreAuthorize(Roles.ABHA_LINK)
+    public PatientDtos.PatientResponse linkAbha(@PathVariable UUID id,
+            @Valid @RequestBody PatientDtos.LinkAbhaRequest request) {
+        return service.linkAbha(id, request);
+    }
+
     @GetMapping("/{id}/contact")
     @PreAuthorize(Roles.CONTACT_READ)
     public PatientDtos.PatientContact contact(@PathVariable UUID id) {

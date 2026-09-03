@@ -1,6 +1,7 @@
 package com.hms.scheduling.web;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.when;
@@ -60,6 +61,35 @@ class QueueApiIntegrationTest {
     /** A room this test owns, so the day's numbering starts where the assertions expect. */
     private static final String QUEUE_ROOM = "QT-QUEUE";
 
+    /**
+     * The length of every fixture appointment, and therefore the gap between them.
+     *
+     * <p>Five because that is the shortest the service accepts ({@code @Min(5)} on
+     * {@code durationMinutes}) and the room exclusion constraint means fixtures spaced closer
+     * than their own duration collide in the same room. Eight of them at five minutes need
+     * forty minutes of the rest of the day; at fifteen they needed two hours, which is two
+     * hours of every evening in which this class could not run.
+     */
+    private static final int SLOT_MINUTES = 5;
+
+    /** How far ahead the first fixture is booked — the service refuses to book in the past. */
+    private static final int LEAD_MINUTES = 2;
+
+    /** The longest set this class books: eight fixtures, so seven gaps after the first. */
+    private static final int LONGEST_SET_MINUTES = LEAD_MINUTES + 7 * SLOT_MINUTES;
+
+    /**
+     * The instant the first fixture of the current test is booked at, fixed once per test.
+     *
+     * <p>Fixed rather than re-read from the clock on every call, because a set of fixtures split
+     * across two service dates is exactly the bug this field exists to make impossible: the
+     * queue numbers a day, and half a set on either side of midnight is two half-boards.
+     */
+    private Instant firstSlot;
+
+    /** The service date {@link #firstSlot} falls on, in the clinic zone (UTC under this profile). */
+    private LocalDate serviceDate;
+
     @Autowired
     private MockMvc mockMvc;
 
@@ -95,6 +125,28 @@ class QueueApiIntegrationTest {
         });
     }
 
+    /**
+     * Chooses the day this test books on: today when the rest of it can hold the longest set,
+     * and tomorrow morning when it cannot.
+     *
+     * <p>{@code QueueService} derives a token's service date from the appointment's start in the
+     * clinic zone, and the staff board reads a named date — so a run beginning near local
+     * midnight simply moves its whole fixture set to the next day and reads that board. The
+     * corridor display has no such escape: it shows today by design, which is why the two tests
+     * of it check {@link #displayIsTestableToday()} first.
+     */
+    @BeforeEach
+    void chooseTheDay() {
+        Instant soon = Instant.now().plus(LEAD_MINUTES, ChronoUnit.MINUTES);
+        LocalDate today = soon.atZone(ZoneOffset.UTC).toLocalDate();
+        boolean todayCanHold = soon.plus(LONGEST_SET_MINUTES, ChronoUnit.MINUTES)
+                .atZone(ZoneOffset.UTC).toLocalDate().equals(today);
+        this.firstSlot = todayCanHold
+                ? soon
+                : today.plusDays(1).atStartOfDay(ZoneOffset.UTC).plusHours(9).toInstant();
+        this.serviceDate = firstSlot.atZone(ZoneOffset.UTC).toLocalDate();
+    }
+
     @BeforeEach
     void stubTheDirectory() {
         when(roomDirectory.find(nullable(String.class), nullable(String.class)))
@@ -117,24 +169,35 @@ class QueueApiIntegrationTest {
     }
 
     /**
-     * A slot later today.
+     * A slot on {@link #serviceDate}, {@code minutesFromFirst} after the first one.
      *
-     * <p>Today because the corridor display shows today and nothing else — that is deliberate, so
-     * a test of the display has to book on the day. Later because the service refuses to book in
-     * the past ("An appointment cannot be booked in the past"), which is right and which a fixed
-     * 09:00 walked straight into every afternoon.
-     *
-     * <p>Callers step in fifteen-minute multiples, which is the appointment length: the room
-     * exclusion constraint is real, so fixtures spaced closer than their own duration collide in
-     * the same room and answer 409. Eight of them therefore need two hours of the rest of the day;
-     * a run started within two hours of local midnight has nowhere to put them. That is a real
-     * limit of testing a today-only screen, and it is cheaper to say so than to make the display
-     * accept a date it has no business accepting.
+     * <p>Callers step in {@link #SLOT_MINUTES} multiples, which is the appointment length: the
+     * room exclusion constraint is real, so fixtures spaced closer than their own duration
+     * collide in the same room and answer 409. Five minutes rather than the fifteen this used to
+     * use, because eight of them at fifteen needed two hours of runway and there are only so many
+     * hours in a day that begin two before midnight.
      */
-    private static Instant todayAt(int minutesFromNine) {
-        Instant soon = Instant.now().plus(10, ChronoUnit.MINUTES);
-        return soon.plus(minutesFromNine, ChronoUnit.MINUTES);
+    private Instant todayAt(int minutesFromFirst) {
+        return firstSlot.plus(minutesFromFirst, ChronoUnit.MINUTES);
     }
+
+    /**
+     * Whether today can still host a test of the corridor display.
+     *
+     * <p>The display shows today and nothing else — deliberately, since accepting a date would
+     * let anybody on the internet read the shape of any past clinic. So a test of it has to book
+     * on the day, and in the last {@link #LONGEST_SET_MINUTES} minutes of the clinic's day there
+     * is no room left to book. That window is the one place this suite cannot assert; the two
+     * tests below say so out loud rather than reporting an empty board as a defect.
+     */
+    private boolean displayIsTestableToday() {
+        return serviceDate.equals(LocalDate.now(ZoneOffset.UTC));
+    }
+
+    private static final String NO_ROOM_LEFT_TODAY =
+            "The corridor display shows today and nothing else, and there is less than "
+                    + LONGEST_SET_MINUTES + " minutes of today left in the clinic zone to book "
+                    + "fixtures into. This is a limit of a today-only screen, not a defect in it.";
 
     private String bookAndCheckIn(String surname, int minuteOffset) throws Exception {
         Map<String, Object> body = new HashMap<>();
@@ -144,7 +207,7 @@ class QueueApiIntegrationTest {
         body.put("clinicianName", "Dr " + surname);
         body.put("departmentCode", "GEN");
         body.put("startsAt", todayAt(minuteOffset).toString());
-        body.put("durationMinutes", 15);
+        body.put("durationMinutes", SLOT_MINUTES);
         body.put("roomCode", QUEUE_ROOM);
 
         String created = mockMvc.perform(post("/appointments").with(as("RECEPTIONIST"))
@@ -160,7 +223,12 @@ class QueueApiIntegrationTest {
     }
 
     private JsonNode board(String role) throws Exception {
-        String body = mockMvc.perform(get("/queue/" + QUEUE_ROOM).with(as(role)))
+        // ?date= rather than the server's idea of today: the staff board takes a date precisely so
+        // a board can be read for a named day, and pinning it to the fixtures' own service date is
+        // what stops a run that begins after local midnight reading an empty board.
+        String body = mockMvc.perform(get("/queue/" + QUEUE_ROOM)
+                        .param("date", serviceDate.toString())
+                        .with(as(role)))
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
         return objectMapper.readTree(body);
@@ -170,8 +238,8 @@ class QueueApiIntegrationTest {
     @DisplayName("checking in issues the next number, and the numbers run in order")
     void checkingInIssuesATokenInOrder() throws Exception {
         bookAndCheckIn("First", 0);
-        bookAndCheckIn("Second", 15);
-        bookAndCheckIn("Third", 30);
+        bookAndCheckIn("Second", SLOT_MINUTES);
+        bookAndCheckIn("Third", 2 * SLOT_MINUTES);
 
         JsonNode board = board("RECEPTIONIST");
         assertThat(board.get("roomCode").asString()).isEqualTo(QUEUE_ROOM);
@@ -204,7 +272,7 @@ class QueueApiIntegrationTest {
     @DisplayName("starting the consultation calls the number; completing it takes it off the board")
     void theBoardFollowsTheAppointment() throws Exception {
         String first = bookAndCheckIn("Called", 0);
-        bookAndCheckIn("Waiting", 15);
+        bookAndCheckIn("Waiting", SLOT_MINUTES);
 
         mockMvc.perform(post("/appointments/" + first + "/start").with(as("DOCTOR")))
                 .andExpect(status().isOk());
@@ -227,8 +295,8 @@ class QueueApiIntegrationTest {
         body.put("clinicianId", UUID.randomUUID());
         body.put("clinicianName", "Dr Roomless");
         body.put("departmentCode", "GEN");
-        body.put("startsAt", todayAt(180).toString());
-        body.put("durationMinutes", 15);
+        body.put("startsAt", todayAt(0).toString());
+        body.put("durationMinutes", SLOT_MINUTES);
 
         String created = mockMvc.perform(post("/appointments").with(as("RECEPTIONIST"))
                         .contentType(MediaType.APPLICATION_JSON)
@@ -248,9 +316,10 @@ class QueueApiIntegrationTest {
     @Test
     @DisplayName("the corridor display needs no token and returns nothing that identifies anybody")
     void thePublicDisplayIsReachableAndCarriesNoPhi() throws Exception {
+        assumeTrue(displayIsTestableToday(), NO_ROOM_LEFT_TODAY);
         String first = bookAndCheckIn("Nairsmith", 0);
-        bookAndCheckIn("Iqbalson", 15);
-        bookAndCheckIn("Menonford", 30);
+        bookAndCheckIn("Iqbalson", SLOT_MINUTES);
+        bookAndCheckIn("Menonford", 2 * SLOT_MINUTES);
         mockMvc.perform(post("/appointments/" + first + "/start").with(as("DOCTOR")))
                 .andExpect(status().isOk());
 
@@ -282,8 +351,9 @@ class QueueApiIntegrationTest {
     @Test
     @DisplayName("the display shows a handful of numbers, not the length of the queue")
     void theDisplayDoesNotSayHowManyAreWaiting() throws Exception {
+        assumeTrue(displayIsTestableToday(), NO_ROOM_LEFT_TODAY);
         for (int i = 0; i < 8; i++) {
-            bookAndCheckIn("Queued" + i, i * 15);
+            bookAndCheckIn("Queued" + i, i * SLOT_MINUTES);
         }
 
         JsonNode display = objectMapper.readTree(
@@ -321,6 +391,7 @@ class QueueApiIntegrationTest {
     @Test
     @DisplayName("a lower-case room code in the URL finds the same queue")
     void roomCodesAreCaseInsensitiveInTheUrl() throws Exception {
+        assumeTrue(displayIsTestableToday(), NO_ROOM_LEFT_TODAY);
         bookAndCheckIn("Case", 0);
         // A display's URL is typed once by hand into a kiosk browser, so it is worth not caring.
         mockMvc.perform(get("/public/queue/" + QUEUE_ROOM.toLowerCase(Locale.ROOT)))

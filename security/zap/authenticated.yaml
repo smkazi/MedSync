@@ -293,6 +293,40 @@ jobs:
       - url: "${ZAP_TARGET}/patients/identify?q=zap"
         method: GET
         responseCode: 403
+      # Consent and health-information exchange. The scanning user is a DOCTOR, so reading the
+      # consent register is 200 -- a clinician about to refer needs to know whether a consent
+      # covers it -- and every write here is refused: recording what the patient decided is the
+      # front desk's, and exporting a whole chart is an administrator's.
+      - url: "${ZAP_TARGET}/consents"
+        method: GET
+      - url: "${ZAP_TARGET}/interop/disclosures?patientId=00000000-0000-4000-8000-000000000000"
+        method: GET
+      - url: "${ZAP_TARGET}/consents"
+        method: POST
+        data: '{"patientId":"00000000-0000-4000-8000-000000000000","patientMrn":"ZAP","requester":"Zap","purposeCode":"CARE_MANAGEMENT","hiTypes":["OP_CONSULTATION"],"coversFrom":"2026-01-01","coversTo":"2026-12-31","expiresAt":"2030-01-01T00:00:00Z"}'
+        responseCode: 403
+      - url: "${ZAP_TARGET}/interop/export/00000000-0000-4000-8000-000000000000"
+        method: POST
+        responseCode: 403
+      # The share path, aimed at a consent that does not exist: the refusal must come from the
+      # consent lookup rather than from the body, and it must be a 404 rather than a 500 -- an
+      # unvalidated artefact id reaching a query is what this row would catch.
+      - url: "${ZAP_TARGET}/interop/share"
+        method: POST
+        data: '{"artefactId":"ZAP-NOT-A-CONSENT","hiType":"OP_CONSULTATION","recordId":"00000000-0000-4000-8000-000000000000"}'
+        responseCode: 404
+      # Writing a national health identifier. A doctor reads one a referral quotes and does not
+      # write one, so this is 403 for the scanning user -- and PUT with a well-formed body means
+      # only the role can be what refuses it.
+      - url: "${ZAP_TARGET}/patients/00000000-0000-4000-8000-000000000000/abha"
+        method: PUT
+        data: '{"abhaNumber":"12345678901234","abhaAddress":"zap@sbx"}'
+        responseCode: 403
+      # The audited identifier release, aimed at a patient who does not exist: 404 from the
+      # lookup, and the row exists so the active scan exercises the path at all.
+      - url: "${ZAP_TARGET}/patients/00000000-0000-4000-8000-000000000000/identifiers"
+        method: GET
+        responseCode: 404
 
   - type: spider
     parameters:

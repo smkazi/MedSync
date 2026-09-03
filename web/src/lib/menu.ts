@@ -93,6 +93,10 @@ const BILLING_READ: RoleName[] = ["ADMIN", "CASHIER", "DOCTOR", "NURSE", "RECEPT
 // Who may raise an invoice, take a payment or move a claim. The oldest financial control there
 // is: the person who decides what is owed is not the person who records that it was paid.
 const BILLING_WRITE: RoleName[] = ["ADMIN", "CASHIER"];
+// Who may read a patient's consent register and what has been disclosed. A clinician about to
+// refer needs to know whether a consent covers it, and "ask an administrator" is how a platform
+// teaches people to send a fax instead. The bench and the pharmacy are out: neither refers.
+const CONSENT_READ: RoleName[] = ["ADMIN", "DOCTOR", "NURSE", "RECEPTIONIST"];
 const ADMIN_ONLY: RoleName[] = ["ADMIN"];
 
 /**
@@ -237,6 +241,25 @@ export const MENUS: Menu[] = [
         href: "/billing/tax-rates",
         roles: BILLING_READ,
         note: "Dated rows — an invoice keeps the rate it was raised under",
+      },
+    ],
+  },
+
+  {
+    label: "Sharing",
+    roles: CONSENT_READ,
+    items: [
+      {
+        label: "Consent",
+        href: "/sharing",
+        roles: CONSENT_READ,
+        note: "Nothing leaves without one covering it",
+      },
+      {
+        label: "What has been shared",
+        href: "/sharing/disclosures",
+        roles: CONSENT_READ,
+        note: "Who has seen a patient's record, and under what",
       },
     ],
   },

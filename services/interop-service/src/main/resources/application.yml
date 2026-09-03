@@ -1,0 +1,85 @@
+spring:
+  application:
+    name: interop-service
+  datasource:
+    url: ${HMS_DB_URL:jdbc:postgresql://localhost:5432/hms}
+    username: ${HMS_DB_USER:hms}
+    password: ${HMS_DB_PASSWORD:hms}
+    hikari:
+      schema: interop
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: interop
+        jdbc:
+          time_zone: UTC
+  flyway:
+    enabled: true
+    schemas: interop
+    default-schema: interop
+    create-schemas: true
+  kafka:
+    bootstrap-servers: ${HMS_KAFKA:localhost:9092}
+
+server:
+  port: ${HMS_INTEROP_PORT:8089}
+  error:
+    include-message: never
+    include-stacktrace: never
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+hms:
+  security:
+    mode: resource-server
+  events:
+    transport: ${HMS_EVENTS_TRANSPORT:log}
+  # Where the data a bundle is built from lives. Every call forwards the caller's own token, so
+  # these are addresses rather than credentials.
+  patient:
+    base-url: ${HMS_PATIENT_URI:http://localhost:8082}
+  scheduling:
+    base-url: ${HMS_SCHEDULING_URI:http://localhost:8083}
+  laboratory:
+    base-url: ${HMS_LABORATORY_URI:http://localhost:8084}
+  pharmacy:
+    base-url: ${HMS_PHARMACY_URI:http://localhost:8087}
+  interop:
+    # What this deployment calls itself in a FHIR bundle's Organization and in an ABDM handshake.
+    # Not a hospital's name in this repository: a deployment sets it, and the default says plainly
+    # that nobody has.
+    facility-name: ${HMS_FACILITY_NAME:An unnamed clinical establishment}
+    facility-id: ${HMS_FACILITY_ID:UNSET}
+    # The base every FHIR resource's fullUrl is built from. urn:uuid by default, which is what a
+    # bundle that is not served from a FHIR endpoint should use -- claiming a resolvable base URL
+    # the platform does not serve would be a lie a receiving system can follow.
+    fhir-base: ${HMS_FHIR_BASE:urn:uuid:}
+    # How long a consent may be granted for at most. A permission to read somebody's medical record
+    # is not the kind of thing anybody should be able to sign away for a decade by typing a date.
+    max-consent-days: ${HMS_MAX_CONSENT_DAYS:180}
+    # Which ABDM gateway adapter runs. LOG records what would have been sent and sends nothing,
+    # which is the honest default for a platform with no NHA credentials: see the README.
+    gateway: ${HMS_ABDM_GATEWAY:LOG}
+    gateway-url: ${HMS_ABDM_GATEWAY_URL:}
+    # How the HTTP adapter authenticates, if it does. Generic for the reason the SMS adapter is:
+    # every bridge in front of ABDM wants a different header, and compiling one vendor's into the
+    # platform would make the module wrong for the next deployment.
+    gateway-auth-header: ${HMS_ABDM_GATEWAY_AUTH_HEADER:Authorization}
+    gateway-auth-value: ${HMS_ABDM_GATEWAY_AUTH_VALUE:}
+
+spring.security.oauth2.resourceserver.jwt.jwk-set-uri: ${HMS_JWKS_URI:http://localhost:8081/.well-known/jwks.json}
+
+logging:
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level [%X{correlationId:-}] %logger{36} - %msg%n"

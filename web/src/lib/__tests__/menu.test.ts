@@ -27,6 +27,7 @@ const EXPECTED_TOP_LEVEL: Record<RoleName, string[]> = {
     "Facility",
     "Pharmacy",
     "Billing",
+    "Sharing",
     "Messaging",
     "Administration",
   ],
@@ -39,6 +40,7 @@ const EXPECTED_TOP_LEVEL: Record<RoleName, string[]> = {
     "Facility",
     "Pharmacy",
     "Billing",
+    "Sharing",
     "Messaging",
   ],
   NURSE: [
@@ -50,6 +52,7 @@ const EXPECTED_TOP_LEVEL: Record<RoleName, string[]> = {
     "Facility",
     "Pharmacy",
     "Billing",
+    "Sharing",
     "Messaging",
   ],
   RECEPTIONIST: [
@@ -59,12 +62,14 @@ const EXPECTED_TOP_LEVEL: Record<RoleName, string[]> = {
     "Clinical",
     "Facility",
     "Billing",
+    "Sharing",
     "Messaging",
   ],
-  // No Billing for either: neither raises an invoice nor takes money — the laboratory's charges
-  // reach billing as an event, with no token and no screen — and a bench technician who could read
-  // what every patient has been billed would be reading a financial record for no reason anybody
-  // can state.
+  // No Billing and no Sharing for either: neither raises an invoice, takes money, nor refers a
+  // patient onwards. The laboratory's charges reach billing as an event, with no token and no
+  // screen; a bench technician who could read what every patient has been billed would be reading
+  // a financial record for no reason anybody can state; and who has asked for somebody's record is
+  // not a question the bench answers.
   LAB_TECH: [
     "Dashboard",
     "Patients",

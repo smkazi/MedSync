@@ -979,3 +979,79 @@ export type DayBook = {
   payments: number;
   byMethod: MethodTotal[];
 };
+
+// ---- interoperability ------------------------------------------------------
+
+export type ConsentStatus = "REQUESTED" | "GRANTED" | "DENIED" | "REVOKED" | "EXPIRED";
+
+export type HiType =
+  | "OP_CONSULTATION"
+  | "DIAGNOSTIC_REPORT"
+  | "PRESCRIPTION"
+  | "DISCHARGE_SUMMARY"
+  | "IMMUNIZATION_RECORD"
+  | "HEALTH_DOCUMENT_RECORD"
+  | "WELLNESS_RECORD";
+
+export type PurposeCode =
+  | "CARE_MANAGEMENT"
+  | "BREAK_THE_GLASS"
+  | "PUBLIC_HEALTH"
+  | "PAYMENT"
+  | "RESEARCH"
+  | "SELF_REQUESTED";
+
+export type Consent = {
+  id: string;
+  artefactId: string;
+  patientId: string;
+  patientMrn: string;
+  requester: string;
+  requesterId: string | null;
+  purposeCode: PurposeCode;
+  purposeText: string | null;
+  status: ConsentStatus;
+  /**
+   * Whether this consent would authorise a disclosure right now.
+   *
+   * <p>Computed by the service on every read rather than stored, so a screen cannot show a lapsed
+   * consent as usable because a housekeeping job has not run.
+   */
+  live: boolean;
+  hiTypes: HiType[];
+  coversFrom: string;
+  coversTo: string;
+  expiresAt: string;
+  grantedAt: string | null;
+  deniedAt: string | null;
+  revokedAt: string | null;
+  revokedReason: string | null;
+  signed: boolean;
+};
+
+export type Disclosure = {
+  id: string;
+  consentId: string | null;
+  artefactId: string | null;
+  patientId: string;
+  patientMrn: string;
+  hiType: HiType;
+  kind: "CONSENTED_SHARE" | "PATIENT_EXPORT" | "CARE_SUMMARY";
+  recipient: string;
+  resourceCount: number;
+  byteCount: number;
+  releasedBy: string;
+  releasedAt: string;
+};
+
+export type ShareOutcome = {
+  disclosureId: string;
+  artefactId: string;
+  hiType: HiType;
+  resourceCount: number;
+  byteCount: number;
+  /** False when the platform recorded the release and sent nothing — the honest default. */
+  transmitted: boolean;
+  gateway: string;
+  message: string;
+};

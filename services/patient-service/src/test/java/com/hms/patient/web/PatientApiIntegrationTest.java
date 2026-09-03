@@ -6,6 +6,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -123,6 +124,83 @@ class PatientApiIntegrationTest {
                 .as("the encrypted national id must not appear in an ordinary patient response")
                 .isFalse();
         assertThat(created.has("insurancePolicyNo")).isFalse();
+    }
+
+    @Test
+    @DisplayName("an ABHA is linked after registration, normalised, and never echoed")
+    void abhaIsLinkedAndHidden() throws Exception {
+        JsonNode patient = register(uniqueSurname());
+        String id = patient.get("id").asString();
+
+        JsonNode linked = objectMapper.readTree(
+                mockMvc.perform(put("/patients/" + id + "/abha").with(as("RECEPTIONIST"))
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(Map.of(
+                                        // As people write it, with the grouping.
+                                        "abhaNumber", "12-3456-7890-1234",
+                                        "abhaAddress", "asha.menon@sbx"))))
+                        .andExpect(status().isOk())
+                        .andReturn().getResponse().getContentAsString());
+        assertThat(linked.has("abhaNumber"))
+                .as("a national identifier must not appear in an ordinary patient response, for "
+                        + "the same reason the national id does not")
+                .isFalse();
+        assertThat(linked.has("abhaAddress")).isFalse();
+
+        JsonNode identifiers = objectMapper.readTree(
+                mockMvc.perform(get("/patients/" + id + "/identifiers").with(as("DOCTOR")))
+                        .andExpect(status().isOk())
+                        .andReturn().getResponse().getContentAsString());
+        assertThat(identifiers.get("abhaNumber").asString())
+                .as("stored without its grouping, so two records of one person cannot differ by "
+                        + "punctuation")
+                .isEqualTo("12345678901234");
+        assertThat(identifiers.get("abhaAddress").asString()).isEqualTo("asha.menon@sbx");
+    }
+
+    @Test
+    @DisplayName("the ABHA column really is encrypted at rest")
+    void abhaIsEncryptedAtRest() throws Exception {
+        JsonNode patient = register(uniqueSurname());
+        String id = patient.get("id").asString();
+        mockMvc.perform(put("/patients/" + id + "/abha").with(as("RECEPTIONIST"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "abhaNumber", "98765432109876", "abhaAddress", "test@abdm"))))
+                .andExpect(status().isOk());
+
+        String stored = new JdbcTemplate(dataSource).queryForObject(
+                "select abha_number from patient.patients where id = ?", String.class,
+                java.util.UUID.fromString(id));
+        assertThat(stored)
+                .as("the ciphertext, not the digits — the same assertion the national id has")
+                .isNotNull()
+                .doesNotContain("98765432109876");
+    }
+
+    @Test
+    @DisplayName("a malformed ABHA is refused, and linking is not a clinician's act")
+    void abhaIsValidatedAndNarrowlyAuthorised() throws Exception {
+        String id = register(uniqueSurname()).get("id").asString();
+
+        mockMvc.perform(put("/patients/" + id + "/abha").with(as("RECEPTIONIST"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "abhaNumber", "1234", "abhaAddress", "short@sbx"))))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(put("/patients/" + id + "/abha").with(as("RECEPTIONIST"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "abhaNumber", "12345678901234", "abhaAddress", "no-at-sign"))))
+                .andExpect(status().isBadRequest());
+
+        // A doctor reads a number a referral quotes and does not write one: linking happens with
+        // the patient's card in front of you, which is the front desk.
+        mockMvc.perform(put("/patients/" + id + "/abha").with(as("DOCTOR"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "abhaNumber", "12345678901234", "abhaAddress", "asha@sbx"))))
+                .andExpect(status().isForbidden());
     }
 
     @Test

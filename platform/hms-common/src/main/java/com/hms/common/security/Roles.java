@@ -235,6 +235,55 @@ public final class Roles {
      */
     public static final String PATIENT_IDENTIFY = "hasAnyRole('ADMIN','CASHIER')";
 
+    /**
+     * Who may write a national health identifier onto a patient record.
+     *
+     * <p>The front desk and an administrator, and no clinician: linking an ABHA is a registration
+     * act done with the patient's card or their phone in front of you, not something decided while
+     * reading a chart. Deliberately narrower than the read on the same endpoint, which a doctor
+     * needs when a referral quotes a number.
+     */
+    public static final String ABHA_LINK = "hasAnyRole('ADMIN','RECEPTIONIST')";
+
+    /**
+     * Who may read a patient's consent register and the record of what has been disclosed.
+     *
+     * <p>Clinical, and wide on the read side on purpose: a clinician about to refer a patient needs
+     * to know whether there is a consent covering the referral, and "ask an administrator" is how a
+     * platform teaches people to send a fax instead. The laboratory and the pharmacy are out —
+     * neither refers, and neither has a reason to know who has asked for somebody's record.
+     */
+    public static final String CONSENT_READ = "hasAnyRole('ADMIN','DOCTOR','NURSE','RECEPTIONIST')";
+
+    /**
+     * Who may record a consent decision: request one, mark it granted or refused, revoke it.
+     *
+     * <p>The front desk and an administrator, not a clinician. A consent decision is the patient's,
+     * taken with a consent manager or on paper in front of them, and recorded by whoever is
+     * standing with them; a clinician recording a consent for records they are about to send would
+     * be authorising their own access.
+     */
+    public static final String CONSENT_WRITE = "hasAnyRole('ADMIN','RECEPTIONIST')";
+
+    /**
+     * Who may cause information to leave the building under a consent.
+     *
+     * <p>Deliberately narrow, and separate from every read: a share is a disclosure to a third
+     * party, and the consent check behind it (which cannot be bypassed) protects the patient rather
+     * than the operator. A doctor is in because a referral is a clinical act; the front desk is
+     * not, because deciding that a record is the one to send is not a clerical judgement.
+     */
+    public static final String HEALTH_INFORMATION_SHARE = "hasAnyRole('ADMIN','DOCTOR')";
+
+    /**
+     * Who may export a patient's whole record.
+     *
+     * <p>Administrators alone, until there is a portal where a patient can do it themselves. It is
+     * the single most sensitive operation the platform performs — every encounter, every result,
+     * every prescription, in one file — and the audit line it writes is loud for that reason.
+     */
+    public static final String EHI_EXPORT = "hasRole('ADMIN')";
+
     public static final String ADMIN_ONLY = "hasRole('ADMIN')";
 
     private Roles() {

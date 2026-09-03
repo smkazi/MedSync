@@ -1,0 +1,24 @@
+# Integration tests run against a real PostgreSQL. What this module's tests prove is mostly about
+# rows -- a consent that cannot be granted for longer than the policy allows, a share that cannot
+# be recorded without the consent that authorised it, a disclosure log written in the same
+# transaction as the release -- and none of those constraints exist in an in-memory substitute.
+#
+# The bundle building itself needs no database at all and is tested without one.
+spring:
+  datasource:
+    url: ${HMS_TEST_DB_URL:jdbc:postgresql://localhost:5432/hms_test}
+    username: ${HMS_TEST_DB_USER:hms}
+    password: ${HMS_TEST_DB_PASSWORD:hms}
+    hikari:
+      schema: interop
+  flyway:
+    enabled: true
+hms:
+  events:
+    transport: log
+  interop:
+    facility-name: A test establishment
+    facility-id: TEST-FACILITY
+logging:
+  level:
+    org.flywaydb: WARN

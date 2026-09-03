@@ -228,6 +228,35 @@ services:
     expose:
       - "8088"
 
+  interop-service:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: Dockerfile.java
+      args:
+        SERVICE: interop-service
+    environment:
+      <<: *platform-env
+      SERVER_PORT: 8089
+      HMS_INTEROP_PORT: 8089
+      # The four services a FHIR bundle is composed from. Every call forwards the caller's own
+      # token, so these are addresses rather than credentials.
+      HMS_PATIENT_URI: http://patient-service:8082
+      HMS_SCHEDULING_URI: http://scheduling-service:8083
+      HMS_LABORATORY_URI: http://laboratory-service:8084
+      HMS_PHARMACY_URI: http://pharmacy-service:8087
+      # What this deployment calls itself in a bundle, and where a bundle goes. LOG records what
+      # would have been sent and sends nothing, which is the honest default with no NHA
+      # credentials -- see the README.
+      HMS_FACILITY_NAME: ${HMS_FACILITY_NAME:-An unnamed clinical establishment}
+      HMS_FACILITY_ID: ${HMS_FACILITY_ID:-UNSET}
+      HMS_ABDM_GATEWAY: ${HMS_ABDM_GATEWAY:-LOG}
+      HMS_ABDM_GATEWAY_URL: ${HMS_ABDM_GATEWAY_URL:-}
+      HMS_ABDM_GATEWAY_AUTH_HEADER: ${HMS_ABDM_GATEWAY_AUTH_HEADER:-Authorization}
+      HMS_ABDM_GATEWAY_AUTH_VALUE: ${HMS_ABDM_GATEWAY_AUTH_VALUE:-}
+    expose:
+      - "8089"
+
   ai-service:
     build:
       context: ./services/ai-service
@@ -258,6 +287,7 @@ services:
       HMS_ADMISSIONS_URI: http://admissions-service:8086
       HMS_PHARMACY_URI: http://pharmacy-service:8087
       HMS_BILLING_URI: http://billing-service:8088
+      HMS_INTEROP_URI: http://interop-service:8089
       HMS_AI_URI: http://ai-service:8000
       HMS_CORS_ALLOWED_ORIGINS: http://localhost:3000
     ports:
@@ -278,6 +308,8 @@ services:
       pharmacy-service:
         condition: service_started
       billing-service:
+        condition: service_started
+      interop-service:
         condition: service_started
     restart: unless-stopped
 

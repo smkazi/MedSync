@@ -20,6 +20,7 @@ COPY services/notification-service/pom.xml services/notification-service/
 COPY services/admissions-service/pom.xml services/admissions-service/
 COPY services/pharmacy-service/pom.xml services/pharmacy-service/
 COPY services/billing-service/pom.xml services/billing-service/
+COPY services/interop-service/pom.xml services/interop-service/
 RUN mvn -B -q dependency:go-offline -DskipTests || true
 
 COPY platform platform

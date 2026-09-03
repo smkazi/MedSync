@@ -3,6 +3,7 @@ package com.hms.apitests.journey;
 import static io.restassured.RestAssured.given;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.equalTo;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import com.hms.apitests.support.Api;
 import com.hms.apitests.support.Fixtures;
@@ -58,21 +59,59 @@ class QueueJourneyIT extends RequiresRunningStack {
      */
     private static Instant anchor;
 
+    /** The service date every booking in this class lands on, in the clinic zone (UTC). */
+    private static LocalDate serviceDate;
+
+    /** Every fixture is this long, and they step in twice that so nothing depends on order. */
+    private static final int SLOT_MINUTES = 5;
+
+    /** The furthest offset any test books at: four fixtures, so three gaps after the first. */
+    private static final int LONGEST_SET_MINUTES = 10 + 3 * 2 * SLOT_MINUTES;
+
     @BeforeAll
     static void seed() {
         patient = Fixtures.registerPatient(Api.RECEPTIONIST, "Queue");
         clinician = Fixtures.clinician();
         room = Fixtures.consultingRoom().code();
-        anchor = Instant.now().plus(10, ChronoUnit.MINUTES);
+        // Today when the rest of it can hold the whole set, and tomorrow morning when it cannot.
+        // The queue numbers a day: a set split across midnight is two half-boards, and the staff
+        // board below is read for whichever day the set is actually on.
+        Instant soon = Instant.now().plus(10, ChronoUnit.MINUTES);
+        LocalDate today = soon.atZone(ZoneOffset.UTC).toLocalDate();
+        boolean todayCanHold = soon.plus(LONGEST_SET_MINUTES, ChronoUnit.MINUTES)
+                .atZone(ZoneOffset.UTC).toLocalDate().equals(today);
+        anchor = todayCanHold
+                ? soon
+                : today.plusDays(1).atStartOfDay(ZoneOffset.UTC).plusHours(9).toInstant();
+        serviceDate = anchor.atZone(ZoneOffset.UTC).toLocalDate();
     }
+
+    /**
+     * Whether today can still host a test of the corridor display.
+     *
+     * <p>The display shows today and nothing else, deliberately: accepting a date would let
+     * anybody on the internet read the shape of any past clinic. So a test of it has to book on
+     * the day, and in the last {@link #LONGEST_SET_MINUTES} minutes of the clinic's day there is
+     * nothing left to book. That window is the one thing this suite cannot assert, and it says so
+     * rather than reporting an empty board as a defect in the board.
+     */
+    private static boolean displayIsTestableToday() {
+        return serviceDate.equals(LocalDate.now(ZoneOffset.UTC));
+    }
+
+    private static final String NO_ROOM_LEFT_TODAY =
+            "The corridor display shows today and nothing else, and there is less than "
+                    + LONGEST_SET_MINUTES + " minutes of today left in the clinic zone to book "
+                    + "fixtures into. A limit of a today-only screen, not a defect in it.";
 
     /**
      * A slot later today, offset from the class's fixed anchor.
      *
-     * <p>Today because the corridor display shows today and nothing else — that is deliberate, so
-     * a test of the display has to book on the day. Callers step in multiples of 30 minutes, which
-     * is twice the appointment length: adjacent intervals then have five minutes of air between
-     * them and nothing depends on execution order.
+     * <p>On the day the anchor chose. Callers step in multiples of {@code 2 * SLOT_MINUTES},
+     * twice the appointment length: adjacent intervals then have five minutes of air between them
+     * and nothing depends on execution order. Five-minute appointments rather than fifteen because
+     * the set has to fit inside one service date, and fifteen-minute ones spaced thirty needed
+     * over an hour and a half of the day left.
      */
     private static Instant laterToday(int minutesFromAnchor) {
         return anchor.plus(minutesFromAnchor, ChronoUnit.MINUTES);
@@ -87,7 +126,7 @@ class QueueJourneyIT extends RequiresRunningStack {
                         "clinicianName", clinician.fullName(),
                         "departmentCode", clinician.departmentCode(),
                         "startsAt", at.toString(),
-                        "durationMinutes", 15,
+                        "durationMinutes", SLOT_MINUTES,
                         "roomCode", room))
                 .when().post("/appointments")
                 .then().log().ifValidationFails(io.restassured.filter.log.LogDetail.BODY)
@@ -102,6 +141,7 @@ class QueueJourneyIT extends RequiresRunningStack {
 
     private static JsonPath staffBoard() {
         return given().spec(Api.as(Api.NURSE))
+                .queryParam("date", serviceDate.toString())
                 .when().get("/queue/{room}", room)
                 .then().statusCode(200)
                 .extract().jsonPath();
@@ -125,7 +165,8 @@ class QueueJourneyIT extends RequiresRunningStack {
     @Test
     @DisplayName("the corridor display answers without a token and carries nothing about anybody")
     void theDisplayIsPublicAndPhiFree() {
-        bookAndCheckIn(laterToday(30));
+        assumeTrue(displayIsTestableToday(), NO_ROOM_LEFT_TODAY);
+        bookAndCheckIn(laterToday(2 * SLOT_MINUTES));
 
         // Api.spec() rather than Api.as(...): no Authorization header at all. This is the single
         // most important line in the file.
@@ -169,7 +210,8 @@ class QueueJourneyIT extends RequiresRunningStack {
     @Test
     @DisplayName("starting the consultation calls the number; completing it takes it off the board")
     void theBoardFollowsTheAppointment() {
-        String appointmentId = bookAndCheckIn(laterToday(60));
+        assumeTrue(displayIsTestableToday(), NO_ROOM_LEFT_TODAY);
+        String appointmentId = bookAndCheckIn(laterToday(2 * 2 * SLOT_MINUTES));
         int number = tokenNumberFor(appointmentId);
 
         given().spec(Api.as(Api.DOCTOR))
@@ -200,8 +242,8 @@ class QueueJourneyIT extends RequiresRunningStack {
                         "clinicianId", clinician.id(),
                         "clinicianName", clinician.fullName(),
                         "departmentCode", clinician.departmentCode(),
-                        "startsAt", laterToday(90).toString(),
-                        "durationMinutes", 15))
+                        "startsAt", laterToday(3 * 2 * SLOT_MINUTES).toString(),
+                        "durationMinutes", SLOT_MINUTES))
                 .when().post("/appointments")
                 .then().statusCode(201)
                 .extract().jsonPath().getString("id");

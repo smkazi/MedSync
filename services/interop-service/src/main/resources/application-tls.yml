@@ -1,0 +1,40 @@
+# TLS profile. Activate with SPRING_PROFILES_ACTIVE=tls once scripts/gen-certs.sh has run.
+#
+# TLS 1.2 is the floor and 1.3 is preferred; the cipher list is restricted to forward-secret AEAD
+# suites, so a downgrade to a cipher without forward secrecy is not available to negotiate.
+server:
+  ssl:
+    enabled: true
+    key-store: ${HMS_TLS_KEYSTORE:certs/keystore.p12}
+    key-store-type: PKCS12
+    key-store-password: ${HMS_TLS_PASSWORD:changeit}
+    key-alias: medsync
+    trust-store: ${HMS_TLS_TRUSTSTORE:certs/truststore.p12}
+    trust-store-type: PKCS12
+    trust-store-password: ${HMS_TLS_PASSWORD:changeit}
+    enabled-protocols: TLSv1.3,TLSv1.2
+    ciphers: >-
+      TLS_AES_256_GCM_SHA384,
+      TLS_AES_128_GCM_SHA256,
+      TLS_CHACHA20_POLY1305_SHA256,
+      TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+      TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+      TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+      TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+
+spring:
+  datasource:
+    # Verify the server certificate and its hostname: sslmode=require alone accepts any
+    # certificate and leaves the connection open to interception.
+    url: ${HMS_DB_URL:jdbc:postgresql://localhost:5432/hms}?sslmode=${HMS_DB_SSLMODE:verify-full}&sslrootcert=${HMS_DB_CA:certs/ca.crt}
+  kafka:
+    security:
+      protocol: ${HMS_KAFKA_PROTOCOL:SASL_SSL}
+    ssl:
+      trust-store-location: file:${HMS_TLS_TRUSTSTORE:certs/truststore.p12}
+      trust-store-password: ${HMS_TLS_PASSWORD:changeit}
+      trust-store-type: PKCS12
+
+hms:
+  # Every service validates tokens over TLS once the platform is running with it.
+  jwks-scheme: https

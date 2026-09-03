@@ -92,6 +92,15 @@ public class RouteConfig {
                         .path("/invoices/**", "/charges", "/charge-items/**", "/payers/**",
                                 "/tax-rates/**", "/claims/**", "/day-book")
                         .uri(services.billing()))
+                // Health-information exchange: consent artefacts, FHIR bundles, what leaves.
+                //
+                // `/consents/**` is a top-level noun for the same reason `/invoices/**` is: a
+                // consent is a thing a patient gave and a clinician looks for, not an interop
+                // module's internal detail. `/interop/**` is the machinery — sharing, exporting,
+                // the disclosure log — and is named as machinery because that is what it is.
+                .route("interop", r -> r
+                        .path("/consents/**", "/interop/**")
+                        .uri(services.interop()))
                 // Clinical decision support: summarisation, triage, no-show risk, coding.
                 .route("ai", r -> r
                         .path("/ai/**")

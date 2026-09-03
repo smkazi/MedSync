@@ -166,6 +166,33 @@ class AuthorizationAbuseIT extends RequiresRunningStack {
             // the other half of the same line.
             "cashier,       GET,    /casualty",
             "cashier,       GET,    /prescriptions",
+            // Consent, and the two halves that must stay apart: the front desk records what the
+            // patient decided, a clinician acts on it. A clinician who could record a consent
+            // would be authorising their own access to the record they are about to send, and a
+            // receptionist who could share one would be deciding which record that is.
+            "dr.rao,        POST,   /consents",
+            "nurse.iqbal,   POST,   /consents",
+            "reception,     POST,   /interop/share",
+            "nurse.iqbal,   POST,   /interop/share",
+            // Exporting a whole chart is the most sensitive thing the platform does, and it is an
+            // administrator's alone until a patient can do it themselves through a portal.
+            "dr.rao,        POST,   /interop/export/00000000-0000-4000-8000-000000000000",
+            "nurse.iqbal,   POST,   /interop/export/00000000-0000-4000-8000-000000000000",
+            "reception,     POST,   /interop/export/00000000-0000-4000-8000-000000000000",
+            "cashier,       POST,   /interop/export/00000000-0000-4000-8000-000000000000",
+            // The bench, the pharmacy and the billing desk have no part in any of it: none refers
+            // a patient onwards, and who has asked for somebody's record is not their question.
+            "lab.tech,      GET,    /consents",
+            "dr.pathan,     GET,    /consents",
+            "pharmacist,    GET,    /consents",
+            "cashier,       GET,    /consents",
+            "lab.tech,      GET,    /interop/disclosures",
+            "cashier,       GET,    /interop/disclosures",
+            // Writing a national health identifier onto a record happens at the desk with the
+            // patient's card in front of you, not while reading a chart.
+            "lab.tech,      GET,    /patients/00000000-0000-4000-8000-000000000000/identifiers",
+            "pharmacist,    GET,    /patients/00000000-0000-4000-8000-000000000000/identifiers",
+            "cashier,       GET,    /patients/00000000-0000-4000-8000-000000000000/identifiers",
     })
     void roleIsEnforcedPerEndpoint(String username, String method, String path) {
         var request = given().spec(Api.as(username.trim()));
@@ -183,6 +210,22 @@ class AuthorizationAbuseIT extends RequiresRunningStack {
                 // is the action succeeding. 400 is only acceptable if authorization ran first,
                 // which the 403 rows above already establish for these roles.
                 org.hamcrest.Matchers.is(400)));
+    }
+
+    @Test
+    @DisplayName("linking an ABHA is refused for a clinician even when the request is well-formed")
+    void aWellFormedAbhaLinkIsStillRefused() {
+        // The table above accepts 400 as a pass, because @Valid resolves during argument binding
+        // before @PreAuthorize runs. This body is valid, so the only thing left to refuse it is
+        // the role — and PUT is not a method the table's shape covers.
+        given().spec(Api.as(Api.DOCTOR))
+                .body(Map.of("abhaNumber", "12345678901234", "abhaAddress", "someone@sbx"))
+                .when().put("/patients/00000000-0000-4000-8000-000000000000/abha")
+                .then().statusCode(403);
+        given().spec(Api.as(Api.NURSE))
+                .body(Map.of("abhaNumber", "12345678901234", "abhaAddress", "someone@sbx"))
+                .when().put("/patients/00000000-0000-4000-8000-000000000000/abha")
+                .then().statusCode(403);
     }
 
     @Test

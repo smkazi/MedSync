@@ -79,6 +79,20 @@ public class Patient extends BaseEntity {
     @Column(name = "insurance_policy_no")
     private String insurancePolicyNo;
 
+    /**
+     * The patient's ABHA number: fourteen digits, encrypted like every other national identifier
+     * here, and stored without its display grouping so two records of the same person cannot
+     * differ by punctuation.
+     */
+    @Convert(converter = EncryptedStringConverter.class)
+    @Column(name = "abha_number")
+    private String abhaNumber;
+
+    /** The ABHA address the number is reached at, {@code name@provider}. */
+    @Convert(converter = EncryptedStringConverter.class)
+    @Column(name = "abha_address")
+    private String abhaAddress;
+
     @Column(name = "emergency_contact_name", length = 160)
     private String emergencyContactName;
 
@@ -223,6 +237,22 @@ public class Patient extends BaseEntity {
 
     public void setCountry(String country) {
         this.country = country;
+    }
+
+    public String getAbhaNumber() {
+        return abhaNumber;
+    }
+
+    public void setAbhaNumber(String abhaNumber) {
+        this.abhaNumber = abhaNumber;
+    }
+
+    public String getAbhaAddress() {
+        return abhaAddress;
+    }
+
+    public void setAbhaAddress(String abhaAddress) {
+        this.abhaAddress = abhaAddress;
     }
 
     public String getNationalId() {

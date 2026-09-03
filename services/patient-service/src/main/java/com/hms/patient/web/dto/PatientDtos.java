@@ -36,6 +36,17 @@ public final class PatientDtos {
             @Size(max = 64) String nationalId,
             @Size(max = 120) String insuranceProvider,
             @Size(max = 64) String insurancePolicyNo,
+            /**
+             * ABHA, if the patient already has one. Fourteen digits, with or without the
+             * grouping people write it in — the service normalises before storing, so two
+             * registrations of the same person cannot differ by punctuation.
+             */
+            @Pattern(regexp = "^$|^[0-9 -]{14,20}$",
+                    message = "an ABHA number is 14 digits, optionally grouped")
+            String abhaNumber,
+            @Pattern(regexp = "^$|^[A-Za-z0-9._]{3,}@[A-Za-z]{2,}$",
+                    message = "an ABHA address looks like name@provider")
+            @Size(max = 64) String abhaAddress,
             @Size(max = 160) String emergencyContactName,
             @Pattern(regexp = "^$|^[+0-9 ()-]{6,32}$") String emergencyContactPhone,
             @Size(max = 2000) String notes,
@@ -104,7 +115,31 @@ public final class PatientDtos {
     }
 
     /** The encrypted identifiers, released only to authorised roles and audited on every read. */
-    public record PatientIdentifiers(UUID id, String mrn, String nationalId, String insurancePolicyNo) {
+    public record PatientIdentifiers(UUID id, String mrn, String nationalId,
+                                     String insurancePolicyNo, String abhaNumber,
+                                     String abhaAddress) {
+    }
+
+    /**
+     * Linking an ABHA to a record that already exists.
+     *
+     * <p>Its own request and its own endpoint rather than a field on the general edit form, for the
+     * reason the identifiers *read* is separate too: writing a national identifier onto a patient
+     * is a distinct act somebody should be able to find in the audit log, not a side effect of
+     * correcting a surname. Most patients get an ABHA after they are first registered, so it
+     * cannot be registration-only either.
+     *
+     * <p>Both fields are required together. An address with no number cannot be resolved and a
+     * number with no address cannot be sent anything, so a half-link is a link that looks done and
+     * is not.
+     */
+    public record LinkAbhaRequest(
+            @NotBlank @Pattern(regexp = "^[0-9 -]{14,20}$",
+                    message = "an ABHA number is 14 digits, optionally grouped")
+            String abhaNumber,
+            @NotBlank @Pattern(regexp = "^[A-Za-z0-9._]{3,}@[A-Za-z]{2,}$",
+                    message = "an ABHA address looks like name@provider")
+            @Size(max = 64) String abhaAddress) {
     }
 
     /**

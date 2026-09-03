@@ -2,6 +2,7 @@ package com.hms.patient.service;
 
 import com.hms.common.audit.AuditService;
 import com.hms.common.data.QueryPatterns;
+import com.hms.common.error.BadRequestException;
 import com.hms.common.error.ConflictException;
 import com.hms.common.error.NotFoundException;
 import com.hms.common.events.DomainEvent;
@@ -27,6 +28,9 @@ import org.springframework.transaction.annotation.Transactional;
 /** Patient registration, chart maintenance, search and allergy recording. */
 @Service
 public class PatientService {
+
+    /** An ABHA number is fourteen digits. Named so the check and its message cannot disagree. */
+    private static final int ABHA_DIGITS = 14;
 
     private final com.hms.patient.repo.PatientRepository patients;
     private final MrnGenerator mrnGenerator;
@@ -164,9 +168,49 @@ public class PatientService {
     public PatientDtos.PatientIdentifiers readIdentifiers(UUID id) {
         Patient patient = require(id);
         audit.record("PATIENT_IDENTIFIERS_READ", "Patient", id,
-                "national id / insurance policy released to " + CurrentUser.usernameOrSystem());
-        return new PatientDtos.PatientIdentifiers(patient.getId(), patient.getMrn(), patient.getNationalId(),
-                patient.getInsurancePolicyNo());
+                "national id / insurance policy / ABHA released to "
+                        + CurrentUser.usernameOrSystem());
+        return new PatientDtos.PatientIdentifiers(patient.getId(), patient.getMrn(),
+                patient.getNationalId(), patient.getInsurancePolicyNo(), patient.getAbhaNumber(),
+                patient.getAbhaAddress());
+    }
+
+    /**
+     * Links an ABHA to a patient who already exists.
+     *
+     * <p>Its own method and its own audit action, not a branch of the general update: most people
+     * get an ABHA after they are first registered, and writing a national identifier onto a record
+     * is the kind of act somebody later asks "who did that, and when" about. The audit detail says
+     * that it happened and never what was written — an audit log that carried the number would
+     * make every reader of the log a reader of the identifier.
+     */
+    @Transactional
+    public PatientDtos.PatientResponse linkAbha(UUID id, PatientDtos.LinkAbhaRequest request) {
+        Patient patient = require(id);
+        String number = normaliseAbha(request.abhaNumber());
+        if (number == null || number.length() != ABHA_DIGITS) {
+            throw new BadRequestException(("An ABHA number is exactly %d digits. Grouping is "
+                    + "allowed and ignored; letters are not.").formatted(ABHA_DIGITS));
+        }
+        boolean relinking = patient.getAbhaNumber() != null
+                && !patient.getAbhaNumber().equals(number);
+
+        patient.setAbhaNumber(number);
+        patient.setAbhaAddress(request.abhaAddress().trim());
+        patients.save(patient);
+        audit.record(relinking ? "PATIENT_ABHA_RELINKED" : "PATIENT_ABHA_LINKED", "Patient", id,
+                "linked by " + CurrentUser.usernameOrSystem());
+        publish("patient.abha-linked", patient);
+        return PatientMapper.toResponse(patient);
+    }
+
+    /** Fourteen digits, however they were grouped. */
+    private static String normaliseAbha(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        String digits = value.replaceAll("[^0-9]", "");
+        return digits.isEmpty() ? null : digits;
     }
 
     /**
@@ -245,6 +289,8 @@ public class PatientService {
         patient.setPostalCode(request.postalCode());
         patient.setCountry(request.country());
         patient.setNationalId(blankToNull(request.nationalId()));
+        patient.setAbhaNumber(normaliseAbha(request.abhaNumber()));
+        patient.setAbhaAddress(blankToNull(request.abhaAddress()));
         patient.setInsuranceProvider(request.insuranceProvider());
         patient.setInsurancePolicyNo(blankToNull(request.insurancePolicyNo()));
         patient.setEmergencyContactName(request.emergencyContactName());

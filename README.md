@@ -10,9 +10,9 @@ haematology analyzer over its own wire protocol and released by a pathologist.
 
 > **Status:** the clinical core, the laboratory (including analyzer integration), the AI service
 > and the web UI are implemented and verified end to end against a real stack, and so are the
-> containerisation, TLS, security-testing and performance-testing layers. **979 tests pass** —
-> 541 Java unit and integration, 91 Python, 45 web unit, 194 black-box API and security abuse cases,
-> and 108 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
+> containerisation, TLS, security-testing and performance-testing layers. **1,040 tests pass** —
+> 571 Java unit and integration, 91 Python, 45 web unit, 218 black-box API and security abuse cases,
+> and 115 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
 > [Security](#security); what is left is in the [Roadmap](#roadmap).
 
 ---
@@ -56,17 +56,17 @@ haematology analyzer over its own wire protocol and released by a pathologist.
       SMTP · HTTP SMS      bed occupancy       prescribe·dispense  GST invoices
       no PHI outbound      transfers           eMAR, two scans     payments · claims
 
-      ai :8000
-      FastAPI
-      4 capabilities
-      (Claude + models)
+      interop :8089        ai :8000
+      consent artefacts    FastAPI
+      FHIR R4 bundles      4 capabilities
+      ABDM · EHI export    (Claude + models)
              │                 │                    │                  │
              └── Kafka: hms.patient · hms.appointment · hms.lab · hms.admission ·
                         hms.pharmacy · hms.billing · hms.audit ────────────────────┘
                                      │
                     PostgreSQL 16 — one schema per service
     identity · patient · scheduling · laboratory · notification · admissions ·
-    pharmacy · billing
+    pharmacy · billing · interop
 ```
 
 **Authentication.** `identity-service` is the only holder of passwords and the only issuer of
@@ -92,7 +92,7 @@ order) are plain columns, not foreign keys, so a service survives another's outa
 .
 ├── pom.xml                      Maven aggregator; -Pquality / -Psecurity / -Pmutation / -Pautomation
 ├── Makefile                     every task, one place. `make help`
-├── docker-compose.yml           postgres, kafka (KRaft), ten services, ai-service, web
+├── docker-compose.yml           postgres, kafka (KRaft), eleven services, ai-service, web
 ├── Dockerfile.java              shared multi-stage build, ARG SERVICE, non-root
 ├── config/                      SpotBugs exclusions and Dependency-Check suppressions, each with a reason
 ├── platform/hms-common/         security, errors, events, audit, crypto, pagination
@@ -106,6 +106,7 @@ order) are plain columns, not foreign keys, so a service survives another's outa
 │   ├── admissions-service/      casualty board, bed occupancy, admissions, transfers
 │   ├── pharmacy-service/        formulary, prescribing, dispensing, closed-loop eMAR
 │   ├── billing-service/         charge capture, GST invoicing, payments, payer claims
+│   ├── interop-service/         consent artefacts, FHIR R4 bundles, ABDM, EHI export
 │   └── ai-service/              FastAPI: summarisation, no-show risk, triage, ICD-10
 ├── web/                         Next.js 16 app, Playwright suite in e2e/
 ├── tests/
@@ -496,11 +497,84 @@ single-statement counter with `ON CONFLICT … RETURNING`, so a gap in the seque
 auditor reading a numbered series cares about — cannot come from two cashiers raising an invoice at
 once.
 
+### `interop-service` — schema `interop`
+Consent artefacts, FHIR R4 bundles, and a record of everything that has left the building.
+
+**The rule the module exists for: health information does not leave without a valid consent that
+covers it.** Four separate questions, asked separately so a refusal can say which one failed —
+is the consent granted, is it still live, does it cover this kind of information, and does it cover
+the record's own date. That last pair is the one people conflate: "you may see my records from last
+year" is a different sentence from "this permission lasts a year", and they are different columns.
+
+**There is no bypass.** No flag, no administrative override, no role that skips the check. A
+break-the-glass emergency access is a real requirement and it is a *purpose code on a consent* —
+recorded, and loudly audited — rather than a way around one, which is the difference between an
+emergency and an exception. The check also runs *before* anything is read: a revoked consent never
+causes a chart to be fetched, which the service's own test asserts with
+`verify(clinical, never())`.
+
+**Expiry is compared against the clock on every share.** A stored EXPIRED status exists so a list
+query is cheap, and nothing depends on it: a platform whose consent enforcement needed a scheduled
+job to have run would be a platform where a missed job is a disclosure.
+
+**Two paths out, and the difference is load-bearing.** A *consented share* goes to a third party
+and cannot exist without an artefact — the `disclosures` table's own CHECK refuses the combination.
+A *patient export* hands somebody their own record, which is the EHI-export criterion rather than a
+disclosure, and has no consent behind it deliberately: asking a person to consent to receiving
+their own data is a formality, and formalities are how everybody learns to click through consent
+screens. It is instead administrator-only and loudly audited.
+
+**Every disclosure is written in the same transaction as the release**, and it records what was
+sent, to whom, under which consent, how many resources and how many bytes — never the content. A
+patient is entitled to ask who has seen their record, and "we would have to grep six services'
+logs" is not an answer; a log that carried the bundles would be a second copy of the record in the
+one table auditors are given broad access to.
+
+**Bundles are composed with the caller's own token, from the four services that own the data.**
+This module holds consent artefacts and a disclosure log and no clinical record of its own, so an
+export is a view of the record rather than a second record that can drift. It holds no service
+account either: it cannot read anything its caller could not, which matters because an interop
+service with a powerful credential would be the most attractive password on the platform. The
+client fails closed — an unreachable service is an error, not a section quietly missing from an
+export, because a partial record presented as a complete one is undetectable at the receiving end.
+
+**FHIR R4, built by hand.** `FhirBundleBuilder` is pure — no repository, no clock, no HTTP — so
+the structure a receiving system will parse is asserted in unit tests with nothing running: a
+document bundle led by its Composition, a note kept as its four sections, a blood pressure as one
+Observation with two components, ICD-10 coded Conditions, reference ranges and interpretation flags
+on laboratory results, a text result that stays text. Built by hand rather than with HAPI FHIR
+because HAPI brings a validator *and* several hundred megabytes of structure definitions into a
+platform that emits a dozen resource types. **What is lost is real: nothing here has been run
+through an R4 validator.** These bundles are correct as far as the specification was read and
+followed, and a deployment that has to prove conformance should validate the output rather than
+trust this paragraph.
+
+**Local codes are presented as local.** A laboratory parameter is `urn:medsync:lab-parameter` and a
+formulary code is `urn:medsync:formulary`, not LOINC or SNOMED. A receiving system can map a code it
+knows is local and cannot unmap one it was told was standard.
+
+**ABHA lives on the patient record, encrypted, and never in a response.** Fourteen digits and an
+address, stored with the same converter as the national id and released only through the audited
+`GET /patients/{id}/identifiers`. Linking one is its own endpoint — `PUT /patients/{id}/abha`,
+front-desk-only — because writing a national identifier onto a record is a distinct act somebody
+should be able to find in the audit log, not a side effect of correcting a surname. The audit line
+says that it happened and never what was written. A bundle carries the MRN and never the ABHA
+number: an ABDM push addresses the patient at the gateway, so putting a national identifier in
+every payload would buy nothing.
+
+**Where a bundle goes is an adapter.** `LoggingAbdmGateway` is the default and reports
+`transmitted: false` — the honest state for a deployment with no NHA credentials, said in the API
+response and in the disclosure register rather than dressed up as a send. `HttpAbdmGateway` posts to
+a configured URL. **Neither is ABDM certification**: the real data flow is a consent manager, a
+callback, an encrypted payload with a key exchange and an assessed HIP, and this is a place for that
+to be implemented against a sandbox. The README says so because a module with an HTTP adapter is
+exactly the module somebody would otherwise describe as compliant.
+
 ### `web` — Next.js 16, React 19
 The clinical interface. Server components call the gateway; **the browser never receives an access
 token** — the session lives in httpOnly cookies and every platform call is made server-side.
 
-Ten top-level menus, defined once as data in `src/lib/menu.ts`. What a role sees is a subset: the
+Eleven top-level menus, defined once as data in `src/lib/menu.ts`. What a role sees is a subset: the
 laboratory accounts get no Clinical menu at all, because every one of its items is gated away from
 them and an empty dropdown is worse than an absent one.
 
@@ -512,6 +586,7 @@ them and an empty dropdown is worse than an absent one.
 | Clinical | triage intake, encounter charting — vitals with a NEWS2 score, the SOAP note, signing, amendments, ICD-10 coding, laboratory ordering, prescribing, order sets and the care plan — with AI assistance beside the note; the casualty board and the admissions census with its bed map; the drug round, where a dose is given against two scans; and the order-set reference list. All gated to clinicians rather than to everybody who may look a patient up |
 | Laboratory | worklist, an order's report with collection, result entry and release, specimen labels, scan a tube, test catalogue, reference ranges and interpretation rules — both retunable by a pathologist — analyzers, device messages |
 | Facility | room directory, rooms, floors, room types, beds, departments — all editable by an administrator |
+| Sharing | the consent register with the four conditions on every row, recording a decision (front desk), sending a record under a consent (clinicians), and what has been released about a patient and under what |
 | Messaging | delivery log with the send form, message wording — readable by anybody who may send, editable by an administrator |
 | Pharmacy | dispensing queue with the override reason on the row, formulary with its ingredient lists, the interaction table with what to do about each pairing, stock by batch with what is about to expire — gated to the roles that may read a medication order |
 | Billing | invoices (open bills first, or one patient's whole history), raise an invoice, the day book split by how money arrived, claims, and — administrator-only — the charge list, payers with their agreed tariffs, and dated tax rates |
@@ -675,7 +750,7 @@ Flyway creates and migrates every schema on service start.
 
 ```bash
 mvn -q package -DskipTests
-scripts/local.sh start          # identity, patient, scheduling, laboratory, notification, admissions, pharmacy, billing, gateway
+scripts/local.sh start          # identity, patient, scheduling, laboratory, notification, admissions, pharmacy, billing, interop, gateway
 scripts/local.sh status
 scripts/local.sh logs identity-service
 scripts/local.sh stop
@@ -719,6 +794,12 @@ The dev profile seeds one account per role:
 | `svc.notification` | SERVICE — **not a person.** notification-service signs in as this to find out where to send a message, because the work is triggered by an event and an event carries no caller's token. It holds the platform's narrowest role: a phone number, an email address, and no part of a chart. |
 | `pharmacist` | PHARMACIST — fills prescriptions, keeps the formulary and the stock. Reads a prescription and an allergy list and **cannot open a chart**, cannot prescribe, and cannot record a dose as given. |
 | `cashier` | CASHIER — raises invoices, takes payments, works claims. The mirror image of the pharmacist: it can collect money and **cannot open a chart**, and `dr.rao` can read a bill and cannot take a payment. |
+
+Consent and health-information exchange add **no account**, deliberately: recording what a patient
+decided is the front desk's (`reception`), sending a record under a consent is a clinician's
+(`dr.rao`), and exporting a whole chart is an administrator's. A role called something like
+"privacy officer" would have been a role that could both record a consent and act on it, which is
+the one combination this module is built to prevent.
 
 The seed password comes from `HMS_SEED_PASSWORD` and defaults to `ChangeMe!Dev2026`.
 
@@ -921,12 +1002,12 @@ make help          # everything else
 Or directly:
 
 ```bash
-mvn -q verify                                     # 541 Java unit and integration tests
+mvn -q verify                                     # 571 Java unit and integration tests
 cd services/ai-service && uv run pytest -q        # 91 Python tests
 cd web && npm run lint && npm run typecheck       # web static checks
 cd web && npm test                                # 45 web unit tests
-cd web && npx playwright test                     # 108 browser tests, no skips
-mvn -Pautomation -pl tests/api verify             # 194 API and security abuse cases
+cd web && npx playwright test                     # 115 browser tests, no skips
+mvn -Pautomation -pl tests/api verify             # 218 API and security abuse cases
 ```
 
 | Layer | What runs | Where |
@@ -1124,6 +1205,13 @@ Worth writing down, because it is the argument for having built them:
   field default. The constructor always overwrites it, so nothing was wrong yet — and a default like
   that is how the zone bug above gets back in, so it is gone and the NOT NULL column is what fails
   loudly if a caller forgets.
+- **A narrow endpoint built for one role was reached for by another, and 403'd the screen that
+  needed it.** The consent screens looked a patient up through `GET /patients/identify` — the
+  four-field lookup built so a cashier could identify somebody without reading the register. But
+  everybody who may read a consent already has the full patient search, and the front desk is not
+  in `PATIENT_IDENTIFY`, so the screen answered "No patient matches" for the exact role it exists
+  for. Found by a browser test on its first run. The screens use the ordinary search now, and the
+  narrow lookup stays narrow.
 - **A pick-list silently lost every row past the hundredth.** The staff screen asked for
   `/admin/users?size=200` to fill its "Platform login" dropdown, and the controller answers
   `Math.min(size, 100)` — so the request looked like it asked for everything and got the first
@@ -1139,6 +1227,19 @@ Worth writing down, because it is the argument for having built them:
   this and walked forward to the next day with a slot; the booking and queue specs now do the same.
   A test that is green until an invisible counter runs out is the worst kind, because the day it
   breaks has nothing to do with the change that is being blamed.
+- **The queue suite failed for forty minutes a day and blamed the queue.** The corridor display
+  shows today and nothing else — deliberately, since accepting a date would let anybody on the
+  internet read the shape of any past clinic. Its tests therefore have to book on the day, and
+  they booked eight fifteen-minute appointments into one room, which needs two hours of the day
+  left. Run at 23:43 the later fixtures landed on tomorrow's board while today's was being read,
+  and the failure read `expected: 5 but was: 1` — a defect message for a clock problem. Three
+  things changed: the fixtures are five minutes long, which is the shortest the service accepts,
+  so the set needs forty minutes rather than two hours; the whole set is pinned to one instant
+  chosen once per test, and the *authenticated* board is read for that day with `?date=`, so a run
+  starting after local midnight simply books tomorrow and reads tomorrow; and the three tests of
+  the today-only display, which have no such escape, now say out loud that there is not enough of
+  today left rather than reporting an empty board as a defect. The same straddle hit two `tests/api`
+  journeys, which pass either side of it.
 
 - **Concurrent sign-ins for one account returned 500.** The login path stamped `last_login_at` by
   mutating the optimistically locked `users` row, so two simultaneous logins collided on the version
@@ -1198,8 +1299,9 @@ Worth writing down, because it is the argument for having built them:
 
 **Implemented and verified against a running stack:** clinical core, laboratory with analyzer
 integration, casualty and the in-patient census, the closed medication loop, the revenue cycle
-(GST invoicing, payments, payer claims and event-driven charge capture), outbound messaging, AI
-service, web UI, containerisation, TLS, the full test pyramid,
+(GST invoicing, payments, payer claims and event-driven charge capture), consent-gated health-
+information exchange with FHIR R4 bundles and an EHI export, outbound messaging, AI service, web
+UI, containerisation, TLS, the full test pyramid,
 SAST/DAST tooling, and performance profiles. Dependency scanning covers Python (`pip-audit`) and the web app
 (`npm audit`) on every run, and Java through Trivy over the SBOM.
 
@@ -1226,6 +1328,33 @@ SAST/DAST tooling, and performance profiles. Dependency scanning covers Python (
   column, field, flag or notification — so there is no critical-range editor to build yet.
 - **Further clinical modules** — imaging/PACS, and an HL7 v2 interface engine. Both are named
   gaps rather than half-built modules, which was the choice made deliberately.
+- **ABDM certification.** The platform is integration-ready and **uncertified**, and the gap is
+  not a formality: M1/M2/M3 certification needs NHA sandbox credentials and an assessment, and the
+  real data flow is a consent manager, a callback, an encrypted payload with a key exchange and an
+  assessed HIP. What exists is the consent artefact, the gate that cannot be bypassed, the bundles,
+  the disclosure register, and an HTTP adapter with somewhere to put that protocol. The default
+  adapter reports `transmitted: false` precisely so nobody can mistake the state for compliance.
+- **Nothing has been through an R4 validator.** The bundles are hand-built and structurally
+  asserted in unit tests; conformance to the specification's profiles is unproven. A deployment
+  that has to demonstrate it should validate the output.
+- **A consent request does not reach the patient.** The front desk records what the patient
+  decided, in front of them; there is no consent manager integration, no notification to a phone
+  and no patient-facing screen to approve one — which is a portal-shaped gap and waits on the
+  portal.
+- **Four of the seven information types have no bundle.** Discharge summary, immunisation record,
+  health document and wellness record are in the consent vocabulary because ABDM's is, and a
+  consent may legitimately cover them; sharing one is refused with a message saying the platform
+  cannot build it. That is better than an empty document, and it is a gap: the platform records no
+  immunisations, holds no documents, and has no portal for a patient to record wellness data in.
+- **Matching a patient by ABHA number.** Stored encrypted with a randomised IV, so it cannot be
+  looked up or compared — ABDM linking will need a deterministic hash column, and the migration
+  says so rather than pretending a UNIQUE constraint would help.
+- **A transitions-of-care document.** A referral can carry an OP-consultation bundle; there is no
+  Composition typed as a transfer summary, no receiving side, and no reconciliation of what came
+  back.
+- **NHCX claim submission.** `billing.claims` holds what was claimed and settled, and nothing
+  submits it to a health-claims exchange. The claim rows carry what such a submission needs, which
+  is why they exist in that shape.
 - **A screen for composing an order set.** The endpoint exists and is administrator-only; there is
   no form, because what goes into a set is a clinical governance decision rather than a data-entry
   task — a set is applied in one click by anybody who may chart — and a form with no review step in
@@ -1320,7 +1449,10 @@ SAST/DAST tooling, and performance profiles. Dependency scanning covers Python (
   both jobs in dev.
 - **A real reference-range catalogue** — the seeded set covers the CBC parameters the ASTM parser
   emits. A deployment needs its own, per instrument and per population.
-- **HL7 v2 / FHIR interfaces** — nothing here speaks either yet.
+- **HL7 v2** — nothing here speaks it, and an interface engine stays a named gap rather than a
+  half-built module. FHIR R4 is spoken now, one direction: interop-service composes bundles and
+  exports them, and nothing *receives* one — there is no FHIR endpoint, no `$import`, and no
+  reconciliation of an incoming record against a local one.
 
 Two things about the AI layer are worth stating plainly rather than leaving in a roadmap: the
 no-show model is trained on **synthetic data** (ROC AUC 0.67, Brier 0.10 on a held-out split — a
