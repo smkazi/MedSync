@@ -74,6 +74,30 @@
     <Bug pattern="CRLF_INJECTION_LOGS"/>
   </Match>
 
+  <!-- MLLP is a plaintext protocol, and these two findings are correct rather than false.
+
+       Minimal Lower Layer Protocol is HL7 v2 over a bare TCP socket: a start byte, the message,
+       two end bytes. It has no TLS, no authentication, and no framing beyond those sentinels — and
+       it cannot be given any of them and still be MLLP. The laboratory across town speaks this and
+       only this, which is the entire reason the codec exists.
+
+       So the answer is not an SSLSocket, it is not opening the port. `hms.interop.hl7.mllp.enabled`
+       is false by default and the comment beside it says why: this is a raw port that accepts
+       clinical messages, and opening it is a network decision somebody should have to make on
+       purpose. The HTTP endpoint does the same work behind the gateway, with a bearer token and
+       TLS, and that is the path a deployment should use. One that must speak MLLP puts it on a
+       private segment or behind an stunnel wrapper, which is where that decision belongs.
+
+       Named class by class rather than by pattern, so a third unencrypted socket appearing
+       anywhere on this platform still fails the build. -->
+  <Match>
+    <Or>
+      <Class name="com.hms.interop.hl7.MllpClient"/>
+      <Class name="com.hms.interop.service.MllpListener"/>
+    </Or>
+    <Bug pattern="UNENCRYPTED_SOCKET,UNENCRYPTED_SERVER_SOCKET"/>
+  </Match>
+
   <!-- Generated proxies. -->
   <Match>
     <Class name="~.*\$\$SpringCGLIB\$\$.*"/>
