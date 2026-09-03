@@ -20,7 +20,20 @@ public final class Fixtures {
     public record Patient(String id, String mrn, String fullName) {
     }
 
-    public record Clinician(String id, String fullName, String departmentCode) {
+    /**
+     * A clinician for this run, and a login that is them.
+     *
+     * <p>{@code id} is the <strong>user</strong> id, not the staff id, and that distinction became
+     * load-bearing with the care-team narrowing: {@code encounters.clinician_id} is a login, it is
+     * validated against {@code staff.user_id} before it is written, and it decides who may read the
+     * chart afterwards. This fixture used to hand back the staff id, which the platform's own
+     * booking screen has never done — it filters the clinician picker to staff who have a login.
+     *
+     * <p>{@code accessToken} is that clinician's own session, so a test can act as the person the
+     * encounter is about rather than as an unrelated doctor who happens to hold the role.
+     */
+    public record Clinician(String id, String staffId, String fullName, String departmentCode,
+                            String username, String accessToken) {
     }
 
     /** A bookable consulting room created for this run. */
@@ -116,17 +129,43 @@ public final class Fixtures {
                 .then().statusCode(200)
                 .extract().jsonPath().getString("find { it.active == true }.code");
 
+        // The login first, because the staff row has to point at it. A doctor: the encounter this
+        // clinician opens is one they must then be able to read, which is what the care team is.
+        String username = "api.clinician." + UUID.randomUUID().toString().substring(0, 8);
+        String issued = "IssuedByTheDesk!2026";
+        String chosen = "ChosenByTheDoctor!2026";
+        var user = given().spec(Api.as(Api.ADMIN))
+                .body(Map.of(
+                        "username", username,
+                        "email", username + "@hms.local",
+                        "fullName", "Api Clinician " + RUN,
+                        "password", issued,
+                        "roles", java.util.List.of("DOCTOR")))
+                .when().post("/admin/users")
+                .then().statusCode(201)
+                .extract().jsonPath();
+
+        // Every new account owes a password change, and until it makes one its token carries no
+        // roles at all. Same gate the portal fixture goes through, for the same reason.
+        String firstToken = Api.login(username, issued).accessToken();
+        given().spec(Api.withToken(firstToken))
+                .body(Map.of("currentPassword", issued, "newPassword", chosen))
+                .when().post("/auth/change-password")
+                .then().statusCode(200);
+
         var body = given().spec(Api.as(Api.ADMIN))
                 .body(Map.of(
                         "employeeNo", "API-" + UUID.randomUUID().toString().substring(0, 8),
                         "fullName", "Api Clinician " + RUN,
                         "designation", "Consultant",
                         "departmentCode", department,
-                        "specialty", "General Medicine"))
+                        "specialty", "General Medicine",
+                        "userId", user.getString("id")))
                 .when().post("/staff")
                 .then().statusCode(201)
                 .extract().jsonPath();
-        return new Clinician(body.getString("id"), body.getString("fullName"), body.getString("departmentCode"));
+        return new Clinician(user.getString("id"), body.getString("id"), body.getString("fullName"),
+                body.getString("departmentCode"), username, Api.login(username, chosen).accessToken());
     }
 
     /** A slot far enough out that no seeded or previous-run appointment can be sitting in it. */

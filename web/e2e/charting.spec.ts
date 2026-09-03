@@ -189,13 +189,59 @@ test.describe("charting an encounter", () => {
     await expect(observations).toContainText("Air or oxygen");
   });
 
+  test("a chart is not everybody's, and the door out of that says so", async ({ page }) => {
+    test.setTimeout(120_000);
+
+    // The doctor treats the patient and opens the visit, so the chart is theirs.
+    await signIn(page, "dr.rao");
+    const { url } = await encounterFor(page, 92);
+    await page.getByLabel("Objective").fill("Chest clear, no added sounds.");
+    await page.getByRole("button", { name: "Save note" }).click();
+    await expect(page.getByRole("status")).toContainText(/Revision 1, unsigned/);
+
+    // A nurse who has had nothing to do with this visit holds CHART_READ and is still refused --
+    // which is the whole point, because until this existed every nurse could read every chart on
+    // the platform. The refusal has to be actionable, not the platform's stock "no".
+    await signIn(page, "nurse.iqbal");
+    await page.goto(url);
+    await expect(page.getByRole("main")).toContainText(/not on this encounter's care team/);
+    await expect(page.getByRole("main")).toContainText(/record a reason/);
+    await expect(page.getByRole("paragraph").filter({ hasText: "Chest clear, no added sounds." }))
+      .toHaveCount(0);
+
+    // A tick would be theatre. A sentence is read by whoever reviews these, and the platform
+    // enforces the floor rather than the browser.
+    const reason = page.getByLabel("Why do you need it?");
+    await reason.fill("Covering this ward tonight and the patient has become short of breath.");
+    await page.getByRole("button", { name: "Record a reason and open it" }).click();
+
+    await expect(page.getByRole("status")).toContainText(/recorded and reviewed/);
+    // The rendered note, not the editor's textarea beside it -- both hold the same words, and only
+    // one of them is the record.
+    await expect(page.getByRole("paragraph").filter({ hasText: "Chest clear, no added sounds." }))
+      .toBeVisible();
+
+    // And it says so on the chart, beside everybody else who is looking after this patient.
+    const team = page.getByRole("region", { name: "Who is looking after this patient" });
+    await expect(team).toContainText("Opened with a recorded reason");
+    await expect(team).toContainText("Covering this ward tonight");
+    await expect(team).toContainText("Treating clinician");
+  });
+
   test("a receptionist cannot reach a chart at all", async ({ page }) => {
     await signIn(page, "reception");
     // CHART_READ excludes RECEPTIONIST, so the encounter is not theirs to read. The refusal has to
     // arrive as a refusal: rethrowing the 403 rendered the error boundary, and "A server error
     // occurred" is both wrong and unactionable for a permission decision.
+    //
+    // The wording is the platform's own, and it is deliberately the one that says nothing: a role
+    // refusal must not narrate the authorisation model to somebody it has just refused. Contrast
+    // the care-team test above, where the refusal exists precisely to tell the clinician what to do
+    // instead -- the platform decides which of the two it is, and the browser shows what it says.
     await page.goto("/encounters/00000000-0000-4000-8000-000000000000");
-    await expect(page.getByRole("main")).toContainText(/does not have access|Forbidden|not found/i);
+    await expect(page.getByRole("main"))
+      .toContainText(/do not have permission to perform this action/i);
+    await expect(page.getByRole("main")).not.toContainText(/care team/);
     await expect(page.getByText(/A server error occurred/)).toHaveCount(0);
   });
 });

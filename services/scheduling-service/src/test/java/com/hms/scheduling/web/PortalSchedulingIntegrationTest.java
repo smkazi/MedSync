@@ -5,6 +5,8 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.nullable;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -13,6 +15,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.hms.scheduling.client.PortalIdentityClient;
 import com.hms.scheduling.client.RoomDirectoryClient;
+import com.hms.scheduling.client.StaffDirectoryClient;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -21,10 +24,12 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -77,12 +82,36 @@ class PortalSchedulingIntegrationTest {
                 .thenReturn(Optional.empty());
     }
 
+    /**
+     * Stubbed, like {@code RoomDirectoryClient} where that appears, and for the same reason: it
+     * reaches patient-service over HTTP, which is not running here. What it answers is deliberately
+     * permissive — every id is a clinician — because these tests are about scheduling; a test of
+     * what happens when it refuses lives with the narrowing itself.
+     */
+    @MockitoBean
+    private StaffDirectoryClient staffDirectory;
+
+    @BeforeEach
+    void everyIdIsAClinician() {
+        Mockito.when(staffDirectory.require(any(UUID.class), nullable(String.class)))
+                .thenAnswer(call -> new StaffDirectoryClient.Clinician(
+                        call.getArgument(0), "Test Clinician", "Consultant", "GEN"));
+    }
+
+    /** One identity per role, stable for the class -- see SchedulingApiIntegrationTest for why. */
+    private static final Map<String, UUID> IDENTITIES = new ConcurrentHashMap<>();
+
+    private static UUID subjectFor(String... roles) {
+        return IDENTITIES.computeIfAbsent(roles.length == 0 ? "anonymous" : roles[0],
+                key -> UUID.randomUUID());
+    }
+
     private static RequestPostProcessor as(String... roles) {
         List<GrantedAuthority> authorities = Arrays.stream(roles)
                 .map(role -> (GrantedAuthority) new SimpleGrantedAuthority("ROLE_" + role))
                 .toList();
         return jwt().jwt(builder -> builder
-                        .subject(UUID.randomUUID().toString())
+                        .subject(subjectFor(roles).toString())
                         .claim("preferred_username", "test-user")
                         .claim("roles", List.of(roles)))
                 .authorities(authorities);

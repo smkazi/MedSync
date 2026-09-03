@@ -73,6 +73,15 @@ hms:
   scheduling:
     # Clinic hours are local; slots are generated in this zone and stored as instants.
     zone: ${HMS_TIMEZONE:UTC}
+  care-team:
+    # How long break-glass cover lasts. One shift: covering somebody else's patient for an evening
+    # should not become standing access to their record for ever, and an expired membership is
+    # treated as absent rather than as present-and-ignored.
+    break-glass-ttl: ${HMS_BREAK_GLASS_TTL:PT12H}
+    # The floor on a break-glass reason. Blunt, and here for a blunt reason: "cover" and "emergency"
+    # are what a free-text box collects when it does not ask for a sentence, and a reason nobody can
+    # act on is the same as no reason.
+    reason-min-length: ${HMS_BREAK_GLASS_REASON_MIN:20}
   ai:
     base-url: ${HMS_AI_URI:http://localhost:8000}
     enabled: ${HMS_AI_ENABLED:true}

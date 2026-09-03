@@ -40,19 +40,24 @@ public class CarePlanService {
     private final EncounterRepository encounters;
     private final DiagnosisRepository diagnoses;
     private final AuditService audit;
+    private final CareTeamGuard careTeam;
 
     public CarePlanService(CarePlanRepository plans, CarePlanGoalRepository goals,
                            EncounterRepository encounters, DiagnosisRepository diagnoses,
-                           AuditService audit) {
+                           AuditService audit, CareTeamGuard careTeam) {
         this.plans = plans;
         this.goals = goals;
         this.encounters = encounters;
         this.diagnoses = diagnoses;
         this.audit = audit;
+        this.careTeam = careTeam;
     }
 
     @Transactional
     public CareDtos.CarePlanResponse create(CareDtos.CreateCarePlanRequest request) {
+        // Writing a care plan is providing care, so it enrols rather than refuses -- the same
+        // asymmetry the encounter writes use, and for the same reason.
+        careTeam.enrolOnContact(request.encounterId());
         Encounter encounter = encounters.findById(request.encounterId())
                 .orElseThrow(() -> new NotFoundException(
                         "No encounter with id " + request.encounterId()));
@@ -78,14 +83,28 @@ public class CarePlanService {
 
     @Transactional(readOnly = true)
     public CareDtos.CarePlanResponse forEncounter(UUID encounterId) {
+        careTeam.requireChartAccess(encounterId);
         return plans.findByEncounterId(encounterId).map(CarePlanService::toResponse)
                 .orElseThrow(() -> new NotFoundException(
                         "No care plan for encounter " + encounterId));
     }
 
+    /**
+     * This patient's care plans — narrowed to the encounters the caller may read.
+     *
+     * <p>Filtered rather than refused, and filtered rather than left open, which is the opposite of
+     * what {@code EncounterService.forPatient} does one file away. The difference is what the two
+     * return. That one is an index: dates, types and counts, no clinical content, and hiding it
+     * would stop a clinician even knowing there was something to ask about. This one carries every
+     * goal and every progress note, which is the record itself.
+     *
+     * <p>One membership check per plan. A patient has a handful, so the loop is cheaper than the
+     * join that would avoid it, and it keeps the decision in one place.
+     */
     @Transactional(readOnly = true)
     public List<CareDtos.CarePlanResponse> forPatient(UUID patientId) {
         return plans.findByPatientIdOrderByCreatedAtDesc(patientId).stream()
+                .filter(plan -> careTeam.mayReadChart(plan.getEncounterId()))
                 .map(CarePlanService::toResponse)
                 .toList();
     }
@@ -93,6 +112,7 @@ public class CarePlanService {
     @Transactional
     public CareDtos.CarePlanResponse addGoal(UUID planId, CareDtos.AddGoalRequest request) {
         CarePlan plan = require(planId);
+        careTeam.enrolOnContact(plan.getEncounterId());
         if (!plan.isOpen()) {
             throw new BadRequestException("This care plan is closed. Goals cannot be added to it.");
         }
@@ -113,6 +133,7 @@ public class CarePlanService {
     public CareDtos.CarePlanResponse recordGoal(UUID goalId, CareDtos.RecordGoalRequest request) {
         CarePlanGoal goal = goals.findById(goalId)
                 .orElseThrow(() -> new NotFoundException("No goal with id " + goalId));
+        careTeam.enrolOnContact(goal.getCarePlan().getEncounterId());
         boolean needsNote = request.status() != GoalStatus.OPEN && request.status() != GoalStatus.MET;
         if (needsNote && (request.progressNote() == null || request.progressNote().isBlank())) {
             throw new BadRequestException(
@@ -141,6 +162,7 @@ public class CarePlanService {
     @Transactional
     public CareDtos.CarePlanResponse close(UUID planId, CarePlanStatus outcome) {
         CarePlan plan = require(planId);
+        careTeam.enrolOnContact(plan.getEncounterId());
         if (!plan.isOpen()) {
             throw new BadRequestException("This care plan is already "
                     + plan.getStatus().name().toLowerCase(Locale.ROOT) + ".");

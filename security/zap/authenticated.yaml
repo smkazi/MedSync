@@ -98,6 +98,15 @@ jobs:
       - url: "${ZAP_TARGET}/admin/audit.csv"
         method: GET
         responseCode: 403
+      # The care-team narrowing, aimed with a real doctor's session. This encounter id belongs to
+      # nobody, so a 403 is the only right answer for a clinician who is on no care team -- and a
+      # 200 or a 404 here would each mean something different had gone wrong.
+      - url: "${ZAP_TARGET}/encounters/00000000-0000-4000-8000-000000000000"
+        method: GET
+        responseCode: 403
+      - url: "${ZAP_TARGET}/encounters/00000000-0000-4000-8000-000000000000/care-team"
+        method: GET
+        responseCode: 403
       # The initial-password gate. A doctor who has changed their password gets a token with roles
       # and reads this; an account still on its issued password gets one with none and cannot.
       # Recorded here so the active scan exercises the write surface behind it.

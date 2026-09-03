@@ -615,16 +615,32 @@ class FacilityApiIntegrationTest {
      * test that hard-codes a level passes once against a persistent database and 409s for ever
      * after. Claiming the next free one is the only repeatable shape.
      */
+    /**
+     * The lowest level nobody is using.
+     *
+     * <p>It used to be the highest level plus one, which climbs a little on every run and cannot
+     * go on doing so: a floor level is bounded at 200 because a building has floors rather than an
+     * unbounded sequence, and {@code uq_floor_level} counts retired floors, so nothing here ever
+     * gives a level back. After enough runs against the same database the fixture asked for 201 and
+     * the platform correctly refused it — a validation rule working exactly as intended, reported
+     * as a broken test. Finding a gap instead is stable however many times this suite runs.
+     */
     private short nextFreeLevel() throws Exception {
         JsonNode floors = objectMapper.readTree(
                 mockMvc.perform(get("/floors").param("includeInactive", "true").with(as("ADMIN")))
                         .andExpect(status().isOk())
                         .andReturn().getResponse().getContentAsString());
-        int highest = 0;
+        java.util.Set<Integer> taken = new java.util.HashSet<>();
         for (JsonNode floor : floors) {
-            highest = Math.max(highest, floor.get("level").asInt());
+            taken.add(floor.get("level").asInt());
         }
-        return (short) (highest + 1);
+        for (int level = 1; level <= 200; level++) {
+            if (!taken.contains(level)) {
+                return (short) level;
+            }
+        }
+        throw new IllegalStateException("Every floor level from 1 to 200 is in use in "
+                + "this database. Recreate hms_test rather than looking for a bug here.");
     }
 
     @Test

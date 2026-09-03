@@ -1,6 +1,7 @@
 package com.hms.apitests.security;
 
 import static io.restassured.RestAssured.given;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.notNullValue;
@@ -210,6 +211,59 @@ class AuthorizationAbuseIT extends RequiresRunningStack {
                 // is the action succeeding. 400 is only acceptable if authorization ran first,
                 // which the 403 rows above already establish for these roles.
                 org.hamcrest.Matchers.is(400)));
+    }
+
+    @Test
+    @DisplayName("a chart belongs to the clinicians looking after the patient, not to the role")
+    void theCareTeamNarrowsWhatARoleCanRead() {
+        // Three assertions in one test on purpose: separately, none of them demonstrates anything.
+        // The rows above prove a lab technician cannot reach an encounter -- and after this change
+        // they would pass for a second reason as well, so they stopped being evidence that the role
+        // gate works. What is evidence is the same role, twice, with different answers.
+        Fixtures.Clinician treating = Fixtures.clinician();
+        Fixtures.Patient patient = Fixtures.registerPatient(Api.RECEPTIONIST, "CareTeam");
+
+        String encounterId = given().spec(Api.withToken(treating.accessToken()))
+                .body(Map.of("patientId", patient.id(), "patientMrn", patient.mrn(),
+                        "clinicianId", treating.id(), "departmentCode", treating.departmentCode()))
+                .when().post("/encounters")
+                .then().statusCode(201)
+                .extract().jsonPath().getString("id");
+
+        // 1. The clinician looking after this patient reads their chart.
+        given().spec(Api.withToken(treating.accessToken()))
+                .when().get("/encounters/{id}", encounterId)
+                .then().statusCode(200);
+
+        // 2. A doctor holding the identical role, with nothing to do with this patient, does not --
+        //    and is told what to do instead, rather than being given the platform's stock refusal.
+        String refusal = given().spec(Api.as(Api.DOCTOR))
+                .when().get("/encounters/{id}", encounterId)
+                .then().statusCode(403)
+                .extract().jsonPath().getString("detail");
+        assertThat(refusal).contains("care team").contains("record a reason");
+
+        // 3. ...and does once they have said why. The reason is on the care team; the audit trail
+        //    beside it carries the action and the encounter and no clinical words at all.
+        given().spec(Api.as(Api.DOCTOR))
+                .body(Map.of("reason", "Asked to review this patient overnight while on call."))
+                .when().post("/encounters/{id}/care-team", encounterId)
+                .then().statusCode(201);
+        given().spec(Api.as(Api.DOCTOR))
+                .when().get("/encounters/{id}", encounterId)
+                .then().statusCode(200);
+
+        // The reason is on the care-team row and nowhere else, which is asserted where it can be:
+        // scheduling-service's CareTeamIntegrationTest reads the emitted audit payload directly.
+        // Not here, and the reason is worth writing down rather than discovering -- an audit event
+        // crosses to identity-service over the event topic, and neither this stack nor CI runs a
+        // broker, so /admin/audit never sees a scheduling event at all. A doesNotContain against
+        // that endpoint would pass on an empty list and prove nothing, which is worse than no
+        // assertion.
+        given().spec(Api.as(Api.DOCTOR))
+                .when().get("/encounters/{id}/care-team", encounterId)
+                .then().statusCode(200)
+                .body("find { it.memberRole == 'BREAK_GLASS' }.reason", containsString("on call"));
     }
 
     @ParameterizedTest(name = "{0} must not download the audit trail")

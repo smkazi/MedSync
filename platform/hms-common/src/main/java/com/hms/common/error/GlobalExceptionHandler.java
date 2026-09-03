@@ -48,6 +48,15 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.BAD_REQUEST, "Bad Request", ex.getMessage(), req);
     }
 
+    /**
+     * Our own 403, with its message kept. See {@link ForbiddenException} for when that is right and
+     * when the flattened one below is.
+     */
+    @ExceptionHandler(ForbiddenException.class)
+    public ResponseEntity<ApiError> forbiddenWithReason(ForbiddenException ex, HttpServletRequest req) {
+        return build(HttpStatus.FORBIDDEN, "Forbidden", ex.getMessage(), req);
+    }
+
     @ExceptionHandler(AccessDeniedException.class)
     public ResponseEntity<ApiError> forbidden(AccessDeniedException ex, HttpServletRequest req) {
         return build(HttpStatus.FORBIDDEN, "Forbidden", "You do not have permission to perform this action", req);

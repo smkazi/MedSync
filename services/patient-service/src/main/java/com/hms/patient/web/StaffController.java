@@ -55,6 +55,22 @@ public class StaffController {
         return service.getById(id);
     }
 
+    /**
+     * The staff record a login belongs to, or 404.
+     *
+     * <p>Narrow on purpose, and it exists for one caller: scheduling-service, which needs to
+     * establish that a {@code clinicianId} arriving in a request body is somebody who actually
+     * works here before it writes that id onto an encounter and lets access to the chart turn on
+     * it. Reachable by anybody with {@code CLINICAL_READ} rather than a service role, because it
+     * is called with the clinician's own token and returns exactly what {@code GET /staff} would
+     * already return about the same person.
+     */
+    @GetMapping("/staff/by-user/{userId}")
+    @PreAuthorize(Roles.CLINICAL_READ)
+    public PatientDtos.StaffResponse getByUser(@PathVariable UUID userId) {
+        return service.getByUserId(userId);
+    }
+
     @PatchMapping("/staff/{id}")
     @PreAuthorize(Roles.ADMIN_ONLY)
     public PatientDtos.StaffResponse update(@PathVariable UUID id,

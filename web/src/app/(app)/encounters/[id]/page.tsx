@@ -3,6 +3,7 @@ import { load } from "@/lib/load";
 import { currentUser, hasRole } from "@/lib/session";
 import type {
   CarePlan,
+  CareTeamMember,
   CatalogEntry,
   Encounter,
   FormularyEntry,
@@ -17,7 +18,14 @@ import { RecordForm } from "@/components/RecordForm";
 import { orderTests } from "../../laboratory/actions";
 import { prescribe } from "../../pharmacy/actions";
 import { PRIORITIES } from "../../laboratory/state";
-import { applyOrderSet, closeEncounter, recordVitals, signNote, startCarePlan } from "./actions";
+import {
+  applyOrderSet,
+  closeEncounter,
+  joinCareTeam,
+  recordVitals,
+  signNote,
+  startCarePlan,
+} from "./actions";
 import { CarePlanPanel } from "./CarePlanPanel";
 import { DiagnosisForm } from "./DiagnosisForm";
 import { NoteEditor } from "./NoteEditor";
@@ -30,6 +38,14 @@ import {
   formatDateTime,
   statusTone,
 } from "@/components/ui";
+
+/** How a care-team row reads on the screen. The enum names are for the database, not for people. */
+const CARE_TEAM_LABELS: Record<CareTeamMember["memberRole"], string> = {
+  TREATING_CLINICIAN: "Treating clinician",
+  OPENED_THE_ENCOUNTER: "Opened this visit",
+  PROVIDED_CARE: "Recorded care on this visit",
+  BREAK_GLASS: "Opened with a recorded reason",
+};
 
 /**
  * The charting screen.
@@ -54,10 +70,47 @@ export default async function EncounterPage({
   // all. This keeps the chrome, shows the service's own wording, and a mistyped id says not found.
   const chart = await load<Encounter>(`/encounters/${id}`);
   if (!chart.data) {
+    // A clinician who is not on this encounter's care team lands here, and the platform's refusal
+    // says what to do about it. So the screen offers the door rather than only the wall: without
+    // this, the control reads as an outage and the clinician telephones somebody instead of using
+    // the mechanism built for them.
+    const notOnTheTeam =
+      hasRole(user, "DOCTOR", "NURSE") && (chart.error ?? "").includes("care team");
     return (
       <div className="space-y-6">
         <h1 className="text-xl font-semibold tracking-tight">Encounter</h1>
         <ErrorNote>{chart.error ?? "This chart could not be loaded."}</ErrorNote>
+        {notOnTheTeam && (
+          <Card title="Open this chart">
+            <form action={joinCareTeam} className="space-y-3">
+              <input type="hidden" name="encounterId" value={id} />
+              <div>
+                <label htmlFor="reason" className="block text-sm font-medium">
+                  Why do you need it?
+                </label>
+                <textarea
+                  id="reason"
+                  name="reason"
+                  rows={3}
+                  minLength={20}
+                  required
+                  placeholder="Covering the evening ward round while the treating clinician is in theatre."
+                  className="mt-1 w-full rounded-md border border-line bg-surface-raised px-3 py-2 text-sm"
+                />
+              </div>
+              <p className="text-xs text-ink-muted">
+                This is recorded against your name, kept on the patient&apos;s record, and appears
+                on the audit report. It lasts one shift.
+              </p>
+              <button
+                type="submit"
+                className="rounded-md bg-accent px-3 py-2 text-sm font-medium text-white hover:opacity-90"
+              >
+                Record a reason and open it
+              </button>
+            </form>
+          </Card>
+        )}
       </div>
     );
   }
@@ -94,6 +147,10 @@ export default async function EncounterPage({
         { data: null, error: null },
         { data: null, error: null },
       ];
+  // Who is looking after this patient. Loaded separately rather than folded into the block above
+  // because it is readable by anybody with CHART_READ who got this far — reaching this page at all
+  // means the care team let them in, so showing them who else is on it costs nothing.
+  const careTeam = await load<CareTeamMember[]>(`/encounters/${id}/care-team`);
   const latestVitals = encounter.vitals.at(0) ?? null;
   const noteText = current
     ? [current.subjective, current.objective, current.assessment, current.plan]
@@ -668,6 +725,42 @@ export default async function EncounterPage({
                 </button>
               </form>
             )}
+          </Card>
+
+          <Card title="Who is looking after this patient">
+            {(careTeam.data ?? []).length === 0 ? (
+              <Empty>{careTeam.error ?? "Nobody is recorded on this encounter's care team."}</Empty>
+            ) : (
+              <ul className="space-y-2 text-sm">
+                {(careTeam.data ?? []).map((member) => (
+                  <li key={member.id} className="border-b border-line pb-2 last:border-0">
+                    <div className="flex items-center justify-between gap-2">
+                      <Badge tone={member.memberRole === "BREAK_GLASS" ? "warn" : "neutral"}>
+                        {CARE_TEAM_LABELS[member.memberRole]}
+                      </Badge>
+                      <span className="numeric text-xs text-ink-muted">
+                        {formatDateTime(member.joinedAt)}
+                      </span>
+                    </div>
+                    {member.reason && (
+                      <p className="mt-1 text-xs text-ink-muted">&ldquo;{member.reason}&rdquo;</p>
+                    )}
+                    {member.expiresAt && (
+                      <p className="mt-1 text-xs text-ink-muted">
+                        {member.current
+                          ? `Lapses ${formatDateTime(member.expiresAt)}`
+                          : `Lapsed ${formatDateTime(member.expiresAt)}`}
+                      </p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="mt-3 border-t border-line pt-2 text-xs text-ink-muted">
+              A chart belongs to the clinicians looking after the patient. Everybody here either
+              treated them, opened this visit, recorded something on it, or said why they needed it
+              — and the last of those is on the audit report.
+            </p>
           </Card>
 
           {mayChart && (

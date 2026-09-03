@@ -11,19 +11,23 @@ import { api, ApiError } from "@/lib/api";
  * <p>An {@link ApiError} keeps its `detail`, because the services write those for people — "Casualty
  * (GF-CAS) cannot take a booking" is worth showing verbatim. Anything else is reported as a failure
  * without inventing detail it does not have.
+ *
+ * <p>That now includes a 403. This used to substitute "Your role does not have access to this."
+ * for whatever the platform said, on the reasonable grounds that narrating the authorisation model
+ * to somebody it has just refused is a poor idea — but the decision was being made in the wrong
+ * place. The platform already draws that line itself: a `@PreAuthorize` refusal is flattened
+ * server-side to a sentence that says nothing, while a refusal our own code raises deliberately
+ * keeps its message, because some controls exist precisely so the caller can be told what to do
+ * instead. A clinician who is not on a patient's care team may open the chart by recording why, and
+ * replacing that with "your role does not have access" turned a working control into an apparent
+ * outage. Passing the detail through means one place decides, and it is the place that knows.
  */
 export async function load<T>(path: string): Promise<{ data: T | null; error: string | null }> {
   try {
     return { data: await api<T>(path), error: null };
   } catch (caught) {
     if (caught instanceof ApiError) {
-      return {
-        data: null,
-        error:
-          caught.status === 403
-            ? "Your role does not have access to this."
-            : caught.detail,
-      };
+      return { data: null, error: caught.detail };
     }
     return { data: null, error: caught instanceof Error ? caught.message : "Request failed" };
   }

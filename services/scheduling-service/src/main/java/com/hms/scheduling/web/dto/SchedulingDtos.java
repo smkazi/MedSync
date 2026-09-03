@@ -268,6 +268,27 @@ public final class SchedulingDtos {
                                    int diagnosisCount) {
     }
 
+    /**
+     * Somebody on an encounter's care team.
+     *
+     * <p>The reason is here, and it is the only place clinical free text about a break-glass lives:
+     * the audit record beside it carries the action and the encounter and no words, because audit
+     * detail must never carry clinical text. Whoever reviews a break-glass reads both.
+     */
+    public record CareTeamMemberResponse(UUID id, UUID userId,
+                                         com.hms.scheduling.domain.CareTeamMember.MemberRole memberRole,
+                                         String reason, Instant joinedAt, Instant expiresAt,
+                                         boolean current) {
+    }
+
+    /** Break-glass. One field, and it is the whole point of the endpoint. */
+    public record BreakGlassRequest(
+            @NotBlank
+            @Size(min = 20, max = 1000,
+                  message = "Say why you need this chart, in a sentence — at least 20 characters")
+            String reason) {
+    }
+
     public record MessageResponse(String message) {
     }
 }

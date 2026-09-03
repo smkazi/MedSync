@@ -144,7 +144,7 @@ test.describe("the menu is role-aware", () => {
     );
     // And the route itself still refuses, which is the actual control.
     await page.goto("/admin/users");
-    await expect(page.getByRole("main")).toContainText(/does not have access|Forbidden/i);
+    await expect(page.getByRole("main")).toContainText(/do not have permission to perform this action/i);
   });
 });
 

@@ -475,6 +475,18 @@ export type AdminUser = {
 
 export type RoleSummary = { code: string; description: string };
 
+/** Somebody on an encounter's care team, and how they came to be on it. */
+export type CareTeamMember = {
+  id: string;
+  userId: string;
+  memberRole: "TREATING_CLINICIAN" | "OPENED_THE_ENCOUNTER" | "PROVIDED_CARE" | "BREAK_GLASS";
+  /** Set only for a break-glass membership, which is the only one that needs explaining. */
+  reason: string | null;
+  joinedAt: string;
+  expiresAt: string | null;
+  current: boolean;
+};
+
 export type AuditEntry = {
   id: string;
   service: string;

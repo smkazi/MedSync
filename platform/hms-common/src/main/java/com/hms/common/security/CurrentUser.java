@@ -1,9 +1,13 @@
 package com.hms.common.security;
 
 import com.hms.common.error.BadRequestException;
+import java.util.Arrays;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
@@ -59,6 +63,26 @@ public final class CurrentUser {
 
     public static String usernameOrSystem() {
         return username().orElse("system");
+    }
+
+    /**
+     * Whether the caller holds any of these roles.
+     *
+     * <p>For the handful of decisions a {@code @PreAuthorize} expression cannot make, because they
+     * depend on data the method has not loaded yet — a care-team check that applies to clinicians
+     * and not to administrators, say. Reads the granted authorities rather than the {@code roles}
+     * claim, so it agrees with what the SpEL on the method next to it decided.
+     */
+    public static boolean hasAnyRole(String... roles) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null) {
+            return false;
+        }
+        Set<String> wanted = Arrays.stream(roles).map(role -> "ROLE_" + role)
+                .collect(Collectors.toUnmodifiableSet());
+        return auth.getAuthorities().stream()
+                .map(GrantedAuthority::getAuthority)
+                .anyMatch(wanted::contains);
     }
 
     private static Optional<Jwt> jwt() {

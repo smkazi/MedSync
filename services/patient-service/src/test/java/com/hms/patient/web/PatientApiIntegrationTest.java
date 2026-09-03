@@ -597,6 +597,41 @@ class PatientApiIntegrationTest {
     }
 
     @Test
+    @DisplayName("a login resolves to the member of staff it belongs to, and only while they work here")
+    void staffAreFoundByTheirLogin() throws Exception {
+        UUID userId = UUID.randomUUID();
+        String employeeNo = "LOGIN" + Long.toString(System.nanoTime(), 36)
+                .toUpperCase(java.util.Locale.ROOT).substring(0, 6);
+        String created = mockMvc.perform(post("/staff").with(as("ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "employeeNo", employeeNo, "fullName", "Linked Person " + employeeNo,
+                                "designation", "Consultant", "userId", userId.toString()))))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        String staffId = objectMapper.readTree(created).get("id").asString();
+
+        // The one mapping between a login and a person on this platform, and since the care-team
+        // narrowing it is what turns a UUID in a request body into somebody who works here.
+        mockMvc.perform(get("/staff/by-user/" + userId).with(as("DOCTOR")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.employeeNo").value(employeeNo))
+                .andExpect(jsonPath("$.userId").value(userId.toString()));
+
+        mockMvc.perform(get("/staff/by-user/" + UUID.randomUUID()).with(as("DOCTOR")))
+                .andExpect(status().isNotFound());
+
+        // Somebody who has left is a miss, not a hit: a login that still resolves to a former
+        // colleague is exactly the case the caller is trying to refuse.
+        mockMvc.perform(patch("/staff/" + staffId).with(as("ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("active", false))))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/staff/by-user/" + userId).with(as("DOCTOR")))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
     @DisplayName("staff are found by employee number and specialty, not only by name")
     void staffSearchCoversWhatTheScreenPromises() throws Exception {
         // The search screen's placeholder has always said "name, employee number, specialty" and

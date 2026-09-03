@@ -65,6 +65,26 @@ public class StaffService {
         return PatientMapper.toResponse(require(id));
     }
 
+    /**
+     * The staff record a login belongs to.
+     *
+     * <p>Exists so another service can answer "is this user id a member of staff, and are they
+     * still employed here" without pulling the whole directory. {@code staff.user_id} is the only
+     * mapping between a login and a person on this platform, which makes this the one lookup that
+     * can turn a UUID in a request body into somebody who works here.
+     *
+     * <p>An inactive staff member is a miss rather than a hit. A login that still resolves to
+     * somebody who has left is exactly the case the caller is trying to refuse.
+     */
+    @Transactional(readOnly = true)
+    public PatientDtos.StaffResponse getByUserId(UUID userId) {
+        return staff.findByUserId(userId)
+                .filter(Staff::isActive)
+                .map(PatientMapper::toResponse)
+                .orElseThrow(() -> new NotFoundException(
+                        "No active member of staff is linked to user " + userId));
+    }
+
     @Transactional(readOnly = true)
     public Staff require(UUID id) {
         return staff.findDetailById(id).orElseThrow(() -> NotFoundException.of("Staff", id));

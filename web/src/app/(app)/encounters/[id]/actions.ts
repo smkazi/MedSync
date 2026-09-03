@@ -191,3 +191,20 @@ function finish(id: string, problem: string | null, done: string | null): never 
   if (done) params.set("done", done);
   redirect(`/encounters/${id}?${params}`);
 }
+
+/**
+ * Break-glass: join this encounter's care team by saying why.
+ *
+ * <p>A form rather than a button, and a sentence rather than a tick, because the reason is read by
+ * whoever reviews these. The platform enforces the floor and its message is what the screen shows.
+ */
+export async function joinCareTeam(form: FormData): Promise<void> {
+  const id = String(form.get("encounterId") ?? "");
+  const reason = String(form.get("reason") ?? "");
+  const result = await submit(`/encounters/${id}/care-team`, "POST", { reason });
+  finish(
+    id,
+    result.ok ? null : result.error,
+    result.ok ? "You are on this encounter's care team. This is recorded and reviewed." : null,
+  );
+}

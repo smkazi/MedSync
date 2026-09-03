@@ -2,6 +2,7 @@ package com.hms.scheduling.service;
 
 import com.hms.scheduling.client.RoomDirectoryClient;
 import com.hms.scheduling.domain.Appointment;
+import com.hms.scheduling.domain.CareTeamMember;
 import com.hms.scheduling.domain.ClinicalNote;
 import com.hms.scheduling.domain.ClinicianSchedule;
 import com.hms.scheduling.domain.Diagnosis;
@@ -118,5 +119,12 @@ public final class SchedulingMapper {
         return new SchedulingDtos.EncounterSummary(encounter.getId(), encounter.getPatientId(),
                 encounter.getPatientMrn(), encounter.getEncounterType(), encounter.getStartedAt(),
                 encounter.getStatus(), encounter.getNotes().size(), diagnosisCount);
+    }
+
+    /** A care-team member, with whether the membership is still good rather than just its expiry. */
+    static SchedulingDtos.CareTeamMemberResponse toResponse(CareTeamMember member) {
+        return new SchedulingDtos.CareTeamMemberResponse(member.getId(), member.getUserId(),
+                member.getMemberRole(), member.getReason(), member.getJoinedAt(),
+                member.getExpiresAt(), member.isCurrent());
     }
 }

@@ -346,6 +346,17 @@ public final class Roles {
      */
     public static final String WAYFINDING = "isAuthenticated()";
 
+    /**
+     * Who may join an encounter's care team by recording a reason — break-glass.
+     *
+     * <p>No new role, deliberately. Obtaining cover for somebody else's patient is part of a
+     * clinician's job, not a job of its own, and a "break-glass" role would be one more thing to
+     * grant, forget to revoke, and find in an audit two years later. The same two roles the
+     * care-team narrowing applies to, which is the point: administrators and the service lines are
+     * not narrowed, so they have no glass to break.
+     */
+    public static final String CARE_TEAM_JOIN = "hasAnyRole('DOCTOR','NURSE')";
+
     private Roles() {
     }
 }

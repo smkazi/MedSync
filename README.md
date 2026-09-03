@@ -10,9 +10,9 @@ haematology analyzer over its own wire protocol and released by a pathologist.
 
 > **Status:** the clinical core, the laboratory (including analyzer integration), the AI service
 > and the web UI are implemented and verified end to end against a real stack, and so are the
-> containerisation, TLS, security-testing and performance-testing layers. **1,147 tests pass** —
-> 648 Java unit and integration, 91 Python, 47 web unit, 232 black-box API and security abuse cases,
-> and 129 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
+> containerisation, TLS, security-testing and performance-testing layers. **1,158 tests pass** —
+> 657 Java unit and integration, 91 Python, 47 web unit, 233 black-box API and security abuse cases,
+> and 130 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
 > [Security](#security); what is left is in the [Roadmap](#roadmap).
 
 ---
@@ -1104,6 +1104,51 @@ to a patient record on its own.
   carries operator-supplied text and a spreadsheet executes those. Quoting does not help: the
   quotes are CSV syntax and are stripped before the spreadsheet reads the first character. The
   export is capped, and says so on its last line when the cap bites.
+- <a id="care-team"></a>**A chart belongs to the clinicians looking after the patient.** Until
+  S10e, `CHART_READ` was the whole answer — `hasAnyRole('ADMIN','DOCTOR','NURSE','PATHOLOGIST')` —
+  so every doctor and every nurse could read every encounter on the platform. A role gate cannot
+  express "is this your patient", so nothing did, and a break-glass button bolted onto that would
+  have granted access the clinician already had. The narrowing and the override are the same
+  mechanism seen from two sides and they shipped together.
+
+  Membership in `scheduling.encounter_care_team`, not a derived rule, because the obvious derived
+  rule is a trap: `encounters.clinician_id` is the doctor, a nurse appears in it nowhere, and
+  "you are the encounter's clinician" would have locked every nurse out of every chart. So:
+
+  | How you get on a chart | Who |
+  | --- | --- |
+  | Enrolled when the encounter opens | its clinician, and whoever opened it |
+  | Enrolled by recording something on it | obs, a note, a diagnosis, an order set, a care plan |
+  | Break-glass — a reason, at least a sentence of it | anybody else, for one shift |
+
+  **Reading is narrowed; providing care enrols you**, and that asymmetry is the design. A symmetric
+  rule would have every nurse recording a reason for every patient they were sent to obs, and a
+  control everybody trips over every hour is one everybody learns to click through. It also targets
+  the risk that exists: "who has been looking at my record" is a question about browsing. The other
+  direction — falsifying a clinical record to gain a read — is a graver act than the read it buys,
+  permanently attributable, and exactly what the audit trail is for.
+
+  The refusal is **403 with the reason**, the deliberate opposite of the portal's 404: there the
+  answer "not yours" would confirm a guessed patient id is real, while here the caller is a
+  clinician who can already list patients. Which refusals may explain themselves is decided once,
+  server-side — a `@PreAuthorize` failure is still flattened to a sentence that says nothing.
+
+  The break-glass reason is stored on the care-team row, in the clinical schema, and **never** in
+  the audit record's `detail`: the platform's own rule is that audit detail carries no clinical free
+  text, and "query sepsis, unresponsive" is a clinical observation. The audit row carries the
+  action, the encounter and the twelve-hour term.
+
+  **Not narrowed, deliberately:** administrators (narrowing the account that repairs the platform is
+  a different decision), the service lines (reporting a specimen, dispensing a drug and running a
+  blood count are inherently cross-patient work a care-relationship model does not describe), and
+  the *index* of a patient's visits — dates, types and counts, no clinical content. Hiding that four
+  earlier visits exist is worse medicine than showing it, and it would break break-glass itself,
+  which depends on somebody being able to see there is something to ask for.
+
+  The column this turns on is now validated. `encounters.clinician_id` is a login, checked against
+  `staff.user_id` — the only mapping between an account and a person here — before it is written,
+  and the client **fails closed**: if the staff directory is unreachable the encounter is refused,
+  because an unverified clinician must not reach a record that access depends on.
 - **Accounting of disclosures** — every release of a record is written at the moment it leaves,
   never reconstructed from logs, and both the staff register and the patient's own view of it can
   be asked for a period. The patient's view deliberately omits the member of staff who released
@@ -1162,12 +1207,12 @@ make help          # everything else
 Or directly:
 
 ```bash
-mvn -q verify                                     # 648 Java unit and integration tests
+mvn -q verify                                     # 657 Java unit and integration tests
 cd services/ai-service && uv run pytest -q        # 91 Python tests
 cd web && npm run lint && npm run typecheck       # web static checks
 cd web && npm test                                # 47 web unit tests
-cd web && npx playwright test                     # 129 browser tests, no skips
-mvn -Pautomation -pl tests/api verify             # 232 API and security abuse cases
+cd web && npx playwright test                     # 130 browser tests, no skips
+mvn -Pautomation -pl tests/api verify             # 233 API and security abuse cases
 ```
 
 | Layer | What runs | Where |
@@ -1515,6 +1560,30 @@ Worth writing down, because it is the argument for having built them:
   81 of their own actions **plus 16 credential-stuffing attempts against names that do not exist**.
   An audit report that looks authoritative while answering a different question is worse than one
   that is missing.
+- **The web app was overruling a decision the platform had already made.** `load()` replaced every
+  403's message with "Your role does not have access to this." — reasonable, on the grounds that
+  narrating the authorisation model to somebody it has just refused is a poor idea, and wrong,
+  because the platform draws that line itself: a `@PreAuthorize` refusal is flattened server-side
+  to a sentence that says nothing, while a refusal our own code raises deliberately keeps its
+  message. The care-team refusal exists *precisely* to tell a clinician they may open the chart by
+  recording why, and the substitution turned a working control into an apparent outage — the
+  clinician telephones somebody instead of using the mechanism built for them. Found by the browser
+  test written for break-glass, which saw the wall and not the door.
+- **A fixture that only ever climbed ran out of building.** `FacilityApiIntegrationTest` picked its
+  floor level as the highest in use plus one, which cannot go on: a level is capped at 200 because a
+  building has floors rather than an unbounded sequence, and `uq_floor_level` counts retired floors,
+  so nothing ever gives one back. After enough runs against the same database the fixture asked for
+  201, the platform correctly refused it, and a validation rule working exactly as intended was
+  reported as two broken tests. It looks for a gap now. Third of this shape in as many slices — the
+  staff-search fixture and the near-midnight slot fixtures were the others — and the common cause is
+  a suite that shares a long-lived database with itself.
+- **My own first assertion about the audit trail was vacuous.** The API suite checked that a
+  break-glass reason does not appear in `/admin/audit` and passed — against an empty list. An audit
+  event crosses to identity-service over the event topic, and neither the local stack nor CI runs a
+  broker, so a scheduling event never reaches that table at all; identity's own security events are
+  persisted by a sink it registers for itself, which is why sign-ins show up and this did not. The
+  property is now asserted on the emitted payload, in the service that produces it, where there is
+  something to assert against.
 - **The dependency gate earned its keep, and its output was unreadable from here.** Tomcat
   11.0.24 — the version Spring Boot 4.0.8 manages — picked up three CRITICAL advisories, all
   authorization bypasses (CVE-2026-65182, CVE-2026-68525, CVE-2026-65905), and the scan went red
@@ -1591,6 +1660,15 @@ SAST/DAST tooling, and performance profiles. Dependency scanning covers Python (
   column, field, flag or notification — so there is no critical-range editor to build yet.
 - **Further clinical modules** — imaging/PACS, and an HL7 v2 interface engine. Both are named
   gaps rather than half-built modules, which was the choice made deliberately.
+- **The care-team narrowing covers the encounter chart, and clinicians.** Laboratory orders,
+  prescriptions, admissions and the casualty board are still role-gated, as are administrators. The
+  encounter chart is where the narrowing bites hardest and where the deciding column is local to the
+  service that owns it; extending it means either a shared care-relationship service or the same
+  table in four more schemas, and that is a decision rather than a chore.
+- **A nurse has no ward assignment to be read from.** Nurses join a chart by providing care on it,
+  which works and is honest, but the natural rule — "you are on this ward tonight" — needs a shift
+  or assignment model the platform does not have. With one, the ward round would enrol nobody by
+  hand and break-glass would be rarer still.
 - **One runtime database role, not nine.** `scripts/db-roles.sql` takes DDL and the superuser out
   of the request path, which is the larger half, and stops there: all nine services share `hms_app`,
   so a SQL-injection hole in one still reaches another's tables. Per-service roles need nine

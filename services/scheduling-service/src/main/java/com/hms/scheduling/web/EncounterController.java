@@ -3,6 +3,7 @@ package com.hms.scheduling.web;
 import com.hms.common.security.Roles;
 import com.hms.scheduling.service.EncounterService;
 import com.hms.scheduling.web.dto.SchedulingDtos;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import java.util.List;
 import java.util.UUID;
@@ -30,8 +31,9 @@ public class EncounterController {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     @PreAuthorize(Roles.CLINICAL_WRITE)
-    public SchedulingDtos.EncounterResponse open(@Valid @RequestBody SchedulingDtos.OpenEncounterRequest request) {
-        return service.open(request);
+    public SchedulingDtos.EncounterResponse open(@Valid @RequestBody SchedulingDtos.OpenEncounterRequest request,
+                                                 HttpServletRequest httpRequest) {
+        return service.open(request, bearerToken(httpRequest));
     }
 
     @GetMapping("/{id}")
@@ -92,5 +94,35 @@ public class EncounterController {
     @PreAuthorize(Roles.CLINICAL_WRITE)
     public SchedulingDtos.EncounterResponse close(@PathVariable UUID id) {
         return service.close(id);
+    }
+
+    /** Who is looking after this encounter, and how each of them came to be. */
+    @GetMapping("/{id}/care-team")
+    @PreAuthorize(Roles.CHART_READ)
+    public List<SchedulingDtos.CareTeamMemberResponse> careTeam(@PathVariable UUID id) {
+        return service.careTeam(id);
+    }
+
+    /**
+     * Break-glass: join this encounter's care team by recording why.
+     *
+     * <p>Gated by {@link Roles#CARE_TEAM_JOIN} rather than {@code CHART_READ}, and the difference
+     * matters: administrators and the service lines are not narrowed, so they have no glass to
+     * break and this endpoint is not theirs.
+     */
+    @PostMapping("/{id}/care-team")
+    @ResponseStatus(HttpStatus.CREATED)
+    @PreAuthorize(Roles.CARE_TEAM_JOIN)
+    public SchedulingDtos.CareTeamMemberResponse breakGlass(
+            @PathVariable UUID id, @Valid @RequestBody SchedulingDtos.BreakGlassRequest request) {
+        return service.breakGlass(id, request.reason());
+    }
+
+    private static String bearerToken(HttpServletRequest request) {
+        String header = request.getHeader("Authorization");
+        if (header == null || !header.startsWith("Bearer ")) {
+            return null;
+        }
+        return header.substring("Bearer ".length()).trim();
     }
 }

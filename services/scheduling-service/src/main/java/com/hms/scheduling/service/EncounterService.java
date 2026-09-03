@@ -9,6 +9,7 @@ import com.hms.common.events.EventPublisher;
 import com.hms.common.events.Topics;
 import com.hms.common.security.CurrentUser;
 import com.hms.common.web.CorrelationId;
+import com.hms.scheduling.client.StaffDirectoryClient;
 import com.hms.scheduling.domain.Appointment;
 import com.hms.scheduling.domain.ClinicalNote;
 import com.hms.scheduling.domain.Diagnosis;
@@ -46,11 +47,14 @@ public class EncounterService {
     private final EventPublisher events;
     private final AuditService audit;
     private final EscalationPolicyService escalations;
+    private final CareTeamGuard careTeam;
+    private final StaffDirectoryClient staffDirectory;
 
     public EncounterService(EncounterRepository encounters, ClinicalNoteRepository notes,
                             VitalsRepository vitals, DiagnosisRepository diagnoses,
                             AppointmentRepository appointments, EventPublisher events,
-                            AuditService audit, EscalationPolicyService escalations) {
+                            AuditService audit, EscalationPolicyService escalations,
+                            CareTeamGuard careTeam, StaffDirectoryClient staffDirectory) {
         this.encounters = encounters;
         this.notes = notes;
         this.vitals = vitals;
@@ -59,6 +63,8 @@ public class EncounterService {
         this.events = events;
         this.audit = audit;
         this.escalations = escalations;
+        this.careTeam = careTeam;
+        this.staffDirectory = staffDirectory;
     }
 
     /**
@@ -68,7 +74,8 @@ public class EncounterService {
      * booked visit produce the same shape of record.
      */
     @Transactional
-    public SchedulingDtos.EncounterResponse open(SchedulingDtos.OpenEncounterRequest request) {
+    public SchedulingDtos.EncounterResponse open(SchedulingDtos.OpenEncounterRequest request,
+                                                 String bearerToken) {
         Encounter encounter;
         if (request.appointmentId() != null) {
             Appointment appointment = appointments.findById(request.appointmentId())
@@ -94,7 +101,18 @@ public class EncounterService {
                     request.clinicianId(), request.departmentCode().trim().toUpperCase(Locale.ROOT),
                     request.typeOrDefault());
         }
+        // The clinician id is checked against the staff directory before it is written, and this
+        // is where it stops being a label. Since the narrowing, that column decides who may read
+        // the chart, and an id nobody validated would be a care relationship the platform invented.
+        // Fails closed: if the directory is unreachable the encounter is refused, because an
+        // unverified clinician must not reach a record that access turns on.
+        staffDirectory.require(encounter.getClinicianId(), bearerToken);
+
         encounters.save(encounter);
+        // The care team, before anything else can read the record. The encounter's own clinician
+        // and whoever opened it: this is the half that makes the narrowing shippable rather than an
+        // outage, because it means the treating clinician's day does not change at all.
+        careTeam.enrolOnOpening(encounter.getId(), encounter.getClinicianId());
         audit.record("ENCOUNTER_OPENED", "Encounter", encounter.getId(),
                 "%s (%s)".formatted(encounter.getPatientMrn(), encounter.getEncounterType()));
         publish("encounter.opened", encounter);
@@ -103,6 +121,7 @@ public class EncounterService {
 
     @Transactional(readOnly = true)
     public SchedulingDtos.EncounterResponse detail(UUID id) {
+        careTeam.requireChartAccess(id);
         Encounter encounter = encounters.findDetailById(id)
                 .orElseThrow(() -> NotFoundException.of("Encounter", id));
         return SchedulingMapper.toResponse(encounter,
@@ -111,6 +130,16 @@ public class EncounterService {
                 escalations.byBand());
     }
 
+    /**
+     * The patient's encounters, as an index: date, type, status and how many notes and diagnoses
+     * each has. Not narrowed by the care team, and that is a decision rather than an oversight.
+     *
+     * <p>Minimum necessary applies to the record; this is the catalogue. Hiding from a treating
+     * clinician that four earlier visits exist is worse medicine than showing that they do — and it
+     * would break break-glass itself, which depends on somebody being able to see that there is
+     * something to ask for. Nothing clinical is here: no assessment, no note, no vital sign. Opening
+     * any one of these still goes through {@link #detail}, which is narrowed.
+     */
     @Transactional(readOnly = true)
     public List<SchedulingDtos.EncounterSummary> forPatient(UUID patientId) {
         return encounters.findByPatientIdOrderByStartedAtDesc(patientId).stream()
@@ -183,7 +212,7 @@ public class EncounterService {
 
     @Transactional(readOnly = true)
     public List<SchedulingDtos.NoteResponse> noteHistory(UUID encounterId) {
-        requireEncounter(encounterId);
+        requireEncounterToRead(encounterId);
         return notes.findByEncounterIdOrderByRevisionAsc(encounterId).stream()
                 .map(SchedulingMapper::toResponse)
                 .toList();
@@ -257,7 +286,38 @@ public class EncounterService {
         return detail(encounterId);
     }
 
+    /** Who is on this encounter's team, and how each of them came to be. */
+    @Transactional(readOnly = true)
+    public List<SchedulingDtos.CareTeamMemberResponse> careTeam(UUID encounterId) {
+        careTeam.requireChartAccess(encounterId);
+        return careTeam.team(encounterId).stream().map(SchedulingMapper::toResponse).toList();
+    }
+
+    /** Break-glass. The reason is validated and recorded by the guard, which owns that decision. */
+    @Transactional
+    public SchedulingDtos.CareTeamMemberResponse breakGlass(UUID encounterId, String reason) {
+        return SchedulingMapper.toResponse(careTeam.breakGlass(encounterId, reason));
+    }
+
+    /**
+     * The choke point for every <em>write</em> on one encounter. Loads it, and records that the
+     * caller took part — see {@code CareTeamGuard} for why providing care enrols you rather than
+     * being refused. The role gate on the endpoint is unchanged and is still what decides whether
+     * the call may happen at all.
+     *
+     * <p>Here rather than repeated at seven call sites, for the reason every guard belongs at a
+     * choke point: a method added later gets it without anybody remembering to.
+     */
     private Encounter requireEncounter(UUID id) {
+        Encounter encounter = encounters.findById(id)
+                .orElseThrow(() -> NotFoundException.of("Encounter", id));
+        careTeam.enrolOnContact(id);
+        return encounter;
+    }
+
+    /** The same lookup for a read, where membership is required rather than recorded. */
+    private Encounter requireEncounterToRead(UUID id) {
+        careTeam.requireChartAccess(id);
         return encounters.findById(id).orElseThrow(() -> NotFoundException.of("Encounter", id));
     }
 

@@ -199,8 +199,8 @@ test.describe("the casualty board", () => {
     // complaint and how sick they are is a chart in table form, and reception books and registers.
     await signIn(page, "reception");
     await page.goto("/casualty");
-    await expect(page.getByRole("main")).toContainText(/does not have access|Forbidden/i);
+    await expect(page.getByRole("main")).toContainText(/do not have permission to perform this action/i);
     await page.goto("/admissions");
-    await expect(page.getByRole("main")).toContainText(/does not have access|Forbidden/i);
+    await expect(page.getByRole("main")).toContainText(/do not have permission to perform this action/i);
   });
 });
