@@ -18,6 +18,7 @@ import com.hms.interop.repo.DisclosureRepository;
 import com.hms.interop.web.dto.InteropDtos;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -58,6 +59,7 @@ public class ExchangeService {
     private final AbdmGateway gateway;
     private final AuditService audit;
     private final ObjectMapper objectMapper;
+    private final ZoneId zone;
     private final FhirBundleBuilder fhir;
 
     public ExchangeService(ConsentService consents, ClinicalDataClient clinical,
@@ -66,7 +68,8 @@ public class ExchangeService {
                            AuditService audit, ObjectMapper objectMapper,
                            @Value("${hms.interop.facility-name:An unnamed clinical establishment}")
                            String facilityName,
-                           @Value("${hms.interop.facility-id:UNSET}") String facilityId) {
+                           @Value("${hms.interop.facility-id:UNSET}") String facilityId,
+                           @Value("${hms.interop.zone:Asia/Kolkata}") ZoneId zone) {
         this.consents = consents;
         this.clinical = clinical;
         this.portal = portal;
@@ -74,6 +77,7 @@ public class ExchangeService {
         this.gateway = gateway;
         this.audit = audit;
         this.objectMapper = objectMapper;
+        this.zone = zone;
         this.fhir = new FhirBundleBuilder(facilityName, facilityId);
     }
 
@@ -229,11 +233,58 @@ public class ExchangeService {
         return searchset(patient, patientId, documents, CurrentUser.usernameOrSystem());
     }
 
+    /**
+     * The staff view of the register: everything released about one patient, optionally bounded to
+     * a period. Both bounds are optional, so the callers that predate them keep working unchanged.
+     */
     @Transactional(readOnly = true)
-    public List<InteropDtos.DisclosureResponse> disclosuresFor(UUID patientId) {
-        return disclosures.findByPatientIdOrderByReleasedAtDesc(patientId).stream()
-                .map(this::toResponse)
+    public List<InteropDtos.DisclosureResponse> disclosuresFor(UUID patientId, LocalDate from, LocalDate to) {
+        List<Disclosure> register = register(patientId, from, to);
+        Map<UUID, String> artefactIds = artefactIdsFor(register);
+        return register.stream().map(row -> toResponse(row, artefactIds)).toList();
+    }
+
+    /**
+     * The patient's own accounting of disclosures.
+     *
+     * <p>The same rows, read the same way, with the member of staff who released each one left
+     * out — see {@code MyDisclosureResponse} for why. The patient is established from a signed
+     * claim by the caller, never from a request parameter, so there is no id here to tamper with.
+     */
+    @Transactional(readOnly = true)
+    public List<InteropDtos.MyDisclosureResponse> myDisclosures(UUID patientId, LocalDate from, LocalDate to) {
+        List<Disclosure> register = register(patientId, from, to);
+        Map<UUID, String> artefactIds = artefactIdsFor(register);
+        return register.stream()
+                .map(row -> new InteropDtos.MyDisclosureResponse(row.getId(),
+                        artefactIdOf(row, artefactIds), row.getHiType(), row.getKind(),
+                        row.getRecipient(), row.getResourceCount(), row.getByteCount(),
+                        row.getReleasedAt()))
                 .toList();
+    }
+
+    private List<Disclosure> register(UUID patientId, LocalDate from, LocalDate to) {
+        if (from == null && to == null) {
+            return disclosures.findByPatientIdOrderByReleasedAtDesc(patientId);
+        }
+        // Half-open, and `to` is inclusive of the whole of that day: somebody asking what left
+        // "up to the 14th" means the 14th included, and a register that quietly stopped at
+        // midnight on the 13th would be read as nothing having happened.
+        Instant fromInstant = from == null ? Instant.EPOCH : from.atStartOfDay(zone).toInstant();
+        Instant toInstant = to == null
+                ? Instant.now().plus(1, java.time.temporal.ChronoUnit.DAYS)
+                : to.plusDays(1).atStartOfDay(zone).toInstant();
+        return disclosures
+                .findByPatientIdAndReleasedAtGreaterThanEqualAndReleasedAtLessThanOrderByReleasedAtDesc(
+                        patientId, fromInstant, toInstant);
+    }
+
+    /** Resolves every row's public artefact id in one query rather than one per row. */
+    private Map<UUID, String> artefactIdsFor(List<Disclosure> register) {
+        return consents.artefactIdsById(register.stream()
+                .map(Disclosure::getConsentId)
+                .filter(java.util.Objects::nonNull)
+                .collect(java.util.stream.Collectors.toSet()));
     }
 
     // ---- helpers -------------------------------------------------------------
@@ -293,11 +344,21 @@ public class ExchangeService {
         return entries instanceof List<?> list ? list.size() : 0;
     }
 
-    private InteropDtos.DisclosureResponse toResponse(Disclosure disclosure) {
-        String artefactId = disclosure.getConsentId() == null ? null
-                : consents.findById(disclosure.getConsentId())
-                        .map(ConsentArtefact::getArtefactId)
-                        .orElse(null);
+    /**
+     * A row's public artefact id, or null when there is no consent behind it — an export handed to
+     * the patient themselves.
+     *
+     * <p>The null check is not defensive padding: {@code Map.of()} is what the batch lookup returns
+     * when no row in the page has a consent, and it throws on a null key rather than answering
+     * null. So a patient whose only disclosure was their own download got a 500 from the endpoint
+     * built to reassure them. Found by the API suite, whose portal journey exports before it reads.
+     */
+    private static String artefactIdOf(Disclosure disclosure, Map<UUID, String> artefactIds) {
+        return disclosure.getConsentId() == null ? null : artefactIds.get(disclosure.getConsentId());
+    }
+
+    private InteropDtos.DisclosureResponse toResponse(Disclosure disclosure, Map<UUID, String> artefactIds) {
+        String artefactId = artefactIdOf(disclosure, artefactIds);
         return new InteropDtos.DisclosureResponse(disclosure.getId(), disclosure.getConsentId(),
                 artefactId, disclosure.getPatientId(), disclosure.getPatientMrn(),
                 disclosure.getHiType(), disclosure.getKind(), disclosure.getRecipient(),

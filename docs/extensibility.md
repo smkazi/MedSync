@@ -56,7 +56,8 @@ services and a room code is cached on appointments, and none of them would learn
 | **Where a bundle goes** | `hms.interop.gateway`, `.gateway-url` | configuration: LOG records what would have been sent and sends nothing; HTTP posts it. Which adapter runs is a deployment's decision and not a code change |
 | **The longest a consent may last** | `hms.interop.max-consent-days` | configuration, 180 days by default. Permission to read a medical record is not the kind of thing to grant open-endedly by typing a date |
 | **Message wording** | `notification.message_templates` | `PATCH /notifications/templates/{id}` — with one limit, below |
-| **The audit report's day boundary and export cap** | `hms.audit.zone`, `hms.audit.export-max-rows` | configuration. "The 14th" means the hospital's 14th, so the zone is the same decision billing-service makes for its day book — and a deployment that moves one must move both |
+| **What a day means** | `HMS_ZONE`, overridden per service by `hms.billing.zone`, `hms.audit.zone`, `hms.interop.zone` | configuration. "The 14th" means the hospital's 14th, not the container's. Three things bound a day — the billing day book, the audit report and the disclosure register — and each defaults from the single `HMS_ZONE`, so a deployment sets one variable and they cannot disagree |
+| **The audit export cap** | `hms.audit.export-max-rows` | configuration, 50,000 rows. The file says so on its last line when the cap bites |
 | **How long a session lives** | `hms.jwt.idle-timeout`, `.portal-idle-timeout`, `.session-max-lifetime` | configuration: 30 minutes idle, 15 for a portal account, and 7 days absolute. A deployment tightens these; setting one negative disables that bound, which is a deliberate escape hatch and a decision somebody has to make in writing |
 | ICD-10 subset | `services/ai-service/data/icd10_subset.json` | replace the file |
 

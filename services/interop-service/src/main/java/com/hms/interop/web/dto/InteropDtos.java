@@ -106,6 +106,25 @@ public final class InteropDtos {
                                     String releasedBy, Instant releasedAt) {
     }
 
+    /**
+     * The patient's own accounting of disclosures: what left, to whom, when, and how much.
+     *
+     * <p>Deliberately without {@code releasedBy}, and that is a decision rather than an omission.
+     * On the staff view that field is the point — an administrator asking who released a record
+     * needs the name. On the patient's, naming an individual member of staff turns an accounting of
+     * disclosures into a complaint aimed at a person, when what the patient is owed is an account
+     * of the disclosure: that their consultation note went to this recipient on this date, under
+     * this consent. The hospital released it, and the hospital answers for it.
+     *
+     * <p>Also without {@code patientId} and {@code patientMrn}: there is exactly one patient this
+     * can be about, established from a signed claim, so echoing their own identifiers back tells
+     * them nothing and adds two fields to every log and cache that need not carry them.
+     */
+    public record MyDisclosureResponse(UUID id, String artefactId, HiType hiType, DisclosureKind kind,
+                                       String recipient, int resourceCount, int byteCount,
+                                       Instant releasedAt) {
+    }
+
     public record MessageResponse(String message) {
     }
 }

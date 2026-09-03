@@ -82,6 +82,20 @@ test.describe("consent and sharing", () => {
     const disclosure = page.getByRole("row").filter({ hasText: artefactId });
     await expect(disclosure).toContainText("consented share");
     await expect(disclosure).toContainText("dr.rao");
+
+    // The register can be asked for a period, which is how anybody actually asks the question.
+    // Today's date from the browser's clock rather than a fixed string, so this does not expire.
+    const today = new Date().toISOString().slice(0, 10);
+    await page.goto(
+      `/sharing/disclosures?mrn=${encodeURIComponent(mrn)}&from=${today}&to=${today}`,
+    );
+    await expect(page.getByRole("row").filter({ hasText: artefactId })).toBeVisible();
+
+    await page.goto(
+      `/sharing/disclosures?mrn=${encodeURIComponent(mrn)}&from=2020-01-01&to=2020-01-02`,
+    );
+    await expect(page.getByRole("row").filter({ hasText: artefactId })).toHaveCount(0);
+    await expect(page.getByText(/Nothing about this patient was released in that period/)).toBeVisible();
   });
 
   test("a consent for one kind of record refuses another, in the platform's own words", async ({

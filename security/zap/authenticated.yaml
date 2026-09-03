@@ -369,6 +369,9 @@ jobs:
       - url: "${ZAP_TARGET}/portal/records/export"
         method: GET
         responseCode: 403
+      - url: "${ZAP_TARGET}/portal/records/disclosures"
+        method: GET
+        responseCode: 403
       # A write, with a well-formed body, so only the role can be what refuses it.
       - url: "${ZAP_TARGET}/portal/appointments"
         method: POST

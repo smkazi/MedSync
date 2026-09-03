@@ -10,9 +10,9 @@ haematology analyzer over its own wire protocol and released by a pathologist.
 
 > **Status:** the clinical core, the laboratory (including analyzer integration), the AI service
 > and the web UI are implemented and verified end to end against a real stack, and so are the
-> containerisation, TLS, security-testing and performance-testing layers. **1,141 tests pass** —
-> 643 Java unit and integration, 91 Python, 47 web unit, 232 black-box API and security abuse cases,
-> and 128 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
+> containerisation, TLS, security-testing and performance-testing layers. **1,147 tests pass** —
+> 648 Java unit and integration, 91 Python, 47 web unit, 232 black-box API and security abuse cases,
+> and 129 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
 > [Security](#security); what is left is in the [Roadmap](#roadmap).
 
 ---
@@ -1071,6 +1071,12 @@ to a patient record on its own.
   carries operator-supplied text and a spreadsheet executes those. Quoting does not help: the
   quotes are CSV syntax and are stripped before the spreadsheet reads the first character. The
   export is capped, and says so on its last line when the cap bites.
+- **Accounting of disclosures** — every release of a record is written at the moment it leaves,
+  never reconstructed from logs, and both the staff register and the patient's own view of it can
+  be asked for a period. The patient's view deliberately omits the member of staff who released
+  each record: the hospital released it and the hospital answers for it, and naming an individual
+  turns an accounting of disclosures into a complaint aimed at a person. Whose accounting it is
+  comes from the signed `patient_id` claim, so there is no id in the request to tamper with.
 - **Rate limiting** — per client at the gateway, in four buckets that defend against four different
   things. The general one stops a client exhausting the pool; `/auth/**` is far stricter, because
   account lockout stops guessing at one account and this stops one password sprayed across a
@@ -1123,11 +1129,11 @@ make help          # everything else
 Or directly:
 
 ```bash
-mvn -q verify                                     # 643 Java unit and integration tests
+mvn -q verify                                     # 648 Java unit and integration tests
 cd services/ai-service && uv run pytest -q        # 91 Python tests
 cd web && npm run lint && npm run typecheck       # web static checks
 cd web && npm test                                # 47 web unit tests
-cd web && npx playwright test                     # 128 browser tests, no skips
+cd web && npx playwright test                     # 129 browser tests, no skips
 mvn -Pautomation -pl tests/api verify             # 232 API and security abuse cases
 ```
 
@@ -1456,6 +1462,14 @@ Worth writing down, because it is the argument for having built them:
   transaction was not waiting on a lock, it was waiting on the application. The test suite hung for
   half an hour rather than failing, which is how it was found; the fix is to run every check before
   the rotation, and the reason is now written where the split lives.
+- **An empty immutable map threw where it was expected to answer null.** The disclosure register
+  resolves each row's consent artefact from a batch lookup, and that lookup returns `Map.of()` when
+  no row in the page has a consent — which is precisely the case for a patient whose only
+  disclosure is their own download, because handing somebody their own record needs no consent.
+  `Map.of().get(null)` throws rather than returning null, so the endpoint built to reassure a
+  patient answered 500 for exactly the patient with the least to worry about. The service's own
+  test used a consented share and passed; the API suite's portal journey exports first, and caught
+  it.
 - **The audit report's actor filter returned every action nobody did.** The predicate read
   `a.actorId like :actorId or a.actorId is null` — added so an unfiltered report would still show
   rows that carry no actor — and the second clause made every one of those rows match *every*
@@ -1468,6 +1482,15 @@ Worth writing down, because it is the argument for having built them:
   81 of their own actions **plus 16 credential-stuffing attempts against names that do not exist**.
   An audit report that looks authoritative while answering a different question is worse than one
   that is missing.
+- **The portal's downloads were silently redirected away.** Both of them — "Download my record"
+  and a released report — go through a route handler in the web app rather than a link at the
+  gateway, because the bearer token is in an httpOnly cookie the browser will not attach to a
+  cross-origin link. The middleware's patient-path exemption listed `/portal/**` and not
+  `/api/portal/**`, so a patient clicking Download was redirected to the portal home. A redirect is
+  a 200: nothing errored, no log line appeared, and the file simply never arrived. Found by a
+  browser test written for the disclosure register, which noticed that downloading had left no
+  trace in it — the register was the instrument that caught it, which is the argument for having
+  built it.
 - **Nobody could be told who signed in.** `AuditService` reads the actor off the security
   context, and every row an auditor asks about first — who signed in, whose sign-in failed, which
   account was locked out, whose session was burned for a replayed token — is written *before* there
@@ -1533,8 +1556,10 @@ SAST/DAST tooling, and performance profiles. Dependency scanning covers Python (
   that has to demonstrate it should validate the output.
 - **A consent request does not reach the patient.** The front desk records what the patient
   decided, in front of them. The portal is built now, and this is still a gap: there is no consent
-  manager integration and no portal screen on which a patient approves or refuses a request. What
-  the portal shows them is their own record, not the register of who has asked to see it.
+  manager integration and no portal screen on which a patient approves or refuses a request. The
+  portal does now show them what has already left — every release, to whom, under which consent —
+  which is the accounting of disclosures. What it cannot show them is a request still waiting on an
+  answer, because nothing puts one in front of them to answer.
 - **The portal takes no money.** Bills, lines, tax and what is still owed are all there, and there
   is no Pay-now button, because taking a payment needs a gateway with a merchant account and live
   credentials. A button that settled an invoice without receiving anything would balance the day

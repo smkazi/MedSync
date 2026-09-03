@@ -21,7 +21,9 @@ import com.hms.interop.client.dto.ClinicalViews.PatientView;
 import com.hms.interop.client.dto.ClinicalViews.VitalsView;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -306,6 +308,102 @@ class InteropApiIntegrationTest {
                 .isTrue();
     }
 
+    // ---- the accounting of disclosures ---------------------------------------
+
+    @Test
+    @DisplayName("the register can be asked for a period, and answers for that period only")
+    void theRegisterIsBoundedByAPeriod() throws Exception {
+        grantAndShare();
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Kolkata"));
+
+        // Inclusive of the whole of `to`: a release this afternoon must appear in a register asked
+        // for up to today, not fall off the end of it.
+        assertThat(register("&from=" + today + "&to=" + today).size()).isEqualTo(1);
+        assertThat(register("&from=" + today.minusDays(7)).size()).isEqualTo(1);
+        assertThat(register("&from=2020-01-01&to=2020-01-02").size()).isZero();
+        assertThat(register("").size()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("a patient reads their own accounting, and it does not name the member of staff")
+    void aPatientReadsTheirOwnAccounting() throws Exception {
+        String artefactId = grantAndShare();
+
+        JsonNode mine = objectMapper.readTree(
+                mockMvc.perform(get("/portal/records/disclosures").with(asPatient(patientId)))
+                        .andExpect(status().isOk())
+                        .andReturn().getResponse().getContentAsString());
+
+        assertThat(mine.size()).isEqualTo(1);
+        assertThat(mine.get(0).get("artefactId").asString()).isEqualTo(artefactId);
+        assertThat(mine.get(0).get("recipient").asString()).isNotBlank();
+
+        // Structural, not a substring search: the decision is that these fields are absent, and
+        // asserting on the rendered text would pass for the wrong reason the moment a recipient
+        // name happened to contain one of them.
+        List<String> fields = new ArrayList<>(mine.get(0).propertyNames());
+        assertThat(fields)
+                .as("the hospital released it and the hospital answers for it; naming the "
+                        + "individual who clicked turns an accounting into a complaint about a person")
+                .doesNotContain("releasedBy")
+                .as("there is exactly one patient this can be about, so echoing their own "
+                        + "identifiers back tells them nothing")
+                .doesNotContain("patientId", "patientMrn")
+                .contains("recipient", "hiType", "releasedAt", "resourceCount", "byteCount");
+    }
+
+    @Test
+    @DisplayName("a patient's own download appears in their accounting, with no consent behind it")
+    void anExportAppearsInThePatientsAccounting() throws Exception {
+        mockMvc.perform(post("/interop/export/" + patientId + "?encounterId=" + encounterId)
+                        .with(as("ADMIN")))
+                .andExpect(status().isOk());
+
+        JsonNode mine = objectMapper.readTree(
+                mockMvc.perform(get("/portal/records/disclosures").with(asPatient(patientId)))
+                        .andExpect(status().isOk())
+                        .andReturn().getResponse().getContentAsString());
+
+        // The regression this guards, found by the API suite rather than here: when no row in the
+        // page has a consent, the batch artefact lookup returns Map.of() -- which throws on a null
+        // key instead of answering null. So a patient whose only disclosure was their own download
+        // got a 500 from the endpoint built to reassure them.
+        assertThat(mine.size()).isEqualTo(1);
+        assertThat(mine.get(0).get("kind").asString()).isEqualTo("PATIENT_EXPORT");
+        assertThat(mine.get(0).get("artefactId").isNull())
+                .as("handing somebody their own record needs no consent, and the register says so "
+                        + "rather than inventing one")
+                .isTrue();
+    }
+
+    @Test
+    @DisplayName("another patient's session sees their own empty register, never this one's")
+    void oneAccountingPerPatient() throws Exception {
+        grantAndShare();
+
+        JsonNode theirs = objectMapper.readTree(
+                mockMvc.perform(get("/portal/records/disclosures")
+                                .with(asPatient(UUID.randomUUID())))
+                        .andExpect(status().isOk())
+                        .andReturn().getResponse().getContentAsString());
+
+        // Empty rather than refused, and that is the right answer: a patient with nothing released
+        // about them has an empty accounting. There is no id in the request to tamper with, so
+        // there is no 404-versus-403 question to get wrong here.
+        assertThat(theirs).isEmpty();
+    }
+
+    @Test
+    @DisplayName("staff cannot read the patient-facing register, and a patient cannot read the staff one")
+    void neitherRegisterStandsInForTheOther() throws Exception {
+        mockMvc.perform(get("/portal/records/disclosures").with(as("ADMIN")))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/portal/records/disclosures").with(as("DOCTOR")))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/interop/disclosures?patientId=" + patientId).with(asPatient(patientId)))
+                .andExpect(status().isForbidden());
+    }
+
     // ---- who may do what -----------------------------------------------------
 
     @Test
@@ -353,6 +451,35 @@ class InteropApiIntegrationTest {
     }
 
     // ---- helpers -------------------------------------------------------------
+
+    /** The staff register for this test's patient, with any extra query string appended. */
+    private JsonNode register(String extraQuery) throws Exception {
+        return objectMapper.readTree(
+                mockMvc.perform(get("/interop/disclosures?patientId=" + patientId + extraQuery)
+                                .with(as("DOCTOR")))
+                        .andExpect(status().isOk())
+                        .andReturn().getResponse().getContentAsString());
+    }
+
+    /** Grants a consent and shares one record under it, returning the artefact id. */
+    private String grantAndShare() throws Exception {
+        String artefactId = grant(requestConsent(Map.of()).get("artefactId").asString())
+                .get("artefactId").asString();
+        share(artefactId, "OP_CONSULTATION", encounterId, 200);
+        return artefactId;
+    }
+
+    /**
+     * A portal session: the PATIENT role and, crucially, the signed {@code patient_id} claim.
+     * Whose record it is comes from here and from nowhere in the request, which is why there is no
+     * id in any {@code /portal} path to tamper with.
+     */
+    private static RequestPostProcessor asPatient(UUID patientId) {
+        return jwt().jwt(builder -> builder.subject(UUID.randomUUID().toString())
+                        .claim("preferred_username", "mrn-test-patient")
+                        .claim("patient_id", patientId.toString()))
+                .authorities(List.of((GrantedAuthority) new SimpleGrantedAuthority("ROLE_PATIENT")));
+    }
 
     private static RequestPostProcessor as(String... roles) {
         List<GrantedAuthority> authorities = Arrays.stream(roles)

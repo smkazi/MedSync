@@ -1031,6 +1031,22 @@ export type Consent = {
   signed: boolean;
 };
 
+/**
+ * The patient's own view of a disclosure. No `releasedBy`, deliberately: the hospital released
+ * the record and the hospital answers for it, and naming an individual member of staff turns an
+ * accounting of disclosures into a complaint aimed at a person.
+ */
+export type MyDisclosure = {
+  id: string;
+  artefactId: string | null;
+  hiType: HiType;
+  kind: "CONSENTED_SHARE" | "PATIENT_EXPORT" | "CARE_SUMMARY";
+  recipient: string;
+  resourceCount: number;
+  byteCount: number;
+  releasedAt: string;
+};
+
 export type Disclosure = {
   id: string;
   consentId: string | null;

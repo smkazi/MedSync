@@ -208,6 +208,17 @@ class PortalJourneyIT extends RequiresRunningStack {
                 .then().statusCode(200)
                 .extract().jsonPath().getList("kind", String.class);
         assertThat(disclosures).contains("PATIENT_EXPORT");
+
+        // ...and the patient can read that same register themselves, which is the whole point of
+        // an accounting of disclosures: it answers "who has seen my record" to the person asking.
+        var mine = given().spec(asMe())
+                .when().get("/portal/records/disclosures")
+                .then().statusCode(200)
+                .extract().jsonPath();
+        assertThat(mine.getList("kind", String.class)).contains("PATIENT_EXPORT");
+        // Without naming the member of staff who released it. The hospital released the record and
+        // the hospital answers for it; an accounting is not a complaint aimed at a person.
+        assertThat(mine.getList("releasedBy")).containsOnlyNulls();
     }
 
     @Test
@@ -267,7 +278,8 @@ class PortalJourneyIT extends RequiresRunningStack {
                 Api.LAB_TECH, Api.PATHOLOGIST, Api.PHARMACIST, Api.CASHIER)) {
             for (String path : List.of("/portal/me", "/portal/appointments", "/portal/reports",
                     "/portal/encounters", "/portal/prescriptions", "/portal/invoices",
-                    "/portal/messages", "/portal/records/export")) {
+                    "/portal/messages", "/portal/records/export",
+                    "/portal/records/disclosures")) {
                 given().spec(Api.as(actor)).when().get(path)
                         .then().statusCode(403);
             }

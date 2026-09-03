@@ -131,6 +131,35 @@ test.describe("the patient portal", () => {
     // The download is the "transmit" half of the certification criterion: a FHIR bundle they can
     // save and hand to another hospital.
     await expect(page.getByRole("link", { name: "Download my record" })).toBeVisible();
+
+    // The accounting of disclosures, on the screen where the patient is already reading their own
+    // record. Nothing has left about this patient yet, and the empty state has to say that rather
+    // than look like a page that failed to load.
+    const released = page.getByRole("region", { name: "What has left this hospital about you" });
+    await expect(released).toContainText(/Nothing about you has been released/);
+    // Never the name of the member of staff. The hospital released the record and the hospital
+    // answers for it; an accounting is not a complaint aimed at a person.
+    await expect(released).not.toContainText(/released by/i);
+  });
+
+  test("a download appears in the patient's own accounting of disclosures", async ({ page }) => {
+    await signInAsPatient(page);
+    await page.goto("/portal/record");
+
+    // Clicked, not fetched: this is the path a patient takes, and it goes through the app's own
+    // route handler because the bearer token is in an httpOnly cookie the browser will not attach
+    // to a cross-origin link. The defect this found was in the middleware, which treated
+    // /api/portal/** as a clinical path and redirected the patient to the portal home — a 200, so
+    // the download silently produced no file.
+    const download = page.waitForEvent("download");
+    await page.getByRole("link", { name: "Download my record" }).click();
+    expect((await download).suggestedFilename()).toBe("health-record.fhir.json");
+
+    // Downloading is itself a release, and the register is written at the moment it happens.
+    await page.reload();
+    const released = page.getByRole("region", { name: "What has left this hospital about you" });
+    await expect(released).toContainText("You — your own copy");
+    await expect(released).toContainText("Your own copy, so no consent was needed");
   });
 
   test("a patient books for themselves and cancels, in their own words", async ({ page }) => {

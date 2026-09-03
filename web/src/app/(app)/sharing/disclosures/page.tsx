@@ -16,9 +16,9 @@ import { Badge, Card, Empty, ErrorNote, Stat, Table, formatDateTime } from "@/co
 export default async function DisclosuresPage({
   searchParams,
 }: {
-  searchParams: Promise<{ mrn?: string }>;
+  searchParams: Promise<{ mrn?: string; from?: string; to?: string }>;
 }) {
-  const { mrn = "" } = await searchParams;
+  const { mrn = "", from = "", to = "" } = await searchParams;
 
   // The ordinary patient search, not the narrow lookup: everybody who may read a consent already
   // has CLINICAL_READ, and `/patients/identify` exists for the one role that does not — the
@@ -29,8 +29,13 @@ export default async function DisclosuresPage({
     : { data: null, error: null };
   const patient = (patients.data?.content ?? [])[0];
 
+  const period = new URLSearchParams();
+  if (from) period.set("from", from);
+  if (to) period.set("to", to);
   const disclosures = patient
-    ? await load<Disclosure[]>(`/interop/disclosures?patientId=${patient.id}`)
+    ? await load<Disclosure[]>(
+        `/interop/disclosures?patientId=${patient.id}${period.size > 0 ? `&${period}` : ""}`,
+      )
     : { data: null, error: null };
 
   const rows = disclosures.data ?? [];
@@ -63,6 +68,26 @@ export default async function DisclosuresPage({
               placeholder="MRN-2026-000001"
               className="w-40 rounded border border-line bg-surface-raised px-2 py-1 text-xs"
             />
+            <label htmlFor="from" className="text-xs text-ink-muted">
+              From
+            </label>
+            <input
+              id="from"
+              name="from"
+              type="date"
+              defaultValue={from}
+              className="rounded border border-line bg-surface-raised px-2 py-1 text-xs"
+            />
+            <label htmlFor="to" className="text-xs text-ink-muted">
+              To
+            </label>
+            <input
+              id="to"
+              name="to"
+              type="date"
+              defaultValue={to}
+              className="rounded border border-line bg-surface-raised px-2 py-1 text-xs"
+            />
             <button
               type="submit"
               className="rounded border border-line px-2 py-1 text-xs hover:bg-surface"
@@ -86,7 +111,11 @@ export default async function DisclosuresPage({
 
             <div className="mt-4">
               {rows.length === 0 ? (
-                <Empty>Nothing about this patient has ever been released.</Empty>
+                <Empty>
+                  {from || to
+                    ? "Nothing about this patient was released in that period."
+                    : "Nothing about this patient has ever been released."}
+                </Empty>
               ) : (
                 <Table
                   head={["When", "Kind", "What", "To", "Under", "Resources", "Size", "By"]}
@@ -117,6 +146,9 @@ export default async function DisclosuresPage({
           </>
         )}
         <p className="mt-3 border-t border-line pt-2 text-xs text-ink-muted">
+          {from || to
+            ? `Bounded to ${from || "the beginning"} – ${to || "today"}, inclusive of both days. `
+            : "Everything ever released, with no period set. "}
           A row with no consent behind it is an export handed to the patient themselves, which is
           not a disclosure to anybody else — the column says so rather than leaving a blank to be
           read as missing data. What was sent is counted and measured and never stored here.

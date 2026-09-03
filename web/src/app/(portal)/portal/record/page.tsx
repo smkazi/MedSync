@@ -1,6 +1,6 @@
 import { load } from "@/lib/load";
 import { Badge, Card, Empty, ErrorNote, Table, formatDateTime } from "@/components/ui";
-import type { PortalProfile } from "@/lib/types";
+import type { MyDisclosure, PortalProfile } from "@/lib/types";
 
 export const metadata = { title: "My record — MedSync" };
 
@@ -18,6 +18,10 @@ export const metadata = { title: "My record — MedSync" };
  */
 export default async function PortalRecord() {
   const profile = await load<PortalProfile>("/portal/me");
+  // Whose record this is comes from the signed claim in the session, so there is nothing to pass
+  // and nothing to tamper with. A failure here must not take the whole page down: the allergy list
+  // above is the most important thing on this screen.
+  const released = await load<MyDisclosure[]>("/portal/records/disclosures");
 
   if (!profile.data) {
     return (
@@ -117,6 +121,40 @@ export default async function PortalRecord() {
         <p className="mt-3 text-sm text-ink-muted">
           This list is what stops a medicine being prescribed or dispensed to you. If anything here
           is wrong, or something is missing, tell the front desk before your next appointment.
+        </p>
+      </Card>
+
+      <Card title="What has left this hospital about you">
+        {released.error ? (
+          <ErrorNote>{released.error}</ErrorNote>
+        ) : (released.data ?? []).length === 0 ? (
+          <Empty>
+            Nothing about you has been released to anybody, and you have not yet downloaded a copy
+            yourself.
+          </Empty>
+        ) : (
+          <Table head={["When", "What", "To whom", "Why", "How much"]}>
+            {(released.data ?? []).map((row) => (
+              <tr key={row.id} className="border-t border-line">
+                <td className="numeric px-3 py-2">{formatDateTime(row.releasedAt)}</td>
+                <td className="px-3 py-2 text-xs">{row.hiType.toLowerCase().replaceAll("_", " ")}</td>
+                <td className="px-3 py-2">
+                  {row.kind === "PATIENT_EXPORT" ? "You — your own copy" : row.recipient}
+                </td>
+                <td className="numeric px-3 py-2 text-xs text-ink-muted">
+                  {row.artefactId ?? "Your own copy, so no consent was needed"}
+                </td>
+                <td className="numeric px-3 py-2 text-ink-muted">
+                  {row.resourceCount} item{row.resourceCount === 1 ? "" : "s"}
+                </td>
+              </tr>
+            ))}
+          </Table>
+        )}
+        <p className="mt-3 text-sm text-ink-muted">
+          This is written the moment a record leaves, not reconstructed afterwards. If a release
+          here is one you did not agree to, tell the front desk — the hospital can tell you exactly
+          what was sent and revoke the consent behind it.
         </p>
       </Card>
 

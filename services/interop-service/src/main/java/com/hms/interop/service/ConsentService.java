@@ -12,9 +12,12 @@ import com.hms.interop.web.dto.InteropDtos;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.Collection;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
@@ -286,10 +289,24 @@ public class ConsentService {
         return consents.findByArtefactId(artefactId);
     }
 
-    /** By primary key, for a disclosure row that stores the id rather than the artefact id. */
+    /**
+     * The public artefact ids for a set of consents, in one query.
+     *
+     * <p>Exists because the disclosure register resolved them one row at a time, which is an N+1
+     * over {@code consent_artefacts} on a list endpoint that now has a date range and a second
+     * caller. A register of a year's disclosures is exactly the request that turns that into
+     * hundreds of round trips.
+     */
     @Transactional(readOnly = true)
-    public Optional<ConsentArtefact> findById(UUID id) {
-        return consents.findById(id);
+    public Map<UUID, String> artefactIdsById(Collection<UUID> ids) {
+        if (ids.isEmpty()) {
+            return Map.of();
+        }
+        Map<UUID, String> byId = new LinkedHashMap<>();
+        for (ConsentArtefact consent : consents.findAllById(ids)) {
+            byId.put(consent.getId(), consent.getArtefactId());
+        }
+        return byId;
     }
 
     InteropDtos.ConsentResponse toResponse(ConsentArtefact consent) {

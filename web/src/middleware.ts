@@ -120,7 +120,16 @@ export function middleware(request: NextRequest): NextResponse {
   // request anyway, and a patient who followed an old bookmark to /appointments is better served by
   // their own appointments page than by an error. Change-password and sign-out stay reachable from
   // either side, which is why they are exempt.
-  const patientOnly = pathname === "/portal" || pathname.startsWith("/portal/");
+  //
+  // `/api/portal/**` counts as a patient path, and leaving it out was a real defect: those route
+  // handlers are how the portal's two downloads reach the platform at all, because the bearer
+  // token is in an httpOnly cookie the browser will not attach to a cross-origin link. Without
+  // them here, a patient clicking "Download my record" was redirected to the portal home and got
+  // no file — the redirect is a 200, so nothing looked broken. Found by a browser test written for
+  // the disclosure register, which noticed that downloading had left no trace in it.
+  const patientOnly = pathname === "/portal"
+    || pathname.startsWith("/portal/")
+    || pathname.startsWith("/api/portal/");
   if (
     hasSession
     && !isPublic

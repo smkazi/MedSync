@@ -49,11 +49,11 @@ hms:
     # kafka in deployed environments; log keeps the platform runnable with only Postgres.
     transport: ${HMS_EVENTS_TRANSPORT:log}
   audit:
-    # "The 14th" means the hospital's 14th, not the container's. Same decision billing-service
-    # makes for its day book, and the same trap: a UTC container serving a deployment in
-    # Asia/Kolkata rolls the date over five and a half hours early, so a report for yesterday
-    # would show part of the day before. A deployment that moves one of these must move both.
-    zone: ${HMS_AUDIT_ZONE:Asia/Kolkata}
+    # "The 14th" means the hospital's 14th, not the container's: a UTC container serving a
+    # deployment in Asia/Kolkata rolls the date over five and a half hours early, so a report for
+    # yesterday would show part of the day before. Defaults from HMS_ZONE, which is the one
+    # variable a deployment sets -- three services bound a day and they must agree.
+    zone: ${HMS_AUDIT_ZONE:${HMS_ZONE:Asia/Kolkata}}
     # A hard cap on the CSV export. An unbounded audit table piped into a browser either times out
     # or exhausts the heap, and the file says so on its last line when the cap bites.
     export-max-rows: ${HMS_AUDIT_EXPORT_MAX_ROWS:50000}

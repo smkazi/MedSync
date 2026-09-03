@@ -9,6 +9,8 @@ import jakarta.validation.Valid;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.time.LocalDate;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -158,8 +160,11 @@ public class InteropController {
      */
     @GetMapping("/interop/disclosures")
     @PreAuthorize(Roles.CONSENT_READ)
-    public List<InteropDtos.DisclosureResponse> disclosures(@RequestParam UUID patientId) {
-        return exchange.disclosuresFor(patientId);
+    public List<InteropDtos.DisclosureResponse> disclosures(
+            @RequestParam UUID patientId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return exchange.disclosuresFor(patientId, from, to);
     }
 
     /**

@@ -59,7 +59,7 @@ hms:
     # The zone a day is cashed up in. A payment's timestamp is an instant, and "the 14th" is a
     # different window in Kolkata than in UTC -- a hospital counting its drawer at 8pm local would
     # otherwise find the evening's takings in tomorrow's day book.
-    zone: ${HMS_BILLING_ZONE:Asia/Kolkata}
+    zone: ${HMS_BILLING_ZONE:${HMS_ZONE:Asia/Kolkata}}
     capture:
       # What a clinical event is charged as. Configuration rather than code, because the codes
       # belong to a deployment's own charge list: these are the ones the seed migration ships, and

@@ -68,6 +68,11 @@ hms:
     # How long a consent may be granted for at most. A permission to read somebody's medical record
     # is not the kind of thing anybody should be able to sign away for a decade by typing a date.
     max-consent-days: ${HMS_MAX_CONSENT_DAYS:180}
+    # The zone a day is bounded in when somebody asks the disclosure register what left "in
+    # September". Defaults from HMS_ZONE, the one variable a deployment sets: three services bound
+    # a day -- this one, the audit report and the billing day book -- and they have to agree, or a
+    # patient's accounting and the hospital's report disagree about the same afternoon.
+    zone: ${HMS_INTEROP_ZONE:${HMS_ZONE:Asia/Kolkata}}
     # Which ABDM gateway adapter runs. LOG records what would have been sent and sends nothing,
     # which is the honest default for a platform with no NHA credentials: see the README.
     gateway: ${HMS_ABDM_GATEWAY:LOG}
