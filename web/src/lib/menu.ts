@@ -116,6 +116,12 @@ const BILLING_WRITE: RoleName[] = ["ADMIN", "CASHIER"];
 // refer needs to know whether a consent covers it, and "ask an administrator" is how a platform
 // teaches people to send a fax instead. The bench and the pharmacy are out: neither refers.
 const CONSENT_READ: RoleName[] = ["ADMIN", "DOCTOR", "NURSE", "RECEPTIONIST"];
+/**
+ * Who may work the HL7 interface. Matches HEALTH_INFORMATION_SHARE on the service, and it is
+ * narrower than CONSENT_READ on purpose: reading whether a consent exists is a clinical question,
+ * and reading the raw traffic between two hospitals is not.
+ */
+const INTERFACE: RoleName[] = ["ADMIN", "DOCTOR"];
 const ADMIN_ONLY: RoleName[] = ["ADMIN"];
 
 /**
@@ -291,6 +297,12 @@ export const MENUS: Menu[] = [
         href: "/sharing/disclosures",
         roles: CONSENT_READ,
         note: "Who has seen a patient's record, and under what",
+      },
+      {
+        label: "HL7 interface",
+        href: "/sharing/hl7",
+        roles: INTERFACE,
+        note: "Every v2 message in and out, and what was acknowledged",
       },
     ],
   },

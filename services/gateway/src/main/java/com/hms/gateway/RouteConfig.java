@@ -115,7 +115,7 @@ public class RouteConfig {
                 // module's internal detail. `/interop/**` is the machinery — sharing, exporting,
                 // the disclosure log — and is named as machinery because that is what it is.
                 .route("interop", r -> r
-                        .path("/consents/**", "/interop/**", "/portal/records/**")
+                        .path("/consents/**", "/interop/**", "/portal/records/**", "/hl7/**")
                         .uri(services.interop()))
                 // Clinical decision support: summarisation, triage, no-show risk, coding.
                 .route("ai", r -> r

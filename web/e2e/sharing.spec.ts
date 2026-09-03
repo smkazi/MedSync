@@ -195,6 +195,44 @@ test.describe("consent and sharing", () => {
     await expect(page.getByRole("main")).not.toContainText("12-3456-7890-1234");
   });
 
+  test("the HL7 log shows what arrived, what was answered, and only the failures on request",
+      async ({ page }) => {
+    await signIn(page, "dr.rao");
+    await page.goto("/sharing/hl7");
+
+    await expect(page.getByRole("heading", { name: "HL7 interface" })).toBeVisible();
+
+    // The acknowledgement codes are shown as themselves. "AE" and "AR" mean different things to a
+    // sender -- stop, versus try again -- and a screen that collapsed both into "failed" would
+    // throw away the only part of the answer they can act on.
+    const table = page.getByRole("table").first();
+    await expect(table).toContainText("AA");
+
+    // The raw message is on the page verbatim, because "what did you actually receive" is the
+    // question this screen exists to answer and a re-serialised message is this platform's
+    // opinion of it rather than the message.
+    await expect(page.getByRole("region", { name: /as it arrived/ })).toContainText("MSH");
+
+    await page.getByRole("link", { name: "Only what failed" }).click();
+    await expect(page).toHaveURL(/failures=1/);
+    // Every row now carries a reason. An interface running a week has tens of thousands of
+    // accepted messages and a dozen that matter.
+    const failures = page.getByRole("table").first();
+    if (await failures.count()) {
+      await expect(failures).not.toContainText("accepted");
+    }
+    await expect(page.getByRole("link", { name: "Show everything" })).toBeVisible();
+  });
+
+  test("the interface log is not offered to everybody with a token", async ({ page }) => {
+    // Reading whether a consent exists is a clinical question; reading the raw traffic between two
+    // hospitals is not, so this is narrower than the rest of the Sharing menu.
+    await signIn(page, "reception");
+    await page.goto("/sharing/hl7");
+    await expect(page.getByRole("main"))
+      .toContainText(/does not have access|permission|403/i);
+  });
+
   test("a clinician is not offered the ABHA form", async ({ page }) => {
     await signIn(page, "dr.rao");
     const mrn = await fixtureMrn(page);

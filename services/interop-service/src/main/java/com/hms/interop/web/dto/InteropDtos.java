@@ -5,6 +5,9 @@ import com.hms.interop.domain.InteropEnums.DisclosureKind;
 import com.hms.interop.domain.InteropEnums.HiType;
 import com.hms.interop.domain.InteropEnums.PurposeCode;
 import jakarta.validation.constraints.FutureOrPresent;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
@@ -123,6 +126,69 @@ public final class InteropDtos {
     public record MyDisclosureResponse(UUID id, String artefactId, HiType hiType, DisclosureKind kind,
                                        String recipient, int resourceCount, int byteCount,
                                        Instant releasedAt) {
+    }
+
+    // ---- HL7 v2 -------------------------------------------------------------
+
+    /**
+     * A message handed to the platform over HTTP rather than a socket.
+     *
+     * <p>The message is a string and not a structure, deliberately: this endpoint exists to take
+     * exactly what a sender would have put on the wire, so that a system without MLLP — a test
+     * harness, a middleware that speaks HTTP, an engineer with curl — exercises the same parser and
+     * produces the same acknowledgement.
+     */
+    public record Hl7InboundRequest(@NotBlank String message) {
+    }
+
+    /**
+     * One message that crossed the boundary.
+     *
+     * @param raw   what was on the wire, kept because the messages worth asking about are the ones
+     *              that did not parse
+     * @param error null when nothing went wrong, and the first field an interface engineer reads
+     */
+    public record Hl7ExchangeResponse(UUID id, String direction, String messageType,
+                                      String controlId, String sendingApplication,
+                                      String sendingFacility, String receivingApplication,
+                                      String receivingFacility, Instant messageAt, String ackCode,
+                                      String ackText, String error, String transport, String peer,
+                                      Instant receivedAt, String raw, String ackRaw) {
+    }
+
+    /** The patient fields an outbound message carries. */
+    public record Hl7PatientView(String mrn, String familyName, String givenName,
+                                 String dateOfBirth, String sex, String phone) {
+    }
+
+    /** One released order, and the results on it. */
+    public record Hl7OrderView(String placerOrderNumber, String accessionNumber, String panelCode,
+                               String panelName, Instant collectedAt, Instant verifiedAt,
+                               List<Hl7ResultView> results) {
+
+        public Hl7OrderView {
+            results = results == null ? List.of() : List.copyOf(results);
+        }
+    }
+
+    public record Hl7ResultView(String code, String name, String value, String units,
+                                String referenceRange, String abnormalFlag) {
+    }
+
+    /**
+     * Sends a message somewhere.
+     *
+     * <p>The destination is in the request rather than configured, because a hospital sends to more
+     * than one place — a referring practice, a public-health registry, a partner laboratory — and a
+     * single configured endpoint would make the second one a redeployment.
+     */
+    public record Hl7SendRequest(@NotBlank String host,
+                                 @Min(1) @Max(65535) int port,
+                                 @NotBlank String receivingApplication,
+                                 @NotBlank String receivingFacility,
+                                 @NotBlank String messageType,
+                                 @Valid @NotNull Hl7PatientView patient,
+                                 @Valid Hl7OrderView order) {
     }
 
     public record MessageResponse(String message) {

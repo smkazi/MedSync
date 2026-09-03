@@ -678,6 +678,39 @@ callback, an encrypted payload with a key exchange and an assessed HIP, and this
 to be implemented against a sandbox. The README says so because a module with an HTTP adapter is
 exactly the module somebody would otherwise describe as compliant.
 
+**HL7 v2, because the hospital next door does not speak FHIR.** ABDM and FHIR are what a national
+exchange wants; the laboratory across town, the GP system and the radiology practice send pipes and
+carets over a socket, and will for years. The engine is dependency-free Java in the same spirit as
+the analyzer parsers: an ER7 codec, MLLP framing, and acknowledgement handling, tested against the
+shapes real senders produce rather than the shapes the standard draws — CRLF from Windows hosts,
+repeating OBX segments, a surname with a caret in it, a message split across two TCP reads.
+
+Three details carry most of the value. **Delimiters are read from the message, never assumed**:
+MSH-1 and MSH-2 declare them, and a parser that hard-codes `|^~\&` works until the one interface
+that does not. **MSH counts its fields differently from every other segment** — MSH-1 *is* the field
+separator, so MSH-3 is the third token where PID-3 is the fourth — and that off-by-one is handled in
+one place so `field(3)` means the right thing on either. **Escaping is enforced by the type system**
+on the way out: a field cannot be a bare string, because a name written unescaped does not corrupt
+the name, it shifts every later field one component left and the receiver files a valid-looking
+message with the date of birth in the sex field. That was not hypothetical — the first version of
+the builder escaped MSH-9 too, turning `ADT^A04` into `ADT\S\A04`, a type no receiver routes; the
+test caught it.
+
+**The three acknowledgement codes are not interchangeable and the distinction is the contract.** AA
+means accepted. AE means understood and refused — a type this platform does not handle — and the
+sender should stop rather than retry. AR means not understood, and retrying may work. Answering AA
+to a message nobody will act on is a lie the sender cannot detect, and their record will say the
+result was delivered. Every message is stored verbatim before it is parsed, which is the rule the
+laboratory learned from analyzers and holds harder here: the messages worth asking about are the
+ones that did not parse.
+
+**MLLP is off by default and that is the point.** It is a raw TCP port that accepts clinical
+messages and the protocol has no authentication of any kind — three framing bytes is the whole of
+it — so the only thing between the port and the record is who can route to it. Opening it is a
+network decision a deployment should have to make on purpose. The HTTP endpoint does the same work
+behind the gateway with a bearer token, and is gated to `HEALTH_INFORMATION_SHARE`: that HL7
+traditionally has no auth is a reason to add some, not to match it.
+
 ### The patient portal — a prefix, not a service
 `/portal/**` is the patient's own door onto their record: their appointments and self-booking,
 released laboratory reports, the visits a clinician has signed, their prescriptions, their bills,
@@ -1817,8 +1850,19 @@ SAST/DAST tooling, and performance profiles. Dependency scanning covers Python (
   created nor deleted; a morphology cut-off's **note** is likewise read-only, since it appears
   verbatim on signed reports. There is no critical-value concept anywhere in the service — no
   column, field, flag or notification — so there is no critical-range editor to build yet.
-- **Further clinical modules** — imaging/PACS, and an HL7 v2 interface engine. Both are named
-  gaps rather than half-built modules, which was the choice made deliberately.
+- **Imaging and PACS.** Named as a gap rather than half-built, which was the choice made
+  deliberately: DICOM is a storage protocol, a network protocol and a viewer, and a module with
+  the first and neither of the others would be a table pretending to be a modality.
+- **HL7 v2 routes messages; it does not act on them.** The engine receives, validates,
+  acknowledges and records, and publishes an accepted message as a domain event. Nothing on this
+  platform consumes those events yet, so an `ADT^A04` does not create a patient and an inbound
+  `ORU^R01` does not file a result. That is why AA is defined here as *arrived, parsed and
+  stored* — the acknowledgement a sender acts on has to mean what the platform actually did, and
+  the routing table that turns one into a registration is the next piece rather than a claim.
+- **Outbound HL7 is a call, not a subscription.** `POST /hl7/send` builds and sends an `ADT^A04`
+  or an `ORU^R01` on demand. Sending one automatically when a result is verified needs a
+  subscriber table — which practice gets which patient's results — and inventing one now would be
+  a routing policy nobody agreed.
 - **The care-team narrowing covers the encounter chart, and clinicians.** Laboratory orders,
   prescriptions, admissions and the casualty board are still role-gated, as are administrators. The
   encounter chart is where the narrowing bites hardest and where the deciding column is local to the

@@ -1025,6 +1025,30 @@ export type MethodTotal = {
   count: number;
 };
 
+export type Hl7Exchange = {
+  id: string;
+  /** IN for a message this platform received, OUT for one it sent. */
+  direction: "IN" | "OUT";
+  messageType: string | null;
+  controlId: string | null;
+  sendingApplication: string | null;
+  sendingFacility: string | null;
+  receivingApplication: string | null;
+  receivingFacility: string | null;
+  messageAt: string | null;
+  /** AA accepted, AE understood and refused, AR not understood. */
+  ackCode: "AA" | "AE" | "AR" | null;
+  ackText: string | null;
+  /** Null when nothing went wrong, and the first field anybody reads. */
+  error: string | null;
+  transport: "MLLP" | "HTTP";
+  peer: string | null;
+  receivedAt: string;
+  /** What was on the wire. The messages worth asking about are the ones that did not parse. */
+  raw: string;
+  ackRaw: string | null;
+};
+
 export type CashSessionStatus = "OPEN" | "CLOSED";
 
 export type CashSession = {

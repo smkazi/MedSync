@@ -87,6 +87,29 @@ hms:
     # platform would make the module wrong for the next deployment.
     gateway-auth-header: ${HMS_ABDM_GATEWAY_AUTH_HEADER:Authorization}
     gateway-auth-value: ${HMS_ABDM_GATEWAY_AUTH_VALUE:}
+    hl7:
+      # How this platform names itself in MSH-3 and MSH-4. A receiver routes on these, and two
+      # deployments both calling themselves HMS is a message filed against the wrong hospital.
+      application: ${HMS_HL7_APPLICATION:HMS}
+      facility: ${HMS_HL7_FACILITY:${HMS_FACILITY_NAME:HMS}}
+      # MSH-11. P is production and T is test, and a receiver is entitled to route on it -- a test
+      # message marked P is one somebody acts on.
+      processing-id: ${HMS_HL7_PROCESSING_ID:P}
+      # HL7 v2 predates UTF-8 and plenty of senders are still on Latin-1. Configurable rather than
+      # assumed: decoding a name with the wrong charset corrupts it silently.
+      charset: ${HMS_HL7_CHARSET:UTF-8}
+      connect-timeout-ms: ${HMS_HL7_CONNECT_TIMEOUT_MS:5000}
+      read-timeout-ms: ${HMS_HL7_READ_TIMEOUT_MS:15000}
+      mllp:
+        # Off unless a deployment says otherwise, and the default is the point: this is a raw TCP
+        # port that accepts clinical messages, and MLLP has no authentication of any kind. Opening
+        # it is a network decision somebody should have to make on purpose. The HTTP endpoint does
+        # the same work behind the gateway, with a bearer token.
+        enabled: ${HMS_HL7_MLLP_ENABLED:false}
+        port: ${HMS_HL7_MLLP_PORT:2575}
+        threads: ${HMS_HL7_MLLP_THREADS:8}
+        # A sender that never terminates a frame would otherwise buffer without bound.
+        max-message-bytes: ${HMS_HL7_MLLP_MAX_BYTES:1048576}
 
 spring.security.oauth2.resourceserver.jwt.jwk-set-uri: ${HMS_JWKS_URI:http://localhost:8081/.well-known/jwks.json}
 
