@@ -733,7 +733,7 @@ them and an empty dropdown is worse than an absent one.
 | Sharing | the consent register with the four conditions on every row, recording a decision (front desk), sending a record under a consent (clinicians), and what has been released about a patient and under what |
 | Messaging | delivery log with the send form, patient questions (the portal's queue, oldest first, where a reply may say what an SMS may not), message wording — readable by anybody who may send, editable by an administrator |
 | Pharmacy | dispensing queue with the override reason on the row, formulary with its ingredient lists, the interaction table with what to do about each pairing, stock by batch with what is about to expire — gated to the roles that may read a medication order |
-| Billing | invoices (open bills first, or one patient's whole history), raise an invoice, the day book split by how money arrived, claims, and — administrator-only — the charge list, payers with their agreed tariffs, and dated tax rates |
+| Billing | invoices (open bills first, or one patient's whole history), raise an invoice, the day book split by how money arrived, claims, and — administrator-only — the charge list, payers with their agreed tariffs, and dated tax rates. A bill carries its own credit notes and refunds, and the two forms that write them are gated apart: the refund is the cashier's, the credit note the administrator's |
 | Administration | staff directory, users (create, roles, reset a password), roles, audit trail |
 
 **The patient portal is a different application in the same codebase.** It is a route group of its

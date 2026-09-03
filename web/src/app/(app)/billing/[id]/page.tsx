@@ -6,8 +6,16 @@ import { currentUser, hasRole } from "@/lib/session";
 import type { ChargeItem, Claim, Invoice } from "@/lib/types";
 import { RecordForm } from "@/components/RecordForm";
 import { Badge, Card, Empty, ErrorNote, Stat, Table, formatDateTime, statusTone } from "@/components/ui";
-import { PAYMENT_METHODS } from "../state";
-import { addLine, cancelInvoice, issueInvoice, raiseClaim, takePayment } from "../actions";
+import { CREDIT_REASON_MIN, PAYMENT_METHODS } from "../state";
+import {
+  addLine,
+  cancelInvoice,
+  issueCreditNote,
+  issueInvoice,
+  payRefund,
+  raiseClaim,
+  takePayment,
+} from "../actions";
 
 /**
  * One invoice: what is on it, what has been paid, and what is left to do.
@@ -16,8 +24,13 @@ import { addLine, cancelInvoice, issueInvoice, raiseClaim, takePayment } from ".
  * the states mean different things. Lines go on a draft and not on an issued bill. A payment is
  * taken against an issued bill and not against a draft nobody has been given. A cancellation is
  * offered only while no money has arrived, because cancelling a paid invoice would make the record
- * say a treatment was never billed while the cash is in the drawer — and the platform has no
- * refund, which the note at the bottom says out loud.
+ * say a treatment was never billed while the cash is in the drawer; the honest correction once it
+ * has is a credit note and a refund, and both are here.
+ *
+ * <p>Those two are also the one place on this screen where a role and not a state decides. Issuing
+ * a credit note is an administrator's act and paying a refund a cashier's, so the two forms are
+ * gated separately — a cashier sees the refund and not the note, which is the half of the
+ * separation the platform actually enforces.
  */
 export default async function InvoicePage({
   params,
@@ -28,7 +41,10 @@ export default async function InvoicePage({
 }) {
   const { id } = await params;
   const { problem, done } = await searchParams;
-  const mayWrite = hasRole(await currentUser(), "ADMIN", "CASHIER");
+  const user = await currentUser();
+  const mayWrite = hasRole(user, "ADMIN", "CASHIER");
+  // BILLING_CONFIG on the service: deciding a charge is not owed is not the till's to make.
+  const mayCredit = hasRole(user, "ADMIN");
 
   const [invoice, chargeItems, claims] = await Promise.all([
     load<Invoice>(`/invoices/${id}`),
@@ -269,6 +285,97 @@ export default async function InvoicePage({
       </Card>
 
       {/*
+        Offered on any invoice that was not cancelled and has something on it to withdraw — a bill
+        can be wrong before anybody has paid it, and correcting it then is the cheap case. What
+        cannot be credited is a cancelled invoice, which was never money the hospital was owed.
+      */}
+      {mayCredit && bill.status !== "CANCELLED" && bill.payable > 0 && (
+        <Card title="Issue a credit note">
+          <RecordForm
+            action={issueCreditNote}
+            hidden={{ invoiceId: bill.id }}
+            submitLabel="Issue the credit note"
+            busyLabel="Issuing…"
+            columns={1}
+            fields={[
+              {
+                name: "amount",
+                label: "How much is not owed",
+                type: "number",
+                required: true,
+                step: "0.01",
+                hint: `${money(bill.payable)} of ${money(bill.total)} could still be credited. The invoice total does not change — the credit is recorded beside it.`,
+              },
+              {
+                name: "reason",
+                label: "Why",
+                type: "textarea",
+                required: true,
+                placeholder: "The second consultation was not given; billed in error at the desk.",
+                hint: `A sentence, at least ${CREDIT_REASON_MIN} characters. "Adjustment" is what a box collects when it does not ask, and the document exists to say why.`,
+              },
+            ]}
+          />
+          <p className="mt-3 border-t border-line pt-2 text-xs text-ink-muted">
+            This says money is not owed. It does not hand any back: if the bill has been paid, the
+            credit makes that amount refundable and a cashier pays it out separately.
+          </p>
+        </Card>
+      )}
+
+      {mayWrite && bill.refundable > 0 && (
+        <Card title="Pay a refund">
+          <RecordForm
+            action={payRefund}
+            hidden={{ invoiceId: bill.id }}
+            submitLabel="Record the refund"
+            busyLabel="Recording…"
+            columns={1}
+            fields={[
+              {
+                name: "amount",
+                label: "Amount",
+                type: "number",
+                required: true,
+                step: "0.01",
+                hint: `${money(bill.refundable)} is refundable — what has been credited, less what has already gone back.`,
+              },
+              {
+                name: "method",
+                label: "How it goes back",
+                type: "select",
+                required: true,
+                options: [{ value: "", label: "— pick one —" }, ...PAYMENT_METHODS],
+                hint: "It need not match how it arrived: cash taken at the desk often goes back by transfer.",
+              },
+              {
+                name: "creditNoteId",
+                label: "Against which credit note",
+                type: "select",
+                options: [
+                  { value: "", label: "— not one in particular —" },
+                  ...bill.creditNotes.map((note) => ({
+                    value: note.id,
+                    label: `${note.number} · ${money(note.amount)}`,
+                  })),
+                ],
+                hint: "Which authorisation this draws on, and the first thing asked about a payout.",
+              },
+              {
+                name: "reference",
+                label: "Reference",
+                hint: "The reversal reference from the acquirer's portal, or the transfer's UTR",
+              },
+            ]}
+          />
+          <p className="mt-3 border-t border-line pt-2 text-xs text-ink-muted">
+            Recorded here, not executed here. Reverse the card or UPI payment in the acquirer&rsquo;s
+            own portal first, then enter it with its reference — exactly as a payment is.
+          </p>
+        </Card>
+      )}
+
+      {/*
         Both registers travel with the invoice rather than being fetched on demand, and they are
         rendered only when they have something in them: "why is this bill smaller than the
         treatment" and "where did that money go" are asked while looking at the bill, and an empty
@@ -374,8 +481,8 @@ export default async function InvoicePage({
           </form>
           <p className="mt-3 text-xs text-ink-muted">
             Only while nothing has been collected. Once money has arrived the honest correction is a
-            refund and a credit note, and this platform has neither — the README says so rather than
-            letting a cancellation quietly stand in for one.
+            credit note and a refund, which leave the charge, the withdrawal and the payout all
+            readable — everything a cancellation would erase.
           </p>
         </Card>
       )}

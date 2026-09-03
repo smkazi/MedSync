@@ -41,6 +41,15 @@ export const TARIFF_FIELDS = ["chargeItemCode", "price"] as const;
 
 export const CLAIM_FIELDS = ["invoiceId", "preauthNo"] as const;
 
+export const CREDIT_NOTE_FIELDS = ["amount", "reason"] as const;
+
+/**
+ * `creditNoteId` is posted when the payout draws on a single note, which is the ordinary case and
+ * the one somebody asks about afterwards. It is optional because a refund may settle several, and
+ * the authorisation is enforced on the sum rather than on the link.
+ */
+export const REFUND_FIELDS = ["amount", "method", "creditNoteId", "reference"] as const;
+
 /**
  * Fields the platform expects as numbers rather than strings.
  *
@@ -50,6 +59,14 @@ export const CLAIM_FIELDS = ["invoiceId", "preauthNo"] as const;
  * together — every total rendered here is one the service computed.
  */
 export const NUMBER_FIELDS = ["qty", "discount", "unitPrice", "amount", "percent", "price"];
+
+/**
+ * The minimum a credit note's reason may be, matching `@Size(min = 20)` on the request.
+ *
+ * <p>Here so the form can say the number before the service refuses on it. A person typing
+ * "adjustment" into a box that accepts it and then reads a 400 has been made to do the work twice.
+ */
+export const CREDIT_REASON_MIN = 20;
 
 /** How money arrived. In code because each value is a different reconciliation. */
 export const PAYMENT_METHODS = [

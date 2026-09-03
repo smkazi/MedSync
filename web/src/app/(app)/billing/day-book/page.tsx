@@ -83,9 +83,9 @@ export default async function DayBookPage({
                 hint="everything still owed as of this date"
               />
               <Stat
-                label="Collected (gross)"
+                label="Collected"
                 value={money(day.collected)}
-                hint={`${day.payments} payment(s) taken today`}
+                hint={`${day.payments} payment(s) taken today, before anything went back`}
               />
               <Stat
                 label="Refunded"

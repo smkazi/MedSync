@@ -121,8 +121,83 @@ test.describe("the billing desk", () => {
 
     await page.goto(invoice);
     await expect(page.getByText("paid", { exact: true })).toBeVisible();
-    // Paid, so no cancellation is offered — the platform has no refund and does not pretend to.
+    // Paid, so no cancellation is offered: correcting it is a credit note and a refund, which the
+    // journey below drives. Cancelling would say the treatment was never billed while the cash sat
+    // in the drawer, and no reconciliation recovers from that.
     await expect(page.getByRole("region", { name: "Cancel it" })).toHaveCount(0);
+  });
+
+  test("a paid bill is corrected by an administrator and paid back by a cashier", async ({
+    page,
+  }) => {
+    test.setTimeout(180_000);
+    const mrn = await mrnFromTheFrontDesk(page);
+    await signIn(page, "cashier");
+    const invoice = await raiseInvoice(page, mrn);
+    await addLine(page, /^Outpatient consultation/, "1");
+    await page.getByRole("button", { name: /^Issue / }).click();
+
+    const payment = page.getByRole("region", { name: "Take a payment" });
+    await payment.getByLabel("Amount").fill("500.00");
+    await payment.getByLabel("How it arrived").selectOption("CASH");
+    await payment.getByRole("button", { name: "Record the payment" }).click();
+    await expect(page.getByText("paid", { exact: true })).toBeVisible();
+
+    // The cashier is offered neither half yet: nothing is refundable until a note exists, and
+    // deciding a charge is not owed was never the till's to make.
+    await expect(page.getByRole("region", { name: "Issue a credit note" })).toHaveCount(0);
+    await expect(page.getByRole("region", { name: "Pay a refund" })).toHaveCount(0);
+
+    await signIn(page, "admin");
+    await page.goto(invoice);
+    const credit = page.getByRole("region", { name: "Issue a credit note" });
+
+    // The service's own floor on the reason, surfaced against the field that broke it rather than
+    // as a banner: the service names `reason`, so the message belongs on `reason`.
+    await credit.getByLabel("How much is not owed").fill("500.00");
+    await credit.getByLabel("Why").fill("adjustment");
+    await credit.getByRole("button", { name: "Issue the credit note" }).click();
+    await expect(credit.getByLabel("Why")).toHaveAttribute("aria-invalid", "true");
+    await expect(credit).toContainText("size must be between 20 and 255");
+
+    await credit.getByLabel("Why").fill("Consultation was not given; billed in error at the desk.");
+    await credit.getByRole("button", { name: "Issue the credit note" }).click();
+
+    // Asserted on the state rather than on a banner, for the reason the payment above is: crediting
+    // the bill in full leaves nothing further to credit, so the form goes and its confirmation with
+    // it. What the screen must carry afterwards is the note itself and the money now owed back.
+    await expect(page.getByRole("region", { name: "Credit notes" }))
+      .toContainText("billed in error");
+    await expect(page.getByRole("region", { name: "Issue a credit note" })).toHaveCount(0);
+    // The charged total stands beside the credit rather than being rewritten by it.
+    await expect(page.getByRole("main")).toContainText("Owed back");
+    await expect(page.getByRole("main")).toContainText("Credited");
+
+    // The register is readable by the cashier, and now so is the payout — which was refused a
+    // moment ago on the same invoice, by the same account, before a note authorised it.
+    await signIn(page, "cashier");
+    await page.goto(invoice);
+    const refund = page.getByRole("region", { name: "Pay a refund" });
+    await expect(refund).toBeVisible();
+    await expect(page.getByRole("region", { name: "Issue a credit note" })).toHaveCount(0);
+
+    await refund.getByLabel("Amount").fill("500.00");
+    await refund.getByLabel("How it goes back").selectOption("BANK_TRANSFER");
+    await refund.getByLabel("Reference").fill("UTR-E2E-1");
+    await refund.getByRole("button", { name: "Record the refund" }).click();
+
+    // Paid back in full, so the form goes the way the payment form did: there is nothing left to
+    // hand over, and what the screen must say instead is where the money went.
+    await expect(page.getByRole("region", { name: "Refunds" })).toContainText("UTR-E2E-1");
+    await expect(page.getByRole("region", { name: "Refunds" })).toContainText("cashier");
+    await page.goto(invoice);
+    await expect(page.getByRole("region", { name: "Pay a refund" })).toHaveCount(0);
+
+    // And the day's cash-up separates what came in from what went back out, rather than netting
+    // them into one figure that would balance and explain nothing.
+    await page.goto("/billing/day-book");
+    await expect(page.getByRole("main")).toContainText("Net taken");
+    await expect(page.getByRole("main")).toContainText("bank transfer");
   });
 
   test("a payer's tariff prices the invoice, and the claim settles onto it", async ({ page }) => {
@@ -173,8 +248,10 @@ test.describe("the billing desk", () => {
 
     await expect(page.getByText("Collected", { exact: true })).toBeVisible();
     await expect(page.getByText("Outstanding", { exact: true })).toBeVisible();
-    // The earlier tests collected cash and a settlement in this run, so both appear.
-    const table = page.getByRole("table");
+    // The earlier tests collected cash and a settlement in this run, so both appear. Taken as the
+    // first table rather than the only one: a day with a refund on it renders a second, and money
+    // out belongs nowhere near the tally of how money arrived.
+    const table = page.getByRole("table").first();
     await expect(table).toContainText("upi");
   });
 

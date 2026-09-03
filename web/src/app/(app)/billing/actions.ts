@@ -5,16 +5,26 @@ import { redirect } from "next/navigation";
 import { readForm, refused, withoutBlanks, type FormState } from "@/lib/form";
 import { money } from "@/lib/money";
 import { submit } from "@/lib/mutate";
-import type { ChargeItem, Claim, Invoice, Payer, TaxRate } from "@/lib/types";
+import type {
+  ChargeItem,
+  Claim,
+  CreditNote,
+  Invoice,
+  Payer,
+  Refund,
+  TaxRate,
+} from "@/lib/types";
 import {
   CHARGE_ITEM_EDIT_FIELDS,
   CHARGE_ITEM_FIELDS,
   CLAIM_FIELDS,
+  CREDIT_NOTE_FIELDS,
   INVOICE_FIELDS,
   LINE_FIELDS,
   NUMBER_FIELDS,
   PAYER_FIELDS,
   PAYMENT_FIELDS,
+  REFUND_FIELDS,
   TARIFF_FIELDS,
   TAX_RATE_FIELDS,
 } from "./state";
@@ -119,6 +129,65 @@ export async function takePayment(_previous: FormState, form: FormData): Promise
     done: result.data.outstanding > 0
       ? `Received. ${money(result.data.outstanding)} of ${money(result.data.total)} is still outstanding.`
       : `Received. ${result.data.number} is paid in full.`,
+  };
+}
+
+// ---- credit notes and refunds ----------------------------------------------
+
+/**
+ * Issues a credit note: this much of the bill is not owed.
+ *
+ * <p>Revalidates the day book as well as the invoice, because a credit changes what the day billed
+ * even though no money moved. The confirmation quotes the service's own recomputed figures — what
+ * is now payable, and what has become refundable — since those are the two numbers that decide
+ * whether anybody needs to hand money back next.
+ */
+export async function issueCreditNote(_previous: FormState, form: FormData): Promise<FormState> {
+  const invoiceId = String(form.get("invoiceId") ?? "");
+  const values = readForm(form, CREDIT_NOTE_FIELDS);
+  const result = await submit<CreditNote>(`/invoices/${invoiceId}/credit-notes`, "POST",
+    coerceNumbers(values));
+  if (!result.ok) {
+    return refused(values, result);
+  }
+  revalidatePath(`/billing/${invoiceId}`);
+  revalidatePath("/billing");
+  revalidatePath("/billing/day-book");
+  return {
+    values: {},
+    fieldErrors: {},
+    error: null,
+    done: result.data.invoiceRefundable > 0
+      ? `${result.data.number} issued. ${money(result.data.invoicePayable)} is now payable, and ${money(result.data.invoiceRefundable)} is owed back.`
+      : `${result.data.number} issued. ${money(result.data.invoicePayable)} is now payable and ${money(result.data.invoiceOutstanding)} is outstanding.`,
+  };
+}
+
+/**
+ * Pays money back.
+ *
+ * <p>A refusal here is shown exactly as the service worded it, and that matters more than usual:
+ * the ordinary refusal is "money goes back only once a credit note says it is not owed", whose fix
+ * is an administrator issuing a note rather than the cashier trying a smaller number.
+ */
+export async function payRefund(_previous: FormState, form: FormData): Promise<FormState> {
+  const invoiceId = String(form.get("invoiceId") ?? "");
+  const values = readForm(form, REFUND_FIELDS);
+  const result = await submit<Refund>(`/invoices/${invoiceId}/refunds`, "POST",
+    coerceNumbers(values));
+  if (!result.ok) {
+    return refused(values, result);
+  }
+  revalidatePath(`/billing/${invoiceId}`);
+  revalidatePath("/billing");
+  revalidatePath("/billing/day-book");
+  return {
+    values: {},
+    fieldErrors: {},
+    error: null,
+    done: result.data.invoiceRefundable > 0
+      ? `${money(result.data.amount)} paid back. ${money(result.data.invoiceRefundable)} is still owed back.`
+      : `${money(result.data.amount)} paid back. Nothing further is owed back on this invoice.`,
   };
 }
 
