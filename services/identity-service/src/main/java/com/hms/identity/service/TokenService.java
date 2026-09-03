@@ -6,6 +6,7 @@ import com.hms.common.security.CurrentUser;
 import com.hms.identity.domain.RefreshToken;
 import com.hms.identity.domain.User;
 import com.hms.identity.repo.RefreshTokenRepository;
+import com.hms.identity.repo.UserRepository;
 import com.nimbusds.jose.JOSEException;
 import com.nimbusds.jose.JWSAlgorithm;
 import com.nimbusds.jose.JWSHeader;
@@ -54,6 +55,7 @@ public class TokenService {
     public static final String PASSWORD_CHANGE_REQUIRED_CLAIM = "pwd_change_required";
 
     private final RefreshTokenRepository refreshTokens;
+    private final UserRepository users;
     private final RefreshTokenRevoker revoker;
     private final KeyService keys;
     private final AuditService audit;
@@ -65,8 +67,8 @@ public class TokenService {
     private final Duration portalIdleTimeout;
     private final Duration sessionMaxLifetime;
 
-    public TokenService(RefreshTokenRepository refreshTokens, RefreshTokenRevoker revoker, KeyService keys,
-                        AuditService audit,
+    public TokenService(RefreshTokenRepository refreshTokens, UserRepository users,
+                        RefreshTokenRevoker revoker, KeyService keys, AuditService audit,
                         @Value("${hms.jwt.issuer:http://localhost:8081}") String issuer,
                         @Value("${hms.jwt.audience:hms}") String audience,
                         @Value("${hms.jwt.access-token-ttl:PT15M}") Duration accessTokenTtl,
@@ -75,6 +77,7 @@ public class TokenService {
                         @Value("${hms.jwt.portal-idle-timeout:PT15M}") Duration portalIdleTimeout,
                         @Value("${hms.jwt.session-max-lifetime:P7D}") Duration sessionMaxLifetime) {
         this.refreshTokens = refreshTokens;
+        this.users = users;
         this.revoker = revoker;
         this.keys = keys;
         this.audit = audit;
@@ -141,7 +144,7 @@ public class TokenService {
                     stored.getUserId(), revoked, stored.getFamilyId());
             // Logged since this class was written and never audited, which meant the one event on
             // this path that looks like theft was invisible to the audit report.
-            audit.record("REFRESH_TOKEN_REUSE", "User", stored.getUserId(),
+            recordAgainst("REFRESH_TOKEN_REUSE", stored.getUserId(),
                     "family " + stored.getFamilyId() + "; " + revoked + " token(s) revoked");
             throw new BadCredentialsException("Refresh token is not valid");
         }
@@ -195,7 +198,7 @@ public class TokenService {
             int revoked = revoker.revokeFamily(consumed.getFamilyId(), "idle-timeout");
             log.info("Session for user {} timed out after {} idle; revoked {} token(s)",
                     consumed.getUserId(), idle, revoked);
-            audit.record("SESSION_EXPIRED", "User", consumed.getUserId(),
+            recordAgainst("SESSION_EXPIRED", consumed.getUserId(),
                     "idle timeout after " + idle + "; " + revoked + " token(s) revoked");
             throw new SessionExpiredException(
                     "Your session timed out after " + describe(idle) + " without activity. Please sign in again.");
@@ -205,7 +208,7 @@ public class TokenService {
             int revoked = revoker.revokeFamily(consumed.getFamilyId(), "session-lifetime");
             log.info("Session for user {} reached its {} lifetime; revoked {} token(s)",
                     consumed.getUserId(), sessionMaxLifetime, revoked);
-            audit.record("SESSION_EXPIRED", "User", consumed.getUserId(),
+            recordAgainst("SESSION_EXPIRED", consumed.getUserId(),
                     "absolute lifetime " + sessionMaxLifetime + "; " + revoked + " token(s) revoked");
             throw new SessionExpiredException(
                     "Sessions end after " + describe(sessionMaxLifetime) + " however active they are. "
@@ -311,6 +314,18 @@ public class TokenService {
             throw new IllegalStateException("Could not sign access token", ex);
         }
         return jwt.serialize();
+    }
+
+    /**
+     * Audits an action against an account when there is no session to read it from — which is
+     * every event on this path, since a refresh presents a token rather than a signed-in caller.
+     * The username is resolved so the report's "who" filter finds these rows: nobody investigating
+     * a burned session knows the account's UUID, and a row saying {@code system} answers no
+     * question anybody has.
+     */
+    private void recordAgainst(String action, UUID userId, String detail) {
+        audit.recordAs(action, "User", userId, detail,
+                users.findById(userId).map(User::getUsername).orElse(null), userId.toString());
     }
 
     private static String randomToken() {

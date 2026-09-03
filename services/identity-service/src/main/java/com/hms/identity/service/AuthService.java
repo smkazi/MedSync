@@ -8,6 +8,7 @@ import com.hms.identity.domain.User;
 import com.hms.identity.repo.UserRepository;
 import com.hms.identity.web.dto.AuthDtos;
 import java.time.Instant;
+import java.util.Objects;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -57,31 +58,42 @@ public class AuthService {
         if (user == null) {
             // Spend comparable time on an unknown user so response timing does not leak existence.
             passwordEncoder.matches(rawPassword, timingDecoyHash);
-            audit.record("LOGIN_FAILED", "User", username, "unknown username");
+            // Recorded under the name as typed, with no actor id, because there is no account to
+            // point at. A hundred of these in a row under a hundred different names is what
+            // credential stuffing looks like on this report.
+            audit.recordAs("LOGIN_FAILED", "User", username, "unknown username", username, null);
             throw new BadCredentialsException("Invalid username or password");
         }
+        // Stated rather than assumed, exactly as TokenService.signAccessToken does: a user loaded
+        // from the repository always has an id, and the alternative to saying so is the string
+        // "null" in the actor column of an audit row nobody can then trace.
+        UUID userId = Objects.requireNonNull(user.getId(), "a persisted user must have an id");
         if (user.isLocked()) {
-            audit.record("LOGIN_BLOCKED", "User", user.getId(), "account locked until " + user.getLockedUntil());
+            audit.recordAs("LOGIN_BLOCKED", "User", userId, "account locked until " + user.getLockedUntil(),
+                    user.getUsername(), userId.toString());
             throw new LockedException("Account is temporarily locked after repeated failed logins");
         }
         if (!user.isActive()) {
-            audit.record("LOGIN_BLOCKED", "User", user.getId(), "account disabled");
+            audit.recordAs("LOGIN_BLOCKED", "User", userId, "account disabled",
+                    user.getUsername(), userId.toString());
             throw new DisabledException("Account is disabled");
         }
         if (!passwordEncoder.matches(rawPassword, user.getPasswordHash())) {
             // Committed separately: this method throws, and a rolled-back counter would mean
             // the lockout threshold is never reached.
-            loginAttempts.recordFailure(user.getId());
-            audit.record("LOGIN_FAILED", "User", user.getId(), "bad password");
+            loginAttempts.recordFailure(userId);
+            audit.recordAs("LOGIN_FAILED", "User", userId, "bad password",
+                    user.getUsername(), userId.toString());
             throw new BadCredentialsException("Invalid username or password");
         }
 
         // Stamped by a targeted statement rather than by mutating the entity: users is
         // optimistically locked, and two simultaneous sign-ins for one account would otherwise
         // collide on the version column and fail a login that was perfectly valid.
-        Instant loggedInAt = loginAttempts.recordSuccess(user.getId());
+        Instant loggedInAt = loginAttempts.recordSuccess(userId);
         TokenService.TokenPair pair = tokens.issueFor(user, userAgent);
-        audit.record("LOGIN_SUCCEEDED", "User", user.getId(), "roles " + user.roleCodes());
+        audit.recordAs("LOGIN_SUCCEEDED", "User", userId, "roles " + user.roleCodes(),
+                user.getUsername(), userId.toString());
         log.info("User {} logged in", user.getUsername());
         return response(pair, user, loggedInAt);
     }
@@ -103,14 +115,18 @@ public class AuthService {
 
         tokens.markRotated(presented);
         TokenService.TokenPair pair = tokens.issueFor(user, presented.getFamilyId(), userAgent);
-        audit.record("TOKEN_REFRESHED", "User", user.getId(), "family " + presented.getFamilyId());
+        UUID userId = Objects.requireNonNull(user.getId(), "a persisted user must have an id");
+        audit.recordAs("TOKEN_REFRESHED", "User", userId, "family " + presented.getFamilyId(),
+                user.getUsername(), userId.toString());
         return response(pair, user);
     }
 
     @Transactional
     public void logout(String rawRefreshToken) {
-        tokens.find(rawRefreshToken).ifPresent(token ->
-                audit.record("LOGOUT", "User", token.getUserId(), "refresh token revoked"));
+        tokens.find(rawRefreshToken).ifPresent(token -> audit.recordAs("LOGOUT", "User", token.getUserId(),
+                "refresh token revoked",
+                users.findById(token.getUserId()).map(User::getUsername).orElse(null),
+                token.getUserId().toString()));
         tokens.revoke(rawRefreshToken);
     }
 

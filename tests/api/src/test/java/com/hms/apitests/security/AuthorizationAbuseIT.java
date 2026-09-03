@@ -212,6 +212,20 @@ class AuthorizationAbuseIT extends RequiresRunningStack {
                 org.hamcrest.Matchers.is(400)));
     }
 
+    @ParameterizedTest(name = "{0} must not download the audit trail")
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"dr.rao", "nurse.iqbal", "reception"})
+    void theAuditExportIsAdminOnly(String username) {
+        // Not in the table above, and the reason is instructive. Api's spec sends
+        // "Accept: application/json", and this endpoint produces text/csv only -- so content
+        // negotiation answers 406 before @PreAuthorize is ever reached. That is correct HTTP and a
+        // useless assertion: 406 would pass whatever the role rules said. Asking for the media type
+        // the endpoint actually serves is what makes the refusal the role's.
+        given().spec(Api.as(username))
+                .accept("text/csv")
+                .when().get("/admin/audit.csv")
+                .then().statusCode(403);
+    }
+
     @Test
     @DisplayName("linking an ABHA is refused for a clinician even when the request is well-formed")
     void aWellFormedAbhaLinkIsStillRefused() {

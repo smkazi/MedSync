@@ -605,14 +605,20 @@ class PatientApiIntegrationTest {
         String employeeNo = "BADGE" + Long.toString(System.nanoTime(), 36)
                 .toUpperCase(java.util.Locale.ROOT).substring(0, 6);
         String specialty = "Interventional Radiology " + employeeNo;
+        // The name carries the badge too, and that is not decoration. The staff table is not
+        // cleaned between runs, so every previous run of this test left a "Searchable Person"
+        // behind; searching that name eventually returned a page of them that no longer included
+        // this one, and the test failed as though the name search were broken. Every term here
+        // has to name *this* record.
+        String fullName = "Searchable Person " + employeeNo;
         mockMvc.perform(post("/staff").with(as("ADMIN"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of(
-                                "employeeNo", employeeNo, "fullName", "Searchable Person",
+                                "employeeNo", employeeNo, "fullName", fullName,
                                 "designation", "Consultant", "specialty", specialty))))
                 .andExpect(status().isCreated());
 
-        for (String term : java.util.List.of(employeeNo, specialty, "Searchable Person")) {
+        for (String term : java.util.List.of(employeeNo, specialty, fullName)) {
             assertThat(mockMvc.perform(get("/staff").param("q", term).with(as("RECEPTIONIST")))
                     .andExpect(status().isOk())
                     .andReturn().getResponse().getContentAsString())

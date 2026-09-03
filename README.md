@@ -10,9 +10,9 @@ haematology analyzer over its own wire protocol and released by a pathologist.
 
 > **Status:** the clinical core, the laboratory (including analyzer integration), the AI service
 > and the web UI are implemented and verified end to end against a real stack, and so are the
-> containerisation, TLS, security-testing and performance-testing layers. **1,123 tests pass** —
-> 630 Java unit and integration, 91 Python, 47 web unit, 229 black-box API and security abuse cases,
-> and 126 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
+> containerisation, TLS, security-testing and performance-testing layers. **1,141 tests pass** —
+> 643 Java unit and integration, 91 Python, 47 web unit, 232 black-box API and security abuse cases,
+> and 128 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
 > [Security](#security); what is left is in the [Roadmap](#roadmap).
 
 ---
@@ -1065,7 +1065,12 @@ to a patient record on its own.
   them.
 - **Audit** — every service emits audit events; identity persists them. Writes on deliberately
   failing paths (a rejected login, detected token theft) commit in their own transactions, so the
-  trail survives the rollback that follows.
+  trail survives the rollback that follows. The report filters by entity, action, actor id, a
+  fragment of a username and a date range, and downloads as CSV — with every field escaped per RFC
+  4180 *and* any leading `=`, `+`, `-`, `@`, tab or carriage return neutralised, because `detail`
+  carries operator-supplied text and a spreadsheet executes those. Quoting does not help: the
+  quotes are CSV syntax and are stripped before the spreadsheet reads the first character. The
+  export is capped, and says so on its last line when the cap bites.
 - **Rate limiting** — per client at the gateway, in four buckets that defend against four different
   things. The general one stops a client exhausting the pool; `/auth/**` is far stricter, because
   account lockout stops guessing at one account and this stops one password sprayed across a
@@ -1118,12 +1123,12 @@ make help          # everything else
 Or directly:
 
 ```bash
-mvn -q verify                                     # 630 Java unit and integration tests
+mvn -q verify                                     # 643 Java unit and integration tests
 cd services/ai-service && uv run pytest -q        # 91 Python tests
 cd web && npm run lint && npm run typecheck       # web static checks
 cd web && npm test                                # 47 web unit tests
-cd web && npx playwright test                     # 126 browser tests, no skips
-mvn -Pautomation -pl tests/api verify             # 229 API and security abuse cases
+cd web && npx playwright test                     # 128 browser tests, no skips
+mvn -Pautomation -pl tests/api verify             # 232 API and security abuse cases
 ```
 
 | Layer | What runs | Where |
@@ -1451,6 +1456,26 @@ Worth writing down, because it is the argument for having built them:
   transaction was not waiting on a lock, it was waiting on the application. The test suite hung for
   half an hour rather than failing, which is how it was found; the fix is to run every check before
   the rotation, and the reason is now written where the split lives.
+- **The audit report's actor filter returned every action nobody did.** The predicate read
+  `a.actorId like :actorId or a.actorId is null` — added so an unfiltered report would still show
+  rows that carry no actor — and the second clause made every one of those rows match *every*
+  actor filter. It is the same defect `UserRepository` documents having fixed one slice earlier,
+  in a query written from the same template, and the fix is the same: compare the pattern to `%`
+  to say "no filter was supplied" explicitly. It was harmless until this slice and stopped being
+  so inside it, which is the interesting part. Attributing a failed sign-in against a username
+  nobody holds means writing a row with a genuinely null actor — there is no account to point at —
+  and in the development database the old predicate then answered "what has this doctor done" with
+  81 of their own actions **plus 16 credential-stuffing attempts against names that do not exist**.
+  An audit report that looks authoritative while answering a different question is worse than one
+  that is missing.
+- **Nobody could be told who signed in.** `AuditService` reads the actor off the security
+  context, and every row an auditor asks about first — who signed in, whose sign-in failed, which
+  account was locked out, whose session was burned for a replayed token — is written *before* there
+  is a session to read. So all of them recorded `system` and the all-zero actor id: **5,262 of
+  5,746 rows** in the development database, including every single sign-in. The report's headline
+  filter was useless for exactly the actions it exists to answer questions about. Found by a
+  browser test written to exercise that filter, which came back empty. The callers on those paths
+  always knew whose account it was, and there is now a `recordAs` for saying so.
 - **A refresh token replayed after rotation — the one event on that path that looks like theft — was
   logged and never audited.** It burned the whole token family and wrote a `WARN`, so the platform
   reacted correctly and the audit report, which is where anyone would go looking, showed nothing.

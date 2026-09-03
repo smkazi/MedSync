@@ -15,24 +15,47 @@ import { Badge, Card, Empty, ErrorNote, Table, formatDateTime } from "@/componen
 export default async function AuditPage({
   searchParams,
 }: {
-  searchParams: Promise<{ entity?: string; action?: string }>;
+  searchParams: Promise<{
+    entity?: string;
+    action?: string;
+    actorId?: string;
+    username?: string;
+    from?: string;
+    to?: string;
+  }>;
 }) {
-  const { entity = "", action = "" } = await searchParams;
-  const params = new URLSearchParams({ size: "100" });
-  if (entity) params.set("entity", entity);
-  if (action) params.set("action", action);
+  const { entity = "", action = "", actorId = "", username = "", from = "", to = "" } = await searchParams;
+  const filters = new URLSearchParams();
+  if (entity) filters.set("entity", entity);
+  if (action) filters.set("action", action);
+  if (actorId) filters.set("actorId", actorId);
+  if (username) filters.set("username", username);
+  if (from) filters.set("from", from);
+  if (to) filters.set("to", to);
 
+  const params = new URLSearchParams(filters);
+  params.set("size", "100");
   const { data: entries, error } = await load<Page<AuditEntry>>(`/admin/audit?${params}`);
+  // The same filters, so the file and the table on screen cannot disagree about the period.
+  const csvHref = `/api/admin/audit${filters.size > 0 ? `?${filters}` : ""}`;
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-xl font-semibold tracking-tight">Audit trail</h1>
         <p className="text-sm text-ink-muted">
-          Who did what, and the correlation id that ties it to the request across services.
+          Who did what, and the correlation id that ties it to the request across services. With no
+          dates set the report covers the last thirty days.
         </p>
       </div>
 
+      {error && <ErrorNote>{error}</ErrorNote>}
+
+      {/* No filters and no download link when the report could not be read. Offering a Download
+          CSV button to somebody the platform has just refused would produce a second refusal, in
+          a file they cannot open, which is a worse answer than the one above. */}
+      {entries && (
+        <>
       <form className="flex flex-wrap items-end gap-3">
         <div>
           <label htmlFor="entity" className="block text-sm font-medium">
@@ -58,28 +81,74 @@ export default async function AuditPage({
             className="mt-1 rounded-md border border-line bg-surface-raised px-3 py-2 text-sm"
           />
         </div>
+        <div>
+          <label htmlFor="username" className="block text-sm font-medium">
+            Who
+          </label>
+          <input
+            id="username"
+            name="username"
+            defaultValue={username}
+            placeholder="part of a username"
+            className="mt-1 rounded-md border border-line bg-surface-raised px-3 py-2 text-sm"
+          />
+        </div>
+        <div>
+          <label htmlFor="from" className="block text-sm font-medium">
+            From
+          </label>
+          <input
+            id="from"
+            name="from"
+            type="date"
+            defaultValue={from}
+            className="mt-1 rounded-md border border-line bg-surface-raised px-3 py-2 text-sm"
+          />
+        </div>
+        <div>
+          <label htmlFor="to" className="block text-sm font-medium">
+            To
+          </label>
+          <input
+            id="to"
+            name="to"
+            type="date"
+            defaultValue={to}
+            className="mt-1 rounded-md border border-line bg-surface-raised px-3 py-2 text-sm"
+          />
+        </div>
         <button
           type="submit"
           className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90"
         >
           Filter
         </button>
+        <a
+          href={csvHref}
+          className="rounded-md border border-line px-4 py-2 text-sm font-medium hover:bg-surface-raised"
+        >
+          Download CSV
+        </a>
       </form>
 
-      {error && <ErrorNote>{error}</ErrorNote>}
-
-      {entries && (
-        <Card title={`Entries (${entries.totalElements})`}>
+      <Card title={`Entries (${entries.totalElements})`}>
           {entries.content.length === 0 ? (
             <Empty>Nothing recorded for that filter.</Empty>
           ) : (
-            <Table head={["When", "Who", "Action", "Entity", "Detail", "Service", "Correlation"]}>
+            <Table
+              head={["When", "Who", "Actor id", "Action", "Entity", "Detail", "Service", "Correlation"]}
+            >
               {entries.content.map((entry) => (
                 <tr key={entry.id}>
                   <td className="numeric whitespace-nowrap px-3 py-2 text-ink-muted">
                     {formatDateTime(entry.occurredAt)}
                   </td>
                   <td className="px-3 py-2">{entry.username ?? "—"}</td>
+                  {/* Shown because it is filterable: a filter whose value never appears cannot be
+                      checked, and an empty result reads the same as a mistyped id. */}
+                  <td className="numeric px-3 py-2 text-xs text-ink-muted">
+                    {entry.actorId ? entry.actorId.slice(0, 8) : "—"}
+                  </td>
                   <td className="px-3 py-2">
                     <Badge tone="accent">{entry.action}</Badge>
                   </td>
@@ -94,6 +163,7 @@ export default async function AuditPage({
             </Table>
           )}
         </Card>
+        </>
       )}
     </div>
   );

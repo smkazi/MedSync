@@ -482,6 +482,8 @@ export type AuditEntry = {
   entity: string;
   entityId: string | null;
   detail: string | null;
+  /** Null on system-initiated rows — a scheduler, a device ingest, a refresh carrying no session. */
+  actorId: string | null;
   username: string | null;
   correlationId: string | null;
   occurredAt: string;

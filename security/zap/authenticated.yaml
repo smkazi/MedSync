@@ -95,6 +95,9 @@ jobs:
       - url: "${ZAP_TARGET}/admin/audit"
         method: GET
         responseCode: 403
+      - url: "${ZAP_TARGET}/admin/audit.csv"
+        method: GET
+        responseCode: 403
       # The initial-password gate. A doctor who has changed their password gets a token with roles
       # and reads this; an account still on its issued password gets one with none and cannot.
       # Recorded here so the active scan exercises the write surface behind it.

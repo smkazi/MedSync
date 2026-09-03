@@ -22,7 +22,7 @@ public final class UserMapper {
 
     public static AuthDtos.AuditResponse toResponse(AuditLogEntry entry) {
         return new AuthDtos.AuditResponse(entry.getId(), entry.getService(), entry.getAction(), entry.getEntity(),
-                entry.getEntityId(), entry.getDetail(), entry.getUsername(), entry.getCorrelationId(),
-                entry.getOccurredAt());
+                entry.getEntityId(), entry.getDetail(), entry.getActorId(), entry.getUsername(),
+                entry.getCorrelationId(), entry.getOccurredAt());
     }
 }

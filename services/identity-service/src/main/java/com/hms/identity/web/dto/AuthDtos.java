@@ -82,8 +82,17 @@ public final class AuthDtos {
                                         boolean mustChangePassword, Instant lastLoginAt) {
     }
 
+    /**
+     * One audit row.
+     *
+     * <p>{@code actorId} is here because it is filterable. A report that lets you narrow by a value
+     * it will not show you cannot be checked by the person reading it: there is no way to tell an
+     * empty result from a mistyped id. It is null on system-initiated rows — a scheduler, a device
+     * ingest, a refresh that carried no session — and that is the honest answer rather than a
+     * placeholder.
+     */
     public record AuditResponse(UUID id, String service, String action, String entity, String entityId, String detail,
-                                String username, String correlationId, Instant occurredAt) {
+                                String actorId, String username, String correlationId, Instant occurredAt) {
     }
 
     public record MessageResponse(String message) {

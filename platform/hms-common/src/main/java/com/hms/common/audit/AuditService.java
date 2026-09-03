@@ -41,15 +41,38 @@ public class AuditService {
      * @param detail  human-readable context; must never contain clinical free text
      */
     public void record(String action, String entity, Object entityId, String detail) {
+        recordAs(action, entity, entityId, detail,
+                CurrentUser.usernameOrSystem(), CurrentUser.idOrSystem().toString());
+    }
+
+    /**
+     * Records an action against a named account when the request carries no session.
+     *
+     * <p>This exists because the four-argument method reads the actor off the security context,
+     * and the rows an auditor asks about first — who signed in, whose sign-in failed, which
+     * account was locked out, whose session was burned for a replayed token — all happen
+     * <em>before</em> there is a session to read. Every one of them was therefore attributed to
+     * {@code system} with the all-zero actor id, which made the report's "who" filter useless for
+     * exactly the actions it exists to answer questions about. The caller on those paths knows
+     * perfectly well whose account it is and now says so.
+     *
+     * @param username the account the action is about, or the username as typed when no such
+     *                 account exists — a failed sign-in against a name nobody holds is worth
+     *                 recording under that name, because credential stuffing is what a hundred of
+     *                 them in a row looks like
+     * @param actorId  that account's id, or null when there is no account to point at
+     */
+    public void recordAs(String action, String entity, Object entityId, String detail,
+                         String username, String actorId) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("service", serviceName);
         payload.put("action", action);
         payload.put("entity", entity);
         payload.put("entityId", String.valueOf(entityId));
         payload.put("detail", detail);
-        payload.put("username", CurrentUser.usernameOrSystem());
+        payload.put("username", username);
         DomainEvent event = DomainEvent.of("audit.recorded", entity, entityId,
-                CurrentUser.idOrSystem().toString(), CorrelationId.current(), payload);
+                actorId, CorrelationId.current(), payload);
         publisher.publish(Topics.AUDIT, event);
         for (AuditSink sink : sinks) {
             try {
