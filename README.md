@@ -567,6 +567,17 @@ single-statement counter with `ON CONFLICT … RETURNING`, so a gap in the seque
 auditor reading a numbered series cares about — cannot come from two cashiers raising an invoice at
 once.
 
+**What is owed is also asked as a list, not only as a total.** The day book answers the receivable
+in one figure, which is right for a cash-up and useless for collecting: this week's billing and a
+claim a payer has sat on since March are the same rupee on that line and are chased in completely
+different ways. `GET /receivables` buckets it at 30, 60 and 90 days and groups it by payer, worst
+first, because a collections list is read from the top. Self-paying patients are a named row rather
+than a dropped null — they are the collection everybody forgets, and omitting them would understate
+the receivable by exactly the amount nobody is chasing. The report's grand total and the day book's
+outstanding are the same fact reached by two queries, so a test holds them to each other: a hospital
+that chases a debt its own cash-up calls settled sends somebody to argue with a patient holding a
+receipt.
+
 ### `interop-service` — schema `interop`
 Consent artefacts, FHIR R4 bundles, and a record of everything that has left the building.
 
@@ -733,7 +744,7 @@ them and an empty dropdown is worse than an absent one.
 | Sharing | the consent register with the four conditions on every row, recording a decision (front desk), sending a record under a consent (clinicians), and what has been released about a patient and under what |
 | Messaging | delivery log with the send form, patient questions (the portal's queue, oldest first, where a reply may say what an SMS may not), message wording — readable by anybody who may send, editable by an administrator |
 | Pharmacy | dispensing queue with the override reason on the row, formulary with its ingredient lists, the interaction table with what to do about each pairing, stock by batch with what is about to expire — gated to the roles that may read a medication order |
-| Billing | invoices (open bills first, or one patient's whole history), raise an invoice, the day book split by how money arrived, claims, and — administrator-only — the charge list, payers with their agreed tariffs, and dated tax rates. A bill carries its own credit notes and refunds, and the two forms that write them are gated apart: the refund is the cashier's, the credit note the administrator's |
+| Billing | invoices (open bills first, or one patient's whole history), raise an invoice, the day book split by how money arrived, receivables aged by payer, claims, and — administrator-only — the charge list, payers with their agreed tariffs, and dated tax rates. A bill carries its own credit notes and refunds, and the two forms that write them are gated apart: the refund is the cashier's, the credit note the administrator's |
 | Administration | staff directory, users (create, roles, reset a password), roles, audit trail |
 
 **The patient portal is a different application in the same codebase.** It is a route group of its
@@ -1860,8 +1871,11 @@ SAST/DAST tooling, and performance profiles. Dependency scanning covers Python (
   moves the invoice's numbers; no money moves by itself. Card and UPI reversals are performed in
   the acquirer's own portal and entered here with their reference, exactly as payments are, so the
   platform's record and the acquirer's can disagree until somebody reconciles them.
-- **Receivables ageing.** The day book answers what is outstanding as of a date; nothing buckets it
-  by how long it has been owed or by payer, which is the report a hospital chases money from.
+- **Receivables age from the invoice date, because there is no payment term.** The ageing report
+  buckets what is owed at 30, 60 and 90 days, and those buckets say how long since the bill was
+  raised rather than how overdue it is — the platform records no credit term for a payer, so
+  nothing here is *overdue* in a sense anybody agreed to. A deployment with real terms would age
+  against those instead, which is a column on the payer and a different question in the query.
 - **A dispensed medicine is priced by the charge list, not by the pharmacy.** Charge capture bills
   a drug's own code when the charge list carries one and falls back to the configured dispensing
   item when it does not, so until a deployment prices its drug codes a dispense posts a

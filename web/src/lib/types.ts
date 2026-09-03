@@ -1025,6 +1025,28 @@ export type MethodTotal = {
   count: number;
 };
 
+export type AgeingBucket = {
+  /** Null when the patient is paying for themselves. */
+  payerCode: string | null;
+  payerName: string;
+  /** Raised within the last 30 days. */
+  current: number;
+  days30: number;
+  days60: number;
+  /** 90 days and older — the money least likely to arrive on its own. */
+  days90: number;
+  /** The four buckets summed, by the service. */
+  total: number;
+  invoices: number;
+};
+
+export type Receivables = {
+  on: string;
+  /** One per payer, worst-aged first. */
+  rows: AgeingBucket[];
+  total: AgeingBucket;
+};
+
 export type DayBook = {
   on: string;
   billed: number;

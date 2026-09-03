@@ -104,7 +104,7 @@ public class RouteConfig {
                 // only place that records.
                 .route("billing", r -> r
                         .path("/invoices/**", "/charges", "/charge-items/**", "/payers/**",
-                                "/tax-rates/**", "/claims/**", "/day-book",
+                                "/tax-rates/**", "/claims/**", "/day-book", "/receivables",
                                 "/portal/invoices/**")
                         .uri(services.billing()))
                 // Health-information exchange: consent artefacts, FHIR bundles, what leaves.

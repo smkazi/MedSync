@@ -284,6 +284,38 @@ public final class BillingDtos {
     public record MethodTotal(BillingEnums.PaymentMethod method, BigDecimal amount, int count) {
     }
 
+    /**
+     * What is owed, by who owes it and how long they have owed it.
+     *
+     * @param on    the day the report was run against
+     * @param rows  one per payer, self-paying included, worst-aged first
+     * @param total the same four buckets summed across every row, computed in the service so a
+     *              screen never adds two money figures together
+     */
+    public record ReceivablesResponse(LocalDate on, List<AgeingBucket> rows, AgeingBucket total) {
+
+        public ReceivablesResponse {
+            rows = rows == null ? List.of() : List.copyOf(rows);
+        }
+    }
+
+    /**
+     * One line of the ageing report.
+     *
+     * <p>The four buckets are disjoint, so {@code total} is their sum and not a separate query;
+     * two figures that could disagree about the same invoice would be worse than one.
+     *
+     * @param payerCode the payer, or null when the patient is paying for themselves
+     * @param payerName the payer's name, or "Self-paying" — resolved here rather than on a screen,
+     *                  which would otherwise need the payer list to render a receivables report
+     * @param current   raised within the last 30 days
+     * @param days90    90 days and older: the money least likely to arrive on its own
+     */
+    public record AgeingBucket(String payerCode, String payerName, BigDecimal current,
+                               BigDecimal days30, BigDecimal days60, BigDecimal days90,
+                               BigDecimal total, long invoices) {
+    }
+
     public record MessageResponse(String message) {
     }
 }

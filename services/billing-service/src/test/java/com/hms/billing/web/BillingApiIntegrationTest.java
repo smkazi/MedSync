@@ -951,6 +951,123 @@ class BillingApiIntegrationTest {
         assertThat(book.get("refundsByMethod").size()).isGreaterThanOrEqualTo(1);
     }
 
+    // ---- receivables ageing ----------------------------------------------------
+
+    @Test
+    @DisplayName("an unpaid bill ages into the bucket its date puts it in")
+    void receivablesAgeByInvoiceDate() throws Exception {
+        // Measured as deltas rather than as absolutes. Every other test in this class leaves open
+        // invoices behind and they are all receivable, so an assertion on a bucket's total would
+        // be an assertion about the order the suite happened to run in.
+        JsonNode before = receivables(null);
+
+        issue(addLine(draft(null, LocalDate.now()), "CONSULT_OP", "1", null));
+        issue(addLine(draft(null, LocalDate.now().minusDays(45)), "CONSULT_OP", "1", null));
+        issue(addLine(draft(null, LocalDate.now().minusDays(75)), "CONSULT_OP", "1", null));
+        issue(addLine(draft(null, LocalDate.now().minusDays(200)), "CONSULT_OP", "1", null));
+
+        JsonNode after = receivables(null);
+        BigDecimal fee = new BigDecimal("500.00");
+
+        assertThat(delta(before, after, "current")).isEqualByComparingTo(fee);
+        assertThat(delta(before, after, "days30")).isEqualByComparingTo(fee);
+        assertThat(delta(before, after, "days60")).isEqualByComparingTo(fee);
+        assertThat(delta(before, after, "days90")).isEqualByComparingTo(fee);
+    }
+
+    @Test
+    @DisplayName("the four buckets add up to the row total, and the rows to the report's")
+    void receivablesTotalsAreTheSumOfTheirBuckets() throws Exception {
+        issue(addLine(draft(null, LocalDate.now().minusDays(120)), "CONSULT_OP", "1", null));
+        JsonNode report = receivables(null);
+
+        // A row's total is its own four buckets and nothing else, so no invoice can be counted
+        // into two of them or into none.
+        for (JsonNode row : report.get("rows")) {
+            assertThat(money(row, "current").add(money(row, "days30"))
+                    .add(money(row, "days60")).add(money(row, "days90")))
+                    .isEqualByComparingTo(money(row, "total"));
+        }
+
+        JsonNode total = report.get("total");
+        BigDecimal summed = BigDecimal.ZERO;
+        for (JsonNode row : report.get("rows")) {
+            summed = summed.add(money(row, "total"));
+        }
+        assertThat(summed).isEqualByComparingTo(money(total, "total"));
+    }
+
+    @Test
+    @DisplayName("what the ageing report says is owed is what the day book says is outstanding")
+    void receivablesAgreeWithTheDayBook() throws Exception {
+        issue(addLine(draft(null, LocalDate.now().minusDays(10)), "CONSULT_OP", "1", null));
+
+        JsonNode book = objectMapper.readTree(
+                mockMvc.perform(get("/day-book").with(as("CASHIER")))
+                        .andExpect(status().isOk())
+                        .andReturn().getResponse().getContentAsString());
+
+        // The rule this report lives or dies by. Two figures for the same fact, arrived at by two
+        // queries, and a hospital that chases a debt its own cash-up calls settled sends somebody
+        // to argue with a patient holding a receipt.
+        assertThat(money(receivables(null).get("total"), "total"))
+                .isEqualByComparingTo(money(book, "outstanding"));
+    }
+
+    @Test
+    @DisplayName("crediting a bill takes it out of the receivable, because it is not owed")
+    void aCreditedBillIsNoLongerChased() throws Exception {
+        JsonNode issued = issue(addLine(draft(null, LocalDate.now().minusDays(100)),
+                "CONSULT_OP", "1", null));
+        JsonNode before = receivables(null);
+
+        credit(issued, "500.00", "Treatment was not given; billed against the wrong encounter",
+                200);
+
+        // Chasing money the hospital has already said in writing is not owed is worse than a wrong
+        // number, because somebody acts on it.
+        assertThat(delta(before, receivables(null), "days90"))
+                .isEqualByComparingTo(new BigDecimal("-500.00"));
+    }
+
+    @Test
+    @DisplayName("a self-paying patient is a named row, not a blank one")
+    void selfPayingIsNamedRatherThanDropped() throws Exception {
+        issue(addLine(draft(null, LocalDate.now()), "CONSULT_OP", "1", null));
+
+        JsonNode report = receivables(null);
+        boolean named = false;
+        for (JsonNode row : report.get("rows")) {
+            if (row.get("payerCode").isNull()) {
+                assertThat(row.get("payerName").asString()).isEqualTo("Self-paying");
+                named = true;
+            }
+        }
+        // They are the collection everybody forgets, and a report that quietly omitted them would
+        // understate the receivable by exactly the amount nobody is chasing.
+        assertThat(named).isTrue();
+    }
+
+    @Test
+    @DisplayName("a doctor may read the receivables and still take no money")
+    void receivablesAreReadableByAClinician() throws Exception {
+        mockMvc.perform(get("/receivables").with(as("DOCTOR"))).andExpect(status().isOk());
+        mockMvc.perform(get("/receivables").with(as("LAB_TECH"))).andExpect(status().isForbidden());
+    }
+
+    private JsonNode receivables(LocalDate on) throws Exception {
+        return objectMapper.readTree(
+                mockMvc.perform(get("/receivables" + (on == null ? "" : "?on=" + on))
+                                .with(as("CASHIER")))
+                        .andExpect(status().isOk())
+                        .andReturn().getResponse().getContentAsString());
+    }
+
+    /** How much a bucket moved across the report's grand total. */
+    private static BigDecimal delta(JsonNode before, JsonNode after, String bucket) {
+        return money(after.get("total"), bucket).subtract(money(before.get("total"), bucket));
+    }
+
     private JsonNode credit(JsonNode invoice, String amount, String reason, int expected)
             throws Exception {
         return objectMapper.readTree(

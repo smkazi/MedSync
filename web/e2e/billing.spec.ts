@@ -255,6 +255,32 @@ test.describe("the billing desk", () => {
     await expect(table).toContainText("upi");
   });
 
+  test("the receivables report ages what is owed and agrees with the day book", async ({
+    page,
+  }) => {
+    await signIn(page, "cashier");
+    await page.goto("/billing/receivables");
+
+    await expect(page.getByRole("heading", { name: "Receivables" })).toBeVisible();
+    // The earlier tests in this file leave open bills behind, so there is a receivable to age.
+    await expect(page.getByRole("table")).toContainText("Self-paying");
+    await expect(page.getByText("Over 90 days", { exact: true })).toBeVisible();
+
+    // The report's own total and the day book's outstanding are the same fact reached by two
+    // queries. Read off both screens rather than computed here: a test that did the subtraction
+    // itself would agree with a bug that did it the same way.
+    const owed = await page
+      .getByRole("table")
+      .getByRole("row")
+      .filter({ hasText: "All payers" })
+      .locator("td")
+      .last()
+      .innerText();
+
+    await page.goto("/billing/day-book");
+    await expect(page.getByRole("main")).toContainText(owed.trim());
+  });
+
   test("a cashier reads prices and is offered no way to change one", async ({ page }) => {
     await signIn(page, "cashier");
     await page.goto("/billing/charge-items");

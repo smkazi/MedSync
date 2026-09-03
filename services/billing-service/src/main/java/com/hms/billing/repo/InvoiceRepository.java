@@ -169,4 +169,80 @@ public interface InvoiceRepository extends JpaRepository<Invoice, UUID> {
                and i.invoiceDate <= :on
             """)
     BigDecimal outstandingAsOf(@Param("on") LocalDate on);
+
+    /**
+     * What is owed, bucketed by how long it has been owed and by who owes it.
+     *
+     * <p>The report a hospital chases money from. {@link #outstandingAsOf} answers what is owed in
+     * one number, which says nothing about whether it is this week's billing or a payer who has
+     * been sitting on a claim since March — and those are collected in completely different ways.
+     *
+     * <p>Aged from {@code invoice_date}, because the platform has no due date and inventing one
+     * here would be a credit term nobody agreed. So the buckets say how long since the bill was
+     * raised, which is what they mean, rather than how overdue it is, which would need a term to
+     * be overdue against.
+     *
+     * <p>The three boundaries arrive as dates rather than as an interval subtracted in the query.
+     * Date arithmetic inside JPQL is a dialect's business, and this way the day the report is run
+     * against comes from {@link com.hms.billing.service.BillingClock} like every other day in this
+     * module — one place decides when a day begins, and the boundaries are derived from it.
+     *
+     * <p>The per-invoice outstanding is the same expression {@link #outstandingAsOf} uses, down to
+     * the {@code greatest(..., 0)}, and the two must not drift: a receivables report and a cash-up
+     * that disagree about one invoice send somebody to argue with a patient holding a receipt. It
+     * is grouped rather than summed here, and one row's four buckets are disjoint by construction,
+     * so the row total is their sum and the report cannot double-count an invoice into two.
+     *
+     * <p>Self-paying invoices carry no payer code. They group under a null, which the service
+     * names rather than dropping — a patient who owes money is the collection everybody forgets,
+     * and a report that silently omitted them would understate the receivable.
+     */
+    @Query("""
+            select i.payerCode as payerCode,
+                   coalesce(sum(case when i.invoiceDate > :thirty
+                        then greatest((i.total - i.credited) - (i.amountPaid - i.refunded), 0)
+                        else 0 end), 0) as current,
+                   coalesce(sum(case when i.invoiceDate <= :thirty and i.invoiceDate > :sixty
+                        then greatest((i.total - i.credited) - (i.amountPaid - i.refunded), 0)
+                        else 0 end), 0) as days30,
+                   coalesce(sum(case when i.invoiceDate <= :sixty and i.invoiceDate > :ninety
+                        then greatest((i.total - i.credited) - (i.amountPaid - i.refunded), 0)
+                        else 0 end), 0) as days60,
+                   coalesce(sum(case when i.invoiceDate <= :ninety
+                        then greatest((i.total - i.credited) - (i.amountPaid - i.refunded), 0)
+                        else 0 end), 0) as days90,
+                   count(i) as invoices
+              from Invoice i
+             where i.status in ('DRAFT', 'ISSUED')
+               and i.invoiceDate <= :on
+               and greatest((i.total - i.credited) - (i.amountPaid - i.refunded), 0) > 0
+             group by i.payerCode
+            """)
+    List<AgeingRow> ageingAsOf(@Param("on") LocalDate on, @Param("thirty") LocalDate thirty,
+                               @Param("sixty") LocalDate sixty, @Param("ninety") LocalDate ninety);
+
+    /**
+     * One payer's receivable, split by age.
+     *
+     * <p>A projection for the reason {@link DayTotals} is one, and the buckets are named for what
+     * they are rather than numbered: {@code days30} is "30 to 60 days old", the bucket a
+     * collections clerk calls "thirty days".
+     */
+    interface AgeingRow {
+
+        /** The payer's code, or null for a self-paying patient. */
+        String getPayerCode();
+
+        /** Raised within the last 30 days. */
+        BigDecimal getCurrent();
+
+        BigDecimal getDays30();
+
+        BigDecimal getDays60();
+
+        /** 90 days and older — the money least likely to arrive on its own. */
+        BigDecimal getDays90();
+
+        long getInvoices();
+    }
 }

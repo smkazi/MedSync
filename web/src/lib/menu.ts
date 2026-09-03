@@ -252,6 +252,12 @@ export const MENUS: Menu[] = [
         roles: BILLING_READ,
         note: "Billed, collected and outstanding, split by method",
       },
+      {
+        label: "Receivables",
+        href: "/billing/receivables",
+        roles: BILLING_READ,
+        note: "What is owed, by how long it has been owed and by whom",
+      },
       { label: "Claims", href: "/billing/claims", roles: BILLING_READ },
       { label: "Charge items", href: "/billing/charge-items", roles: BILLING_READ },
       { label: "Payers & tariffs", href: "/billing/payers", roles: BILLING_READ },

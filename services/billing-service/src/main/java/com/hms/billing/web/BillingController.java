@@ -288,4 +288,23 @@ public class BillingController {
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate on) {
         return dayBook.on(on);
     }
+
+    /**
+     * What is owed, by age and by payer — the report money is chased from.
+     *
+     * <p>{@code BILLING_READ}, which a clinician holds: the day book already tells them what a
+     * patient owes, and a receivables report is the same fact aggregated. What it is not is a
+     * write, so a doctor reading it can still take no payment.
+     *
+     * <p>Takes a date for the same reason the day book does — a month-end position is asked for
+     * days into the next month, and a report that could only answer "today" would be re-run too
+     * late to mean anything.
+     */
+    @GetMapping("/receivables")
+    @PreAuthorize(Roles.BILLING_READ)
+    public BillingDtos.ReceivablesResponse receivables(
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate on) {
+        return dayBook.receivables(on);
+    }
 }
