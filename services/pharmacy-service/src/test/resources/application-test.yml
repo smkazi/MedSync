@@ -10,7 +10,16 @@ spring:
       schema: pharmacy
   flyway:
     enabled: true
+# The care-team narrowing on patient records is off for this module's suite, and that is a
+# statement rather than a convenience. It asks scheduling-service "is this your patient", and
+# scheduling-service is not running in a laboratory unit test -- so with it on, the client would
+# fail closed and every clinician read here would be a 403 about the wrong thing entirely. The
+# narrowing has a suite of its own (CareRelationshipNarrowingTest) that stands up a stub and
+# proves both directions, including that an unreachable scheduling-service refuses rather than
+# opens.
 hms:
+  care-team:
+    narrow-patient-records: false
   events:
     transport: log
 logging:

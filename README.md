@@ -1253,6 +1253,31 @@ to a patient record on its own.
   the script names every service still sharing a password when it finishes, rather than reporting
   success and letting the deployment assume otherwise. CI keeps its superuser deliberately: a job
   running as a restricted role would be testing a different deployment from the one it builds.
+- <a id="care-relationships"></a>**The narrowing reaches the laboratory and the pharmacy.** A care
+  team is per-encounter, which is the right unit for a chart and the wrong one for the rest of a
+  patient's record: a covering clinician needs a blood result for somebody they have never charted,
+  and a walk-in test has no encounter behind it at all. So scheduling-service — which owns the care
+  team — answers one question for the services that hold the rest, `GET /care-relationships/{patientId}`,
+  and laboratory-service and pharmacy-service ask it before showing a doctor or a nurse somebody's
+  results or medicines.
+
+  The answer is derived from care-team membership rather than stored again: looking after somebody
+  on any of their encounters is what entitles you to the rest of their record, and a second table
+  saying that in different words would eventually disagree with the first. The exception is a
+  patient-level break-glass, with the same reason floor, the same expiry and the same audit action
+  as the chart's, so one filter still counts every break-glass on the platform.
+
+  **The endpoint takes no user id.** It answers about whoever the forwarded token names, which is
+  what stops a service asking about anybody but the clinician in front of it — a service that could
+  ask "is Dr Rao related to this patient" could enumerate every care team on the platform. The token
+  comes from the security context rather than being threaded down from a controller, because a token
+  passed by hand is one somebody eventually forgets to pass.
+
+  **It fails closed**, and the cost is stated rather than hidden: an unreachable scheduling-service
+  refuses the read. Failing open would make an outage a platform-wide privacy hole at the worst
+  possible moment. The bench is unaffected either way — a pathologist reporting a specimen and a
+  pharmacist filling a queue are cross-patient jobs that a care-relationship model does not
+  describe, and neither is narrowed.
 - **PHI at rest** — national id and insurance policy number are AES-256-GCM encrypted, excluded
   from every patient response, and served only by a separately authorised, individually audited
   endpoint.
@@ -1863,11 +1888,19 @@ SAST/DAST tooling, and performance profiles. Dependency scanning covers Python (
   or an `ORU^R01` on demand. Sending one automatically when a result is verified needs a
   subscriber table — which practice gets which patient's results — and inventing one now would be
   a routing policy nobody agreed.
-- **The care-team narrowing covers the encounter chart, and clinicians.** Laboratory orders,
-  prescriptions, admissions and the casualty board are still role-gated, as are administrators. The
-  encounter chart is where the narrowing bites hardest and where the deciding column is local to the
-  service that owns it; extending it means either a shared care-relationship service or the same
-  table in four more schemas, and that is a decision rather than a chore.
+- **The care-team narrowing covers the chart, the laboratory and the pharmacy — not admissions or
+  the casualty board.** Both remaining ones are lists rather than records: a casualty board is a
+  board precisely because everybody working the department reads it, and narrowing the census would
+  hide from a nurse that a bed is occupied. Whether either should be narrowed at all is a question
+  about how a department works rather than a missing implementation, which is why they are named
+  here instead of quietly done.
+- **A care relationship costs a call.** laboratory-service and pharmacy-service ask
+  scheduling-service on every clinician read, and fail closed when they cannot: while scheduling is
+  down a doctor cannot read a result. That is the deliberate direction — an outage must not be the
+  moment every record on the platform opens — and the mitigation is that scheduling holds the
+  encounters, the queue and the ward round, so a platform without it is already not treating
+  patients. A cache would trade that latency for a window in which a revoked relationship still
+  reads, and has not been taken.
 - **A nurse has no ward assignment to be read from.** Nurses join a chart by providing care on it,
   which works and is honest, but the natural rule — "you are on this ward tonight" — needs a shift
   or assignment model the platform does not have. With one, the ward round would enrol nobody by

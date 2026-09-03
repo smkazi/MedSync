@@ -9,7 +9,9 @@ import com.hms.common.security.Roles;
 import com.hms.scheduling.domain.CareTeamMember;
 import com.hms.scheduling.domain.Encounter;
 import com.hms.scheduling.repo.CareTeamRepository;
+import com.hms.scheduling.domain.PatientCareGrant;
 import com.hms.scheduling.repo.EncounterRepository;
+import com.hms.scheduling.repo.PatientCareGrantRepository;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -67,15 +69,18 @@ public class CareTeamGuard {
 
     private final CareTeamRepository careTeam;
     private final EncounterRepository encounters;
+    private final PatientCareGrantRepository grants;
     private final AuditService audit;
     private final Duration breakGlassTtl;
     private final int reasonMinLength;
 
-    public CareTeamGuard(CareTeamRepository careTeam, EncounterRepository encounters, AuditService audit,
+    public CareTeamGuard(CareTeamRepository careTeam, EncounterRepository encounters,
+                         PatientCareGrantRepository grants, AuditService audit,
                          @Value("${hms.care-team.break-glass-ttl:PT12H}") Duration breakGlassTtl,
                          @Value("${hms.care-team.reason-min-length:20}") int reasonMinLength) {
         this.careTeam = careTeam;
         this.encounters = encounters;
+        this.grants = grants;
         this.audit = audit;
         this.breakGlassTtl = breakGlassTtl;
         this.reasonMinLength = reasonMinLength;
@@ -202,6 +207,81 @@ public class CareTeamGuard {
         return CurrentUser.id()
                 .map(caller -> careTeam.isCurrentMember(encounterId, caller, Instant.now()))
                 .orElse(false);
+    }
+
+    // ---- the patient-level question -------------------------------------------
+
+    /**
+     * Whether a clinician may see this patient's clinical record at all.
+     *
+     * <p>Asked by laboratory-service and pharmacy-service before they show a doctor or a nurse
+     * somebody's results or prescriptions. The chart narrowing answers this for an encounter; those
+     * services hold records that belong to a <em>patient</em>, and a walk-in blood test has no
+     * encounter behind it to ask about.
+     *
+     * <p>Two ways in, and they are the ordinary path and the exception. Being on the care team of
+     * any of the patient's encounters is the first: looking after somebody is what entitles you to
+     * the rest of their record, and deriving it from the team rather than storing it again means
+     * there is no second table to disagree with the first. A live break-glass grant is the second.
+     *
+     * <p>Answered for the caller named in the request rather than for the bearer of the token,
+     * because these callers are services asking on behalf of a clinician — and the token they
+     * forward is that clinician's own, so the two are the same person. Taking the id from the token
+     * is what stops a service asking about somebody else.
+     */
+    @Transactional(readOnly = true)
+    public boolean mayReadPatientRecord(UUID patientId) {
+        if (!isNarrowed()) {
+            return true;
+        }
+        Instant now = Instant.now();
+        return CurrentUser.id()
+                .map(caller -> careTeam.isOnAnyEncounterFor(patientId, caller, now)
+                        || grants.hasLiveGrant(patientId, caller, now))
+                .orElse(false);
+    }
+
+    /**
+     * Break-glass at the patient level: a time-boxed relationship with everything about them.
+     *
+     * <p>Wider than the encounter version and deliberately so — it is what a covering clinician
+     * needs when there is no encounter of theirs to break into, and it opens the laboratory and the
+     * pharmacy along with the chart. Same reason floor, same expiry, same audit action, so the
+     * review that counts break-glass events counts these too.
+     */
+    @Transactional
+    public PatientCareGrant breakGlassForPatient(UUID patientId, String rawReason) {
+        String reason = rawReason == null ? "" : rawReason.trim();
+        if (reason.length() < reasonMinLength) {
+            throw new BadRequestException("Say why you need this patient's record, in a sentence — "
+                    + "at least " + reasonMinLength + " characters. It is read by the people who "
+                    + "review this.");
+        }
+        UUID caller = CurrentUser.id().orElseThrow(() ->
+                new ForbiddenException("This session is not linked to a user account."));
+
+        Instant now = Instant.now();
+        if (grants.hasLiveGrant(patientId, caller, now)) {
+            throw new BadRequestException(
+                    "You already have access to this patient's record, granted earlier today.");
+        }
+
+        PatientCareGrant grant = grants.save(
+                new PatientCareGrant(patientId, caller, reason, now.plus(breakGlassTtl)));
+
+        // The same action as the chart's, so one filter finds every break-glass on the platform.
+        // The reason stays on the row and out of the audit detail: it is clinical free text, and
+        // audit detail on this platform never carries any.
+        audit.record("CHART_BREAK_GLASS", "Patient", patientId,
+                "patient record opened for " + breakGlassTtl);
+        log.warn("Break-glass: user {} opened patient {}'s record", caller, patientId);
+        return grant;
+    }
+
+    /** Every exception granted on this patient, for the card and for the review. */
+    @Transactional(readOnly = true)
+    public List<PatientCareGrant> grantsFor(UUID patientId) {
+        return grants.findByPatientIdOrderByGrantedAtDesc(patientId);
     }
 
     /**

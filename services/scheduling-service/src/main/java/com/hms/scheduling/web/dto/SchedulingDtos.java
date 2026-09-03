@@ -282,6 +282,20 @@ public final class SchedulingDtos {
     }
 
     /** Break-glass. One field, and it is the whole point of the endpoint. */
+    /**
+     * Whether the caller may see a patient's clinical record.
+     *
+     * <p>One boolean and the patient it is about. No reason, no list of what granted it: this is
+     * asked on every read a clinician makes of a laboratory order or a prescription, and an answer
+     * that carried the care team with it would leak the team to every service that asked.
+     */
+    public record CareRelationshipResponse(UUID patientId, boolean related) {
+    }
+
+    public record PatientCareGrantResponse(UUID id, UUID patientId, UUID userId, String reason,
+                                           Instant grantedAt, Instant expiresAt) {
+    }
+
     public record BreakGlassRequest(
             @NotBlank
             @Size(min = 20, max = 1000,

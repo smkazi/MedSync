@@ -31,4 +31,23 @@ public interface CareTeamRepository extends JpaRepository<CareTeamMember, UUID> 
     List<CareTeamMember> findByEncounterIdOrderByJoinedAtDesc(UUID encounterId);
 
     boolean existsByEncounterIdAndUserId(UUID encounterId, UUID userId);
+
+    /**
+     * Whether this user is on the care team of <em>any</em> of this patient's encounters.
+     *
+     * <p>The patient-level question, derived from encounter-level membership rather than stored
+     * again. A clinician looking after somebody is on an encounter of theirs, and that is what
+     * makes them entitled to the rest of the patient's clinical record — their laboratory orders,
+     * their prescriptions — without a second table saying the same thing in different words and
+     * eventually disagreeing.
+     */
+    @Query("""
+            select count(t) > 0 from CareTeamMember t, Encounter e
+             where t.encounterId = e.id
+               and e.patientId = :patientId
+               and t.userId = :userId
+               and (t.expiresAt is null or t.expiresAt > :now)
+            """)
+    boolean isOnAnyEncounterFor(@Param("patientId") UUID patientId, @Param("userId") UUID userId,
+                                @Param("now") Instant now);
 }

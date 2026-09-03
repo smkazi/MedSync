@@ -48,6 +48,16 @@ management:
 hms:
   security:
     mode: resource-server
+  scheduling:
+    # Where the care team lives, and therefore where "is this your patient" is answered. Every call
+    # forwards the caller's own token, so this service can only ask about the clinician making the
+    # request.
+    base-url: ${HMS_SCHEDULING_URI:http://localhost:8083}
+  care-team:
+    # The narrowing on patient records. On by default and configurable, because a deployment that
+    # has not populated its care teams -- an existing database, a pilot -- would otherwise refuse
+    # every clinician every record until somebody worked out why.
+    narrow-patient-records: ${HMS_NARROW_PATIENT_RECORDS:true}
   events:
     transport: ${HMS_EVENTS_TRANSPORT:log}
   patient:

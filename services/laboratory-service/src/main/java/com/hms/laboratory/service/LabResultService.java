@@ -3,6 +3,7 @@ package com.hms.laboratory.service;
 import com.hms.common.audit.AuditService;
 import com.hms.common.error.BadRequestException;
 import com.hms.common.error.ConflictException;
+import com.hms.common.careteam.CareRelationshipClient;
 import com.hms.common.error.NotFoundException;
 import com.hms.common.events.DomainEvent;
 import com.hms.common.events.EventPublisher;
@@ -42,14 +43,17 @@ public class LabResultService {
     private final ReferenceRangeService ranges;
     private final EventPublisher events;
     private final AuditService audit;
+    private final CareRelationshipClient careRelationships;
 
     public LabResultService(LabOrderRepository orders, LabResultRepository results,
-                           ReferenceRangeService ranges, EventPublisher events, AuditService audit) {
+                           ReferenceRangeService ranges, EventPublisher events, AuditService audit,
+                           CareRelationshipClient careRelationships) {
         this.orders = orders;
         this.results = results;
         this.ranges = ranges;
         this.events = events;
         this.audit = audit;
+        this.careRelationships = careRelationships;
     }
 
     /**
@@ -158,6 +162,10 @@ public class LabResultService {
     public List<LabDtos.ResultResponse> list(UUID orderId, LabMapper mapper) {
         LabOrder order = orders.findDetailById(orderId)
                 .orElseThrow(() -> NotFoundException.of("LabOrder", orderId));
+        // The values themselves, which are the thing worth browsing and so the thing worth
+        // narrowing. Checked here as well as on the order beside it: a caller holding an order id
+        // could otherwise walk past the guarded read straight to the results.
+        careRelationships.requirePatientAccess(order.getPatientId());
         return results.findByOrderIdOrderByParameter(orderId).stream()
                 .map(result -> mapper.toResponse(result, displayName(result, order)))
                 .toList();

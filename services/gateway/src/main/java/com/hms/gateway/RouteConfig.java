@@ -60,7 +60,7 @@ public class RouteConfig {
                 .route("scheduling", r -> r
                         .path("/appointments/**", "/encounters/**", "/schedules/**",
                               "/queue/**", "/public/queue/**", "/escalation-policies/**",
-                              "/order-sets/**", "/care-plans/**",
+                              "/order-sets/**", "/care-plans/**", "/care-relationships/**",
                               "/portal/appointments/**", "/portal/availability",
                               "/portal/encounters/**")
                         .uri(services.scheduling()))

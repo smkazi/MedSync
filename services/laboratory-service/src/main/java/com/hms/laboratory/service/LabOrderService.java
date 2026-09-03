@@ -1,6 +1,7 @@
 package com.hms.laboratory.service;
 
 import com.hms.common.audit.AuditService;
+import com.hms.common.careteam.CareRelationshipClient;
 import com.hms.common.data.QueryPatterns;
 import com.hms.common.error.BadRequestException;
 import com.hms.common.error.ConflictException;
@@ -49,6 +50,7 @@ public class LabOrderService {
     private final EventPublisher events;
     private final AuditService audit;
     private final InterpretationService interpretations;
+    private final CareRelationshipClient careRelationships;
 
     public LabOrderService(LabOrderRepository orders,
                            LabResultRepository results,
@@ -57,7 +59,8 @@ public class LabOrderService {
                            HistogramRepository histograms,
                            AccessionGenerator accessions, ReferenceRangeService ranges, LabMapper mapper,
                            EventPublisher events, AuditService audit,
-                           InterpretationService interpretations) {
+                           InterpretationService interpretations,
+                           CareRelationshipClient careRelationships) {
         this.orders = orders;
         this.results = results;
         this.specimens = specimens;
@@ -69,6 +72,7 @@ public class LabOrderService {
         this.events = events;
         this.audit = audit;
         this.interpretations = interpretations;
+        this.careRelationships = careRelationships;
     }
 
     @Transactional
@@ -144,9 +148,21 @@ public class LabOrderService {
         publish("lab.order.cancelled", order, Map.of());
     }
 
+    /**
+     * One order, if it is a patient this clinician is looking after.
+     *
+     * <p>The order is loaded before the check because the check needs its patient: the caller
+     * addresses an order id, and whose order it is is not knowable until it is read. Nothing about
+     * it is returned when the answer is no, so what leaks is what a 404 would leak — that an id
+     * exists — and the refusal says which rather than pretending the order is missing, for the
+     * reason CareTeamGuard gives: the caller is a clinician who can already list patients, so there
+     * is nothing here to enumerate.
+     */
     @Transactional(readOnly = true)
     public LabDtos.OrderResponse get(UUID orderId) {
-        return toResponse(requireDetail(orderId));
+        LabOrder order = requireDetail(orderId);
+        careRelationships.requirePatientAccess(order.getPatientId());
+        return toResponse(order);
     }
 
     @Transactional(readOnly = true)
@@ -221,8 +237,10 @@ public class LabOrderService {
                 .toList();
     }
 
+    /** Everything ordered for one patient — the clearest case for the narrowing, and the first. */
     @Transactional(readOnly = true)
     public List<LabDtos.OrderSummary> forPatient(UUID patientId) {
+        careRelationships.requirePatientAccess(patientId);
         return orders.findByPatientIdOrderByOrderedAtDesc(patientId).stream()
                 .map(order -> {
                     List<LabResult> found = results.findByOrderIdOrderByParameter(order.getId());

@@ -158,3 +158,31 @@ export async function withdrawPortalAccess(form: FormData): Promise<void> {
       : `/patients/${id}?problem=${encodeURIComponent(result.error)}`,
   );
 }
+
+/**
+ * Break-glass on a whole patient's record.
+ *
+ * <p>The wider sibling of the chart's own, and the one that opens the laboratory and the pharmacy
+ * along with it. It lives on the patient rather than on an encounter because that is the case it
+ * exists for: a covering clinician who needs a blood result for somebody they have never charted,
+ * and a walk-in test that has no encounter behind it at all.
+ *
+ * <p>Offered here, on the chart, and deliberately not on the laboratory order screen. A refusal
+ * there would have to name the patient the order belongs to in order to offer the form, which would
+ * hand somebody holding an order id the mapping to a patient they are not allowed to see — a
+ * smaller leak than the results, and still a leak, and an unnecessary one when the clinician can
+ * ask on the chart of the patient they already know they need.
+ */
+export async function breakGlassOnPatient(form: FormData): Promise<void> {
+  const id = String(form.get("patientId") ?? "");
+  const reason = String(form.get("reason") ?? "").trim();
+  const result = await submit(`/care-relationships/${id}/break-glass`, "POST", { reason });
+  revalidatePath(`/patients/${id}`);
+  const params = new URLSearchParams();
+  if (result.ok) {
+    params.set("done", "Recorded. This patient's record is open to you for this shift, and that is logged.");
+  } else {
+    params.set("problem", result.error);
+  }
+  redirect(`/patients/${id}?${params}`);
+}

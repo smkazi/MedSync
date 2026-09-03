@@ -1,6 +1,7 @@
 package com.hms.pharmacy.service;
 
 import com.hms.common.audit.AuditService;
+import com.hms.common.careteam.CareRelationshipClient;
 import com.hms.common.error.BadRequestException;
 import com.hms.common.error.ConflictException;
 import com.hms.common.error.NotFoundException;
@@ -41,15 +42,18 @@ public class PrescriptionService {
     private final SafetyService safety;
     private final AuditService audit;
     private final EventPublisher events;
+    private final CareRelationshipClient careRelationships;
 
     public PrescriptionService(PrescriptionRepository prescriptions,
                                AdministrationRepository administrations, SafetyService safety,
-                               AuditService audit, EventPublisher events) {
+                               AuditService audit, EventPublisher events,
+                               CareRelationshipClient careRelationships) {
         this.prescriptions = prescriptions;
         this.administrations = administrations;
         this.safety = safety;
         this.audit = audit;
         this.events = events;
+        this.careRelationships = careRelationships;
     }
 
     @Transactional
@@ -107,12 +111,26 @@ public class PrescriptionService {
     }
 
     @Transactional(readOnly = true)
+    /**
+     * One prescription, if it is a patient this clinician is looking after.
+     *
+     * <p>Read before the check because whose prescription it is is not knowable until it is: the
+     * caller addresses a prescription id. Nothing is returned when the answer is no.
+     *
+     * <p>The pharmacist is not narrowed by this and could not do the job if they were — filling a
+     * queue is inherently cross-patient work, and a care-relationship model does not describe it.
+     * What is narrowed is a doctor or a nurse reading the medicines of somebody they are not
+     * looking after, which is browsing.
+     */
     public PharmacyDtos.PrescriptionResponse read(UUID id) {
-        return toResponse(require(id));
+        Prescription prescription = require(id);
+        careRelationships.requirePatientAccess(prescription.getPatientId());
+        return toResponse(prescription);
     }
 
     @Transactional(readOnly = true)
     public List<PharmacyDtos.PrescriptionResponse> forPatient(UUID patientId) {
+        careRelationships.requirePatientAccess(patientId);
         return prescriptions.findByPatientIdOrderByIssuedAtDesc(patientId).stream()
                 .map(this::toResponse)
                 .toList();

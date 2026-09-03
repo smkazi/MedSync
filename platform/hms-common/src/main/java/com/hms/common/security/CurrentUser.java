@@ -85,6 +85,23 @@ public final class CurrentUser {
                 .anyMatch(wanted::contains);
     }
 
+    /**
+     * The caller's own bearer token, for a service that has to ask another one a question on their
+     * behalf.
+     *
+     * <p>Taken from the security context rather than threaded down from the controller as an
+     * argument, which is how this platform used to do it: a token passed by hand is a token
+     * somebody eventually forgets to pass, and the failure is a service quietly asking as nobody.
+     * Reading it here means a call made inside a request always carries the caller's own authority
+     * and can never carry more.
+     *
+     * <p>Empty outside a request — a Kafka listener, a scheduled job — which is correct: there is
+     * no caller to act on behalf of, and whatever needs doing must be justified some other way.
+     */
+    public static Optional<String> token() {
+        return jwt().map(Jwt::getTokenValue);
+    }
+
     private static Optional<Jwt> jwt() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth instanceof JwtAuthenticationToken token) {

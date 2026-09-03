@@ -315,6 +315,96 @@ class CareTeamIntegrationTest {
                 .andExpect(jsonPath("$[0].id").value(encounterId));
     }
 
+    // ---- the patient-level question -------------------------------------------
+
+    @Test
+    @DisplayName("looking after one of a patient's encounters answers for the whole record")
+    void careTeamMembershipAnswersThePatientLevelQuestion() throws Exception {
+        String encounterId = openEncounter();
+        String patientId = objectMapper.readTree(
+                mockMvc.perform(get("/encounters/" + encounterId).with(as(TREATING_DOCTOR, "DOCTOR")))
+                        .andExpect(status().isOk())
+                        .andReturn().getResponse().getContentAsString())
+                .get("patientId").asString();
+
+        // The treating clinician is on the encounter's team, and that is what entitles them to the
+        // rest of the patient's record -- their laboratory orders, their prescriptions -- without a
+        // second table saying the same thing in different words.
+        assertThat(related(patientId, TREATING_DOCTOR)).isTrue();
+        assertThat(related(patientId, OTHER_DOCTOR)).isFalse();
+
+        // Not narrowed, so the answer is yes and that is the rule rather than a bypass.
+        assertThat(related(patientId, UUID.randomUUID(), "ADMIN")).isTrue();
+        assertThat(related(patientId, UUID.randomUUID(), "PATHOLOGIST")).isTrue();
+    }
+
+    @Test
+    @DisplayName("break-glass on a patient opens the record, says why, and expires")
+    void patientBreakGlassOpensTheRecord() throws Exception {
+        String encounterId = openEncounter();
+        String patientId = objectMapper.readTree(
+                mockMvc.perform(get("/encounters/" + encounterId).with(as(TREATING_DOCTOR, "DOCTOR")))
+                        .andExpect(status().isOk())
+                        .andReturn().getResponse().getContentAsString())
+                .get("patientId").asString();
+
+        assertThat(related(patientId, OTHER_DOCTOR)).isFalse();
+
+        // "cover" and "emergency" are what a free-text box collects when it does not ask for a
+        // sentence, and a reason nobody can act on is the same as no reason.
+        mockMvc.perform(post("/care-relationships/" + patientId + "/break-glass")
+                        .with(as(OTHER_DOCTOR, "DOCTOR"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("reason", "cover"))))
+                .andExpect(status().isBadRequest());
+
+        String reason = "Covering the night ward; need the blood results before prescribing.";
+        JsonNode grant = objectMapper.readTree(
+                mockMvc.perform(post("/care-relationships/" + patientId + "/break-glass")
+                                .with(as(OTHER_DOCTOR, "DOCTOR"))
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(Map.of("reason", reason))))
+                        .andExpect(status().isCreated())
+                        .andReturn().getResponse().getContentAsString());
+
+        assertThat(grant.get("reason").asString()).isEqualTo(reason);
+        // Never null, unlike the encounter table's expiry: a standing relationship comes from
+        // looking after somebody, and an exception that never lapsed would be the standing access
+        // this whole mechanism exists to stop.
+        assertThat(grant.get("expiresAt").isNull()).isFalse();
+        assertThat(related(patientId, OTHER_DOCTOR)).isTrue();
+
+        // And the reason is on the row, not in the audit detail. That is the platform's own rule:
+        // audit detail never carries clinical free text, and "query sepsis" is a clinical
+        // observation.
+        assertThat(CapturingAudit.EVENTS.stream()
+                .filter(event -> "CHART_BREAK_GLASS".equals(event.payload().get("action")))
+                .noneMatch(event -> String.valueOf(event.payload().get("detail")).contains(reason)))
+                .isTrue();
+    }
+
+    @Test
+    @DisplayName("the service lines have no glass to break, because they were never narrowed")
+    void theServiceLinesCannotBreakGlass() throws Exception {
+        String patientId = UUID.randomUUID().toString();
+        mockMvc.perform(post("/care-relationships/" + patientId + "/break-glass")
+                        .with(as(UUID.randomUUID(), "PATHOLOGIST"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                Map.of("reason", "Reporting a specimen for this patient today."))))
+                .andExpect(status().isForbidden());
+    }
+
+    /** What scheduling-service answers when another service asks on a clinician's behalf. */
+    private boolean related(String patientId, UUID user, String... roles) throws Exception {
+        String[] asRoles = roles.length == 0 ? new String[] {"DOCTOR"} : roles;
+        return objectMapper.readTree(
+                mockMvc.perform(get("/care-relationships/" + patientId).with(as(user, asRoles)))
+                        .andExpect(status().isOk())
+                        .andReturn().getResponse().getContentAsString())
+                .get("related").asBoolean();
+    }
+
     private static CareTeamMember expired(UUID encounterId, UUID userId, String reason) {
         CareTeamMember lapsed = CareTeamMember.breakGlass(encounterId, userId, reason,
                 Instant.now().minus(1, ChronoUnit.HOURS));

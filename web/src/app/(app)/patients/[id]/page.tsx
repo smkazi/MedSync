@@ -16,6 +16,7 @@ import { RecordForm } from "@/components/RecordForm";
 import { linkAbha } from "../../sharing/actions";
 import {
   archivePatient,
+  breakGlassOnPatient,
   issuePortalAccess,
   removeAllergy,
   restorePatient,
@@ -59,10 +60,19 @@ export default async function PatientChart({
     );
   }
 
-  const [appointments, labOrders] = await Promise.all([
+  const [appointments, labs] = await Promise.all([
     api<Appointment[]>(`/appointments/patients/${id}`).catch(() => [] as Appointment[]),
-    api<LabOrderSummary[]>(`/lab/patients/${id}/orders`).catch(() => [] as LabOrderSummary[]),
+    // Not swallowed into an empty list any more. Since the care-team narrowing reached the
+    // laboratory, a refusal and "this patient has never had a blood test" arrive here as the same
+    // empty array — and of the two things a clinician might conclude, the wrong one is the one
+    // that ends with them not chasing a result.
+    load<LabOrderSummary[]>(`/lab/patients/${id}/orders`),
   ]);
+  const labOrders = labs.data ?? [];
+  // The platform's own wording, which says what to do about it. Matched on the phrase the refusal
+  // is built from rather than on a status code, because `load` keeps the message and not the code.
+  const notLookingAfterThem =
+    hasRole(user, "DOCTOR", "NURSE") && (labs.error ?? "").includes("not looking after");
 
   const criticalAllergies = patient.allergies.filter((allergy) => allergy.critical);
   const mayEdit = hasRole(user, "ADMIN", "RECEPTIONIST", "DOCTOR", "NURSE");
@@ -371,7 +381,46 @@ export default async function PatientChart({
       </Card>
 
       <Card title="Laboratory">
-        {labOrders.length === 0 ? (
+        {/*
+          The door, not only the wall. A clinician refused here is being told the control worked,
+          and without somewhere to act on it the control reads as an outage and they telephone
+          somebody instead of using the mechanism built for them. Same judgement as the chart's own
+          break-glass, and this one opens the pharmacy too.
+        */}
+        {notLookingAfterThem ? (
+          <div className="space-y-3">
+            <ErrorNote>{labs.error}</ErrorNote>
+            <form action={breakGlassOnPatient} className="space-y-3">
+              <input type="hidden" name="patientId" value={id} />
+              <div>
+                <label htmlFor="break-glass-reason" className="block text-sm font-medium">
+                  Why do you need this patient&rsquo;s record?
+                </label>
+                <textarea
+                  id="break-glass-reason"
+                  name="reason"
+                  rows={3}
+                  minLength={20}
+                  required
+                  placeholder="Covering the night ward; need the blood results before prescribing."
+                  className="mt-1 w-full rounded-md border border-line bg-surface-raised px-3 py-2 text-sm"
+                />
+                <p className="mt-1 text-xs text-ink-muted">
+                  A sentence, at least 20 characters. It is kept on the record and read by the
+                  people who review this, and the access lapses at the end of the shift.
+                </p>
+              </div>
+              <button
+                type="submit"
+                className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90"
+              >
+                Open this patient&rsquo;s record
+              </button>
+            </form>
+          </div>
+        ) : labs.error ? (
+          <ErrorNote>{labs.error}</ErrorNote>
+        ) : labOrders.length === 0 ? (
           <Empty>No laboratory orders for this patient.</Empty>
         ) : (
           <Table head={["Ordered", "Accession", "Tests", "Results", "Status", ""]}>
