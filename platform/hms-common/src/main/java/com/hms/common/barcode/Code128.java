@@ -1,4 +1,4 @@
-package com.hms.laboratory.label;
+package com.hms.common.barcode;
 
 import com.hms.common.error.BadRequestException;
 

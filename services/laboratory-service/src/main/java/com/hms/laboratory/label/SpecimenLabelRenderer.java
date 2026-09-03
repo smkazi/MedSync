@@ -1,5 +1,6 @@
 package com.hms.laboratory.label;
 
+import com.hms.common.barcode.BarcodeSvg;
 import java.io.StringWriter;
 import java.util.Locale;
 import javax.xml.stream.XMLOutputFactory;
@@ -21,29 +22,23 @@ import org.springframework.stereotype.Component;
  * one helper is not correctness. A writer escapes attributes and text as a property of the API, so
  * the class can no longer emit malformed or injected markup even if someone adds a field to it.
  *
+ * <p>The symbol itself comes from {@link BarcodeSvg} in {@code hms-common}, which is where it moved
+ * when the wristband needed one too. What stayed here is the part that is about a tube rather than
+ * about a barcode.
+ *
  * <p>Deliberately narrow content: the accession number as a barcode, the same number as text, and
  * the specimen type. <strong>No patient name and no MRN.</strong> A tube label is handled by
  * couriers and visible to other patients in a shared collection room, and the laboratory works by
  * accession number — a name would leak identity from the one artefact guaranteed to leave the
- * building, and buy the lab nothing.
+ * building, and buy the lab nothing. The wristband's rule is the exact opposite of this one, which
+ * is why the two labels are rendered by two classes in the two services that own their content
+ * rather than by one class with a flag.
  */
 @Component
 public class SpecimenLabelRenderer {
 
-    /** Printed width of one narrow element. Two units keeps the symbol readable by cheap scanners. */
-    private static final int MODULE_WIDTH = 2;
-
     /** Bar height. Tall enough that a slightly skewed scan still crosses the whole symbol. */
     private static final int BAR_HEIGHT = 56;
-
-    /**
-     * Quiet zone, in modules.
-     *
-     * <p>Ten, the specification's minimum. Scanners need blank space to find the symbol's edges; a
-     * label trimmed flush to the first bar reads intermittently, which is worse than one that never
-     * reads at all because nobody investigates it.
-     */
-    private static final int QUIET_ZONE_MODULES = 10;
 
     private static final int TEXT_HEIGHT = 30;
     private static final int TEXT_BASELINE_OFFSET = 20;
@@ -56,14 +51,9 @@ public class SpecimenLabelRenderer {
     private static final XMLOutputFactory XML = XMLOutputFactory.newFactory();
 
     public String render(String accessionNo, String specimenType) {
-        int[] widths = Code128.encode(accessionNo);
-
-        int symbolModules = 0;
-        for (int width : widths) {
-            symbolModules += width;
-        }
-        int svgWidth = (symbolModules + 2 * QUIET_ZONE_MODULES) * MODULE_WIDTH;
-        int svgHeight = BAR_HEIGHT + TEXT_HEIGHT;
+        BarcodeSvg symbol = BarcodeSvg.of(accessionNo, BAR_HEIGHT);
+        int svgWidth = symbol.width();
+        int svgHeight = symbol.height() + TEXT_HEIGHT;
 
         StringWriter out = new StringWriter(1024);
         try {
@@ -85,21 +75,7 @@ public class SpecimenLabelRenderer {
             svg.writeAttribute("height", "100%");
             svg.writeAttribute("fill", GROUND_COLOUR);
 
-            int x = QUIET_ZONE_MODULES * MODULE_WIDTH;
-            boolean bar = true;
-            for (int width : widths) {
-                int elementWidth = width * MODULE_WIDTH;
-                if (bar) {
-                    svg.writeEmptyElement("rect");
-                    svg.writeAttribute("x", Integer.toString(x));
-                    svg.writeAttribute("y", "0");
-                    svg.writeAttribute("width", Integer.toString(elementWidth));
-                    svg.writeAttribute("height", Integer.toString(BAR_HEIGHT));
-                    svg.writeAttribute("fill", BAR_COLOUR);
-                }
-                x += elementWidth;
-                bar = !bar;
-            }
+            symbol.writeInto(svg, 0, 0);
 
             // The human-readable line matters: when a scanner fails somebody has to read the number
             // and type it, and a barcode with no printed value makes that impossible.

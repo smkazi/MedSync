@@ -13,6 +13,7 @@ import com.hms.common.web.CorrelationId;
 import com.hms.patient.domain.AllergySeverity;
 import com.hms.patient.domain.Patient;
 import com.hms.patient.domain.PatientAllergy;
+import com.hms.patient.label.WristbandRenderer;
 import com.hms.patient.web.dto.PatientDtos;
 import java.util.List;
 import java.util.Map;
@@ -36,13 +37,15 @@ public class PatientService {
     private final MrnGenerator mrnGenerator;
     private final EventPublisher events;
     private final AuditService audit;
+    private final WristbandRenderer wristbands;
 
     public PatientService(com.hms.patient.repo.PatientRepository patients, MrnGenerator mrnGenerator,
-                          EventPublisher events, AuditService audit) {
+                          EventPublisher events, AuditService audit, WristbandRenderer wristbands) {
         this.patients = patients;
         this.mrnGenerator = mrnGenerator;
         this.events = events;
         this.audit = audit;
+        this.wristbands = wristbands;
     }
 
     /**
@@ -134,6 +137,32 @@ public class PatientService {
     @Transactional(readOnly = true)
     public Patient require(UUID id) {
         return patients.findDetailById(id).orElseThrow(() -> NotFoundException.of("Patient", id));
+    }
+
+    /**
+     * Renders the patient's wristband, and records that somebody printed one.
+     *
+     * <p>Audited, unlike reading the chart, because a wristband is an identity artefact that leaves
+     * this system on somebody's wrist. A band printed for the wrong patient is how a scan-checked
+     * medication round is defeated at the one point the check cannot see, and the useful question
+     * afterwards is who printed it and when. The detail carries the MRN and no clinical text, which
+     * is the platform's standing rule for an audit record.
+     *
+     * <p>Refused for an archived record. A band is printed to be worn now, and a merged or
+     * withdrawn record is exactly the one whose MRN should not be going onto a wrist — a scan
+     * against it would then fail against every current prescription, at the bedside, with no
+     * explanation on the band to work from.
+     */
+    @Transactional
+    public String wristband(UUID id) {
+        Patient patient = require(id);
+        if (!patient.isActive()) {
+            throw new BadRequestException(
+                    "This record is archived, so no wristband can be printed for it. If this is the"
+                            + " patient in front of you, their current record is the one to band.");
+        }
+        audit.record("PATIENT_WRISTBAND_PRINTED", "Patient", id, "mrn " + patient.getMrn());
+        return wristbands.render(patient);
     }
 
     @Transactional

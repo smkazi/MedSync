@@ -280,6 +280,25 @@ class AuthorizationAbuseIT extends RequiresRunningStack {
                 .then().statusCode(403);
     }
 
+    @ParameterizedTest(name = "{0} must not print a wristband")
+    @org.junit.jupiter.params.provider.ValueSource(
+            strings = {"lab.tech", "dr.pathan", "pharmacist", "cashier"})
+    void printingAWristbandNeedsAPatientInFrontOfYou(String username) {
+        // Out of the table for the same reason the audit export is: this endpoint produces
+        // image/svg+xml only, and Api's spec asks for JSON, so content negotiation would answer 406
+        // before @PreAuthorize ran and the row would pass whatever the role rules said.
+        //
+        // A wristband is the identifier the medication round scans, so who may produce one is a
+        // safety question rather than a convenience. The bench and the billing desk have no patient
+        // in front of them to band; the pharmacy is refused for a sharper reason — it is one half of
+        // the loop, and a pharmacy that could print the band it later checks against would hold both
+        // ends of the check.
+        given().spec(Api.as(username))
+                .accept("image/svg+xml")
+                .when().get("/patients/00000000-0000-4000-8000-000000000000/wristband")
+                .then().statusCode(403);
+    }
+
     @Test
     @DisplayName("linking an ABHA is refused for a clinician even when the request is well-formed")
     void aWellFormedAbhaLinkIsStillRefused() {

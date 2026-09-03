@@ -10,9 +10,9 @@ haematology analyzer over its own wire protocol and released by a pathologist.
 
 > **Status:** the clinical core, the laboratory (including analyzer integration), the AI service
 > and the web UI are implemented and verified end to end against a real stack, and so are the
-> containerisation, TLS, security-testing and performance-testing layers. **1,166 tests pass** —
-> 657 Java unit and integration, 91 Python, 53 web unit, 233 black-box API and security abuse cases,
-> and 132 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
+> containerisation, TLS, security-testing and performance-testing layers. **1,182 tests pass** —
+> 667 Java unit and integration, 91 Python, 53 web unit, 237 black-box API and security abuse cases,
+> and 134 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
 > [Security](#security); what is left is in the [Roadmap](#roadmap).
 
 ---
@@ -133,7 +133,9 @@ order) are plain columns, not foreign keys, so a service survives another's outa
 ### `platform/hms-common`
 The shared library: RFC 9457 problem responses, the resource-server security chain and role
 vocabulary, correlation-id propagation, a UUID-keyed JPA base entity, the domain-event envelope
-and audit fan-out, LIKE-pattern helpers, and AES-256-GCM column encryption for PHI.
+and audit fan-out, LIKE-pattern helpers, AES-256-GCM column encryption for PHI, a CSV writer that
+neutralises spreadsheet formulas, and the Code 128 encoder both barcodes on the platform are drawn
+from — a specimen tube's label and a patient's wristband.
 
 ### `identity-service` — schema `identity`
 Argon2id password hashing, RS256 access tokens (15 min) with a published JWKS, single-use refresh
@@ -429,6 +431,27 @@ verbatim rather than as a "verified" boolean, because the question asked after a
 is allowed, since scanners fail, but an override that turns both checks off becomes the normal path
 within a week. A dose **not** given is also a row, with a reason and no scans, because the absence
 of a dose is a clinical fact the next shift needs.
+
+**And the band it scans is printed here now.** `GET /patients/{id}/wristband` renders one as SVG,
+carrying the MRN as a Code 128 symbol plus the name, date of birth and sex a person reads it for —
+the exact opposite of the tube label's rule, which carries no identity at all because a tube leaves
+the building while a band is on the wrist of the person it names. The barcode payload is the MRN and
+nothing else, because that is the string `AdministrationService` compares a scan against; the
+renderer says so, and the test decodes the bars back out of the rendered SVG and compares them to an
+independent encoding rather than trusting that the markup mentions the number somewhere. Printing
+one is `FRONT_DESK` — registration's and the ward's — and audited, because a band is an identity
+artefact that leaves the platform on somebody's wrist, and a band on the wrong wrist defeats the
+scan check at the one point the check cannot see. It is refused for an archived record, whose MRN
+would fail every live prescription at the bedside with nothing on the band to explain why.
+
+It lives in patient-service rather than in admissions-service, which is a correction of what this
+file used to predict. A band is printed at admission, so that looked like where it belonged — but
+every field on it is patient-service's, admissions-service holds none of them, and putting it there
+would have meant a cross-service client fetching data the owning service can serve directly. Here,
+casualty and the outpatient desk can print one too, and only in-patients get admitted. The Code 128
+encoder moved to `hms-common` on the way, with the module width, quiet zone and white ground that
+decide whether a symbol scans — two labels reading those numbers off one class rather than two, so
+a fix reaches the ward and the bench together.
 
 ### `billing-service` — schema `billing`
 Charge capture, GST invoicing, payments and payer claims. Ten tables, and four of them exist to
@@ -1218,12 +1241,12 @@ make help          # everything else
 Or directly:
 
 ```bash
-mvn -q verify                                     # 657 Java unit and integration tests
+mvn -q verify                                     # 667 Java unit and integration tests
 cd services/ai-service && uv run pytest -q        # 91 Python tests
 cd web && npm run lint && npm run typecheck       # web static checks
 cd web && npm test                                # 53 web unit tests
-cd web && npx playwright test                     # 132 browser tests, no skips
-mvn -Pautomation -pl tests/api verify             # 233 API and security abuse cases
+cd web && npx playwright test                     # 134 browser tests, no skips
+mvn -Pautomation -pl tests/api verify             # 237 API and security abuse cases
 ```
 
 | Layer | What runs | Where |
@@ -1399,6 +1422,18 @@ set; when it is not, the job writes an explicit notice and a run-summary entry s
 
 Worth writing down, because it is the argument for having built them:
 
+- **Every error on an SVG endpoint was a 500 with an empty body — if the caller asked properly.**
+  Found by hand against the live stack while adding the wristband, and not by any suite: an
+  endpoint declaring `produces = "image/svg+xml"` has no acceptable representation for a
+  `problem+json` error when the request's `Accept` names only SVG, so writing the error failed
+  *during* the write and the container answered a bare 500. Every 400, 404 and 409 on such an
+  endpoint, replaced by nothing. It had been true of the specimen label since labels were built.
+  Nothing caught it because a browser sends a wildcard in its `Accept` and every test in three
+  suites did too: the one caller shape that was broken was the *correct* one. `GlobalExceptionHandler`
+  now states the error's own content type, which makes Spring skip negotiation — an error is not a
+  negotiable representation, and a caller that cannot parse the reason is still better served by
+  the reason than by an empty 500. Pinned by a test that was checked against the unfixed code
+  before it was kept.
 - **SpotBugs caught a null id that would have been a prescription nobody could cancel.** The
   order-set saga withdraws a prescription when the laboratory step fails, which it can only do if it
   knows the prescription's id — and `RestClient` can return a null body on a 2xx. The code read the
@@ -1795,10 +1830,12 @@ SAST/DAST tooling, and performance profiles. Dependency scanning covers Python (
   somebody adjusts it, and nothing in the platform can adjust it — there is no destruction record,
   no stock take and no return-to-supplier. Dispensing it is already impossible, so the gap is an
   accounting one rather than a safety one, and it is named rather than papered over with a delete.
-- **A printed wristband.** The eMAR checks a scanned wristband against the prescription's MRN, and
-  nothing in the platform prints the wristband: that belongs with admission, and
-  laboratory-service's `Code128` renderer would need to move into `hms-common` first. Typing the
-  MRN works and is checked identically, which is what makes the gap tolerable.
+- **A colour band for an allergy, and a band printed in colour at all.** The wristband is
+  monochrome, and it deliberately carries no allergy marker: a red band is a real convention, this
+  platform cannot guarantee the printer, and a monochrome "ALLERGY" line that is sometimes there
+  and sometimes not teaches staff to read a band for the *absence* of a warning — the one thing a
+  wristband must never be trusted for. The allergy check that refuses a prescription is
+  server-side, where it cannot be smudged.
 - **Drug-class cross-sensitivity beyond what is recorded.** A class allergy works by the class
   being named as an ingredient on each product, which is deliberate and explained in the migration
   — but it means a class the formulary does not mark is a class the checker does not know. There is

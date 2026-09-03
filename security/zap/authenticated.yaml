@@ -339,6 +339,13 @@ jobs:
       - url: "${ZAP_TARGET}/patients/00000000-0000-4000-8000-000000000000/identifiers"
         method: GET
         responseCode: 404
+      # The wristband. A doctor may print one, so this is a 404 for a patient who does not exist
+      # rather than a refusal — the row is here because this endpoint renders operator-supplied text
+      # (a patient's own name) into markup that a browser then inlines, which is exactly the shape
+      # the active scan's injection rules are for.
+      - url: "${ZAP_TARGET}/patients/00000000-0000-4000-8000-000000000000/wristband"
+        method: GET
+        responseCode: 404
       # The patient portal, every path, refused to the scanning clinician.
       #
       # This block is different in kind from every other 403 above. Elsewhere a 403 says "this

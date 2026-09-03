@@ -10,6 +10,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.BadCredentialsException;
@@ -101,7 +102,11 @@ public class GlobalExceptionHandler {
         ApiError body = ApiError.of(HttpStatus.BAD_REQUEST.value(), "Validation Failed",
                 "One or more fields are invalid", req.getRequestURI(), CorrelationId.current())
                 .withFieldErrors(fieldErrors);
-        return ResponseEntity.badRequest().body(body);
+        // Content type stated for the reason {@link #build} records: without it, a caller that did
+        // not ask for JSON gets an empty 500 in place of the field errors.
+        return ResponseEntity.badRequest()
+                .contentType(MediaType.APPLICATION_PROBLEM_JSON)
+                .body(body);
     }
 
     @ExceptionHandler(NoResourceFoundException.class)
@@ -138,6 +143,7 @@ public class GlobalExceptionHandler {
                 // actionable.
                 .header("Allow", String.join(", ",
                         ex.getSupportedMethods() == null ? new String[0] : ex.getSupportedMethods()))
+                .contentType(MediaType.APPLICATION_PROBLEM_JSON)
                 .body(error(HttpStatus.METHOD_NOT_ALLOWED, "Method Not Allowed",
                         ex.getMethod() + " is not supported on this resource", req));
     }
@@ -188,8 +194,31 @@ public class GlobalExceptionHandler {
                 "An unexpected error occurred. Reference correlation id " + CorrelationId.current(), req);
     }
 
+    /**
+     * Builds the error response, stating its own content type rather than letting the request's
+     * {@code Accept} header choose one.
+     *
+     * <p>That explicit content type is a fix, not a formality. Spring skips content negotiation when
+     * a {@code ResponseEntity} already carries a concrete {@code Content-Type}; without one, an
+     * error on an endpoint whose caller asked for something other than JSON has no acceptable
+     * representation, and the attempt to write it fails <em>during</em> writing — which the
+     * container turns into a bare <strong>500 with an empty body</strong>. Any caller asking
+     * strictly for the media type an endpoint serves was therefore given a 500 in place of every
+     * 400, 404 and 409 the platform meant to send.
+     *
+     * <p>Found by hand against the live stack while adding the wristband: {@code Accept:
+     * image/svg+xml} against an archived patient answered 500 and nothing else. It had been true of
+     * the specimen label since labels were built, and nothing caught it because a browser sends
+     * {@code text/html,…} with a wildcard and the test suites send one too — every caller the suites
+     * had was a caller that happened to accept JSON as well.
+     *
+     * <p>An error is not a negotiable representation. A caller that cannot parse the reason is still
+     * better served by the reason than by an empty 500.
+     */
     private ResponseEntity<ApiError> build(HttpStatus status, String title, String detail, HttpServletRequest req) {
-        return ResponseEntity.status(status).body(error(status, title, detail, req));
+        return ResponseEntity.status(status)
+                .contentType(MediaType.APPLICATION_PROBLEM_JSON)
+                .body(error(status, title, detail, req));
     }
 
     private ApiError error(HttpStatus status, String title, String detail, HttpServletRequest req) {

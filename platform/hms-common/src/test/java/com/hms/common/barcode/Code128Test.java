@@ -1,4 +1,4 @@
-package com.hms.laboratory.label;
+package com.hms.common.barcode;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;

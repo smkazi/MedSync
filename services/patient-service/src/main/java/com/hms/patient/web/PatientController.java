@@ -12,7 +12,9 @@ import java.util.List;
 import java.util.UUID;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -82,6 +84,26 @@ public class PatientController {
     @PreAuthorize(Roles.CLINICAL_READ)
     public PatientDtos.PatientResponse getByMrn(@PathVariable String mrn) {
         return service.getByMrn(mrn);
+    }
+
+    /**
+     * The patient's wristband, as SVG.
+     *
+     * <p>{@code FRONT_DESK} rather than {@code CLINICAL_READ}: banding a patient is registration's
+     * and the ward's job, and the two roles that hold a clinical read without doing it — a
+     * pathologist and, through their own gates, the service lines — have no patient in front of
+     * them to band.
+     *
+     * <p>Served as {@code image/svg+xml} so a browser prints it rather than displaying markup, and
+     * with {@code no-store} for the reason the tube label is: a band is generated for one patient at
+     * one moment, and a cached one is how the wrong wrist ends up with the right barcode.
+     */
+    @GetMapping(value = "/{id}/wristband", produces = "image/svg+xml")
+    @PreAuthorize(Roles.FRONT_DESK)
+    public ResponseEntity<String> wristband(@PathVariable UUID id) {
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.noStore())
+                .body(service.wristband(id));
     }
 
     /**

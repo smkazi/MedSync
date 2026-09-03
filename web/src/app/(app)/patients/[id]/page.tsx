@@ -66,6 +66,11 @@ export default async function PatientChart({
 
   const criticalAllergies = patient.allergies.filter((allergy) => allergy.critical);
   const mayEdit = hasRole(user, "ADMIN", "RECEPTIONIST", "DOCTOR", "NURSE");
+  // The same set as mayEdit today and spelled out rather than aliased to it: banding a patient and
+  // correcting their record are different acts that happen to be done by the same people, and a
+  // change to either should not silently move the other. Mirrors Roles.FRONT_DESK, which is what
+  // the platform enforces.
+  const mayBand = hasRole(user, "ADMIN", "RECEPTIONIST", "DOCTOR", "NURSE");
   // Allergies are clinical content: the front desk registers a patient, it does not decide what
   // the platform will refuse to dispense. That is CLINICAL_WRITE, and the service enforces it.
   const mayRecordAllergies = hasRole(user, "ADMIN", "DOCTOR", "NURSE");
@@ -142,6 +147,18 @@ export default async function PatientChart({
               className="rounded-md border border-line px-3 py-1.5 text-sm font-medium hover:bg-surface"
             >
               Edit
+            </Link>
+          )}
+          {/*
+            Offered only while the record is active, because the platform refuses to band an
+            archived one and a button that always leads to a refusal is worse than no button.
+          */}
+          {mayBand && patient.active && (
+            <Link
+              href={`/patients/${patient.id}/wristband`}
+              className="rounded-md border border-line px-3 py-1.5 text-sm font-medium hover:bg-surface"
+            >
+              Wristband
             </Link>
           )}
           {mayArchive && patient.active && (

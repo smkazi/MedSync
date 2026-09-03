@@ -237,3 +237,47 @@ test.describe("the initial-password gate", () => {
     await signIn(page, "dr.rao");
   });
 });
+
+test.describe("the wristband", () => {
+  test("the ward prints a band carrying the identity a scan and a person both need", async ({
+    page,
+  }) => {
+    test.setTimeout(90_000);
+    await signIn(page, "nurse.iqbal");
+    const { url, surname } = await freshPatient(page);
+
+    await page.goto(url);
+    await page.getByRole("link", { name: "Wristband" }).click();
+
+    // Both halves, because a band with only one of them fails in exactly the situation the other
+    // covers: no bars and nothing scans, no printed identity and nobody can check the band went
+    // onto the right wrist.
+    const band = page.locator("figure").first();
+    await expect(band.locator("svg rect").first()).toBeAttached();
+    await expect(band.locator("svg")).toContainText(surname);
+    await expect(band.locator("svg")).toContainText(/MRN-\d{4}-\d{6}/);
+    // Date of birth rather than age: age changes and a band does not.
+    await expect(band.locator("svg")).toContainText("1978-11-23");
+
+    // The instruction beside it, which is why this page has any chrome at all: the check the
+    // barcode feeds cannot see whose wrist the band went onto.
+    await expect(page.getByRole("main")).toContainText(/check the name and date of birth/i);
+  });
+
+  test("a pathologist is not offered a band, and is told whose job it is", async ({ page }) => {
+    test.setTimeout(90_000);
+    await signIn(page, "nurse.iqbal");
+    const { url } = await freshPatient(page);
+
+    await signIn(page, "dr.pathan");
+    await page.goto(url);
+    // Not offered on the chart...
+    await expect(page.getByRole("link", { name: "Wristband" })).toHaveCount(0);
+
+    // ...and typing the address reaches a page that says whose job it is rather than a blank one.
+    // The platform refuses the endpoint independently; this is about what the person is told.
+    await page.goto(`${url}/wristband`);
+    await expect(page.getByRole("main")).toContainText(/front desk/i);
+    await expect(page.locator("figure")).toHaveCount(0);
+  });
+});

@@ -1,12 +1,15 @@
 package com.hms.patient.web;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.containsString;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -660,5 +663,74 @@ class PatientApiIntegrationTest {
                     .as("searching for '%s' must find the record", term)
                     .contains(employeeNo);
         }
+    }
+
+    // ---- the wristband ---------------------------------------------------------
+
+    @Test
+    @DisplayName("the wristband is served as printable SVG that a browser will not cache")
+    void wristbandIsUncacheableSvg() throws Exception {
+        JsonNode created = register(uniqueSurname());
+
+        String svg = mockMvc.perform(get("/patients/" + created.get("id").asText() + "/wristband")
+                        .with(as("RECEPTIONIST")))
+                .andExpect(status().isOk())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.valueOf("image/svg+xml")))
+                // A band is generated for one patient at one moment. A cached one is how the wrong
+                // wrist ends up with the right barcode.
+                .andExpect(header().string("Cache-Control", containsString("no-store")))
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(svg).startsWith("<svg");
+        assertThat(svg).contains(created.get("mrn").asText());
+    }
+
+    @Test
+    @DisplayName("the ward and the front desk may band a patient; a pathologist has nobody to band")
+    void onlyThoseWithAPatientInFrontOfThemMayPrintABand() throws Exception {
+        String id = register(uniqueSurname()).get("id").asText();
+
+        // FRONT_DESK rather than CLINICAL_READ, and this is the row that says so: a pathologist
+        // holds a clinical read and works down a bench rather than at a bedside.
+        for (String role : List.of("RECEPTIONIST", "NURSE", "DOCTOR", "ADMIN")) {
+            mockMvc.perform(get("/patients/" + id + "/wristband").with(as(role)))
+                    .andExpect(status().isOk());
+        }
+        for (String role : List.of("PATHOLOGIST", "LAB_TECH", "PHARMACIST", "CASHIER")) {
+            mockMvc.perform(get("/patients/" + id + "/wristband").with(as(role)))
+                    .andExpect(status().isForbidden());
+        }
+    }
+
+    @Test
+    @DisplayName("an archived record cannot be banded, and the refusal says what to do instead")
+    void archivedRecordCannotBeBanded() throws Exception {
+        String id = register(uniqueSurname()).get("id").asText();
+        mockMvc.perform(delete("/patients/" + id).with(as("ADMIN"))).andExpect(status().isOk());
+
+        // A band goes onto a wrist to be scanned against live prescriptions. An archived MRN would
+        // fail every one of those checks at the bedside, with nothing on the band to explain why.
+        mockMvc.perform(get("/patients/" + id + "/wristband").with(as("RECEPTIONIST")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value(containsString("archived")));
+    }
+
+    @Test
+    @DisplayName("a caller asking only for SVG still gets the reason, not an empty 500")
+    void anErrorReachesACallerThatDoesNotAskForJson() throws Exception {
+        // The defect this pins, found by hand against the live stack: an endpoint that produces
+        // image/svg+xml has no acceptable representation for a problem+json error when the caller
+        // asked strictly for SVG, so writing the error failed mid-write and the container answered
+        // 500 with an empty body — in place of every 400, 404 and 409 on that endpoint. It had been
+        // true of the specimen label since labels were built. Nothing caught it because a browser
+        // sends a wildcard in its Accept and so did every test.
+        //
+        // GlobalExceptionHandler now states the error's content type, which makes Spring skip
+        // negotiation. An error is not a negotiable representation.
+        mockMvc.perform(get("/patients/00000000-0000-4000-8000-000000000000/wristband")
+                        .accept(MediaType.valueOf("image/svg+xml"))
+                        .with(as("RECEPTIONIST")))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.detail").value(containsString("not found")));
     }
 }

@@ -14,6 +14,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -201,10 +203,26 @@ class MedicationJourneyIT extends RequiresRunningStack {
                 .extract().jsonPath().getString("detail");
         assertThat(refusal).contains("Do not give this dose").contains(patient.mrn());
 
+        // The band the ward prints, and the identifier is taken off it rather than out of the
+        // fixture. This is the join the loop needs and did not have: WristbandRendererTest proves
+        // the bars are Code128.encode(mrn) by decoding them back out of the SVG, and this proves
+        // the identifier on that band is the one the eMAR accepts. Together they say a scan of a
+        // printed band gives the dose — which is what "closed loop" means, and what typing the MRN
+        // off the chart was standing in for.
+        String band = given().spec(Api.as(Api.NURSE))
+                .accept("image/svg+xml")
+                .when().get("/patients/{id}/wristband", patient.id())
+                .then().statusCode(200)
+                .extract().asString();
+        Matcher printed = Pattern.compile(">(MRN-[0-9-]+)<").matcher(band);
+        assertThat(printed.find()).as("the band must print the MRN as well as encode it").isTrue();
+        String scannedFromTheBand = printed.group(1);
+        assertThat(scannedFromTheBand).isEqualTo(patient.mrn());
+
         // Both scans right, in whatever case the reader produced.
         given().spec(Api.as(Api.NURSE))
                 .body(Map.of("prescriptionItemId", itemId, "scheduledFor", due,
-                        "patientScan", patient.mrn().toLowerCase(Locale.ROOT),
+                        "patientScan", scannedFromTheBand.toLowerCase(Locale.ROOT),
                         "drugScan", "para500"))
                 .when().post("/emar/administer")
                 .then().statusCode(201)
