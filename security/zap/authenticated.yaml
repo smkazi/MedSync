@@ -327,6 +327,70 @@ jobs:
       - url: "${ZAP_TARGET}/patients/00000000-0000-4000-8000-000000000000/identifiers"
         method: GET
         responseCode: 404
+      # The patient portal, every path, refused to the scanning clinician.
+      #
+      # This block is different in kind from every other 403 above. Elsewhere a 403 says "this
+      # clinician holds the wrong role for this act"; here it says something stronger, which is
+      # that /portal answers "the signed-in patient's own record" and there is no patient a
+      # clinician is. The Roles.PORTAL constant is the only one in the platform that does not
+      # carry ADMIN, for exactly that reason -- so a 200 on any row here would mean the portal had
+      # acquired a second audience, and the record it served would be a record chosen by whatever
+      # the endpoint fell back to when the patient claim was missing.
+      #
+      # Aimed with a real logged-in session on purpose. Unauthenticated, /portal answers 401 and
+      # proves nothing about the claim.
+      - url: "${ZAP_TARGET}/portal/me"
+        method: GET
+        responseCode: 403
+      - url: "${ZAP_TARGET}/portal/appointments"
+        method: GET
+        responseCode: 403
+      - url: "${ZAP_TARGET}/portal/encounters"
+        method: GET
+        responseCode: 403
+      - url: "${ZAP_TARGET}/portal/reports"
+        method: GET
+        responseCode: 403
+      - url: "${ZAP_TARGET}/portal/prescriptions"
+        method: GET
+        responseCode: 403
+      - url: "${ZAP_TARGET}/portal/invoices"
+        method: GET
+        responseCode: 403
+      - url: "${ZAP_TARGET}/portal/invoices/balance"
+        method: GET
+        responseCode: 403
+      - url: "${ZAP_TARGET}/portal/messages"
+        method: GET
+        responseCode: 403
+      - url: "${ZAP_TARGET}/portal/records/export"
+        method: GET
+        responseCode: 403
+      # A write, with a well-formed body, so only the role can be what refuses it.
+      - url: "${ZAP_TARGET}/portal/appointments"
+        method: POST
+        data: '{"clinicianId":"00000000-0000-4000-8000-000000000000","departmentCode":"GEN","startsAt":"2030-01-01T09:00:00Z","durationMinutes":15}'
+        responseCode: 403
+      - url: "${ZAP_TARGET}/portal/messages"
+        method: POST
+        data: '{"subject":"zap","body":"zap"}'
+        responseCode: 403
+      # Handing out portal credentials. The front desk's, because enrolment is an identity check
+      # somebody performs face to face -- a clinician who could mint an account against any patient
+      # id could mint one against a neighbour's record and read it at home, with the audit line
+      # naming a routine enrolment.
+      - url: "${ZAP_TARGET}/admin/portal-accounts"
+        method: POST
+        data: '{"patientId":"00000000-0000-4000-8000-000000000000","mrn":"MRN-ZAP","email":"zap@example.invalid","fullName":"Zap"}'
+        responseCode: 403
+      - url: "${ZAP_TARGET}/patients/00000000-0000-4000-8000-000000000000/portal-account"
+        method: POST
+        responseCode: 403
+      # The hospital's side of secure messaging is a clinician's, so this one is 200: the row is
+      # here to put the queue in front of the active scan rather than to assert a refusal. It is
+      # the widest free-text surface the platform serves, since a patient types into it.
+      - url: "${ZAP_TARGET}/notifications/messages?size=20"
+        method: GET
 
   - type: spider
     parameters:

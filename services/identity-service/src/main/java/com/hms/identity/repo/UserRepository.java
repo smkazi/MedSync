@@ -14,6 +14,9 @@ public interface UserRepository extends JpaRepository<User, UUID> {
 
     Optional<User> findByUsernameIgnoreCase(String username);
 
+    /** The portal account for a patient, if one has been issued. At most one, by unique index. */
+    Optional<User> findByPatientId(UUID patientId);
+
     boolean existsByUsernameIgnoreCase(String username);
 
     boolean existsByEmailIgnoreCase(String email);
@@ -32,6 +35,13 @@ public interface UserRepository extends JpaRepository<User, UUID> {
      * filter. Asking for pathologists returned every role-less account as well. Comparing the
      * pattern to {@code '%'} says "no filter was supplied" explicitly, which is what was meant.
      *
+     * <p>Portal accounts are excluded, and that is not a filter a caller can turn off. This is the
+     * staff directory: it is read by the account-administration screen and by the pick-lists that
+     * link a clinician or a technician to a login. A hospital's patients are not staff, they can
+     * outnumber staff by four orders of magnitude, and a screen that listed them here would be a
+     * patient register reached through a page nobody thinks of as one. Portal accounts are
+     * administered through {@code /admin/portal-accounts}, one patient at a time.
+     *
      * @param pattern     lower-cased {@code %term%} pattern, or {@code %} for everything
      * @param rolePattern exact role code, or {@code %} for any role
      */
@@ -41,6 +51,7 @@ public interface UserRepository extends JpaRepository<User, UUID> {
                    or lower(u.fullName) like :pattern
                    or lower(u.email) like :pattern)
               and (:rolePattern = '%' or r.code like :rolePattern)
+              and u.patientId is null
             """,
             countQuery = """
             select count(distinct u) from User u left join u.roles r
@@ -48,6 +59,7 @@ public interface UserRepository extends JpaRepository<User, UUID> {
                    or lower(u.fullName) like :pattern
                    or lower(u.email) like :pattern)
               and (:rolePattern = '%' or r.code like :rolePattern)
+              and u.patientId is null
             """)
     Page<User> search(@Param("pattern") String pattern, @Param("rolePattern") String rolePattern, Pageable pageable);
 

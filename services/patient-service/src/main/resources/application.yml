@@ -52,6 +52,10 @@ hms:
     phi-key: ${HMS_PHI_KEY:}
   patient:
     mrn-prefix: ${HMS_MRN_PREFIX:MRN}
+  identity:
+    # Where portal accounts are created. Enrolment forwards the receptionist's own token, so this
+    # is an address rather than a credential -- this service can mint an account for nobody.
+    base-url: ${HMS_IDENTITY_URI:http://localhost:8081}
 
 spring.security.oauth2.resourceserver.jwt.jwk-set-uri: ${HMS_JWKS_URI:http://localhost:8081/.well-known/jwks.json}
 

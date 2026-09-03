@@ -10,9 +10,9 @@ haematology analyzer over its own wire protocol and released by a pathologist.
 
 > **Status:** the clinical core, the laboratory (including analyzer integration), the AI service
 > and the web UI are implemented and verified end to end against a real stack, and so are the
-> containerisation, TLS, security-testing and performance-testing layers. **1,040 tests pass** —
-> 571 Java unit and integration, 91 Python, 45 web unit, 218 black-box API and security abuse cases,
-> and 115 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
+> containerisation, TLS, security-testing and performance-testing layers. **1,118 tests pass** —
+> 627 Java unit and integration, 91 Python, 47 web unit, 229 black-box API and security abuse cases,
+> and 124 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
 > [Security](#security); what is left is in the [Roadmap](#roadmap).
 
 ---
@@ -60,6 +60,11 @@ haematology analyzer over its own wire protocol and released by a pathologist.
       consent artefacts    FastAPI
       FHIR R4 bundles      4 capabilities
       ABDM · EHI export    (Claude + models)
+
+      /portal/** — the patient's own door, split across the five services that own the
+      data. Not a service: assembling one patient's view from a portal service would
+      need a credential able to read every patient's chart. Whose record it is comes
+      from a signed claim on the token, never from the request.
              │                 │                    │                  │
              └── Kafka: hms.patient · hms.appointment · hms.lab · hms.admission ·
                         hms.pharmacy · hms.billing · hms.audit ────────────────────┘
@@ -107,6 +112,8 @@ order) are plain columns, not foreign keys, so a service survives another's outa
 │   ├── pharmacy-service/        formulary, prescribing, dispensing, closed-loop eMAR
 │   ├── billing-service/         charge capture, GST invoicing, payments, payer claims
 │   ├── interop-service/         consent artefacts, FHIR R4 bundles, ABDM, EHI export
+│   │                            (`/portal/**` is split across the five services above, not a
+│   │                             service of its own — see "The patient portal")
 │   └── ai-service/              FastAPI: summarisation, no-show risk, triage, ICD-10
 ├── web/                         Next.js 16 app, Playwright suite in e2e/
 ├── tests/
@@ -570,6 +577,80 @@ callback, an encrypted payload with a key exchange and an assessed HIP, and this
 to be implemented against a sandbox. The README says so because a module with an HTTP adapter is
 exactly the module somebody would otherwise describe as compliant.
 
+### The patient portal — a prefix, not a service
+`/portal/**` is the patient's own door onto their record: their appointments and self-booking,
+released laboratory reports, the visits a clinician has signed, their prescriptions, their bills,
+written questions to the hospital, and a copy of the whole record in FHIR to take away.
+
+**It is not a service, and that is the design decision worth reading.** Assembling one patient's
+view means reading from five services, and the obvious way to do it — a portal service that fans
+out — would have to hold a credential able to read *every* patient's chart in order to show one
+patient theirs. That credential would immediately be the most attractive thing on the platform.
+So the prefix is split instead, one sub-path per owner: `/portal/me` is patient-service's,
+`/portal/appointments` and `/portal/encounters` are scheduling's, `/portal/reports` is the
+laboratory's, `/portal/prescriptions` is the pharmacy's, `/portal/invoices` is billing's,
+`/portal/messages` is notification's, and `/portal/records/export` is interop's. The gateway's
+route table is the only place that says so.
+
+**Whose record it is comes from the token and from nowhere else.** A portal account is a row in
+`users` with a `patient_id`, that id is a signed claim on the access token, and every portal
+endpoint reads `CurrentUser.requirePatientId()`. There is no `/portal/patients/{id}` and there is
+not going to be: an IDOR test against these endpoints has nothing to tamper with, which is a
+stronger property than an IDOR test that passes. Where an id is unavoidable — one appointment, one
+report, one conversation — the record is fetched filtered by the session's patient and a miss is a
+**404 rather than a 403**, because "not yours" confirms that the id is real.
+
+`Roles.PORTAL` is `hasRole('PATIENT')` and is the only constant in the file that does not carry
+ADMIN. These endpoints answer "the signed-in patient's own record", and there is no patient an
+administrator is; 403 is the honest answer where an empty record would read as "you have no
+allergies". The staff-facing views of the same data are unchanged and are what an administrator
+should use.
+
+What the portal deliberately narrows, in each case for a reason that is not about the portal:
+
+- **Released results only.** A bench result is provisional — an analyzer artefact, a mislabelled
+  tube, a dilution nobody has repeated — so the list says "In the laboratory" and carries no value,
+  no result count and no abnormal flag until a pathologist has verified it. Publishing round the
+  release step would make the patient the first reader of a number that may be wrong.
+- **Signed notes only.** A draft is a sentence somebody is still deciding whether they believe.
+  Showing it to its subject makes it a statement they never made, and clinicians respond to that by
+  not drafting in the system.
+- **No staff free text about the patient.** The registration `notes` field is written by people who
+  have never considered that its subject would read it.
+- **Nothing a patient may not decide.** The self-booking request has no priority field and no room
+  field, so urgency stays a triage decision and rooms stay allocated against the day's whole list.
+
+**Enrolment is the front desk's**, because somebody has to satisfy themselves that the person
+asking for access to a record is the person the record is about. It runs through patient-service —
+which owns the register, refuses a patient it cannot find, and refuses one with no email address on
+file, since that address is where a password reset would go — and patient-service calls
+identity-service with the receptionist's own token to mint the account. The username is the MRN the
+patient already carries, and the one-time password is answered once, stored only as a hash and
+never logged. The account then falls into the platform's existing initial-password gate: its first
+token carries no roles at all, so it can change its password and do nothing else.
+
+**Secure messaging is where this platform's PHI rule turns around, and deliberately.**
+notification-service exists on the principle that an outbound message carries no clinical
+information; the `message_threads` and `thread_messages` tables hold exactly what that rule keeps
+out of an SMS. The rule is about the channel, not the content: a sentence on a screen behind a
+password the patient chose is the safe place for "your thyroid result is slightly low", and the
+same sentence on a handset on a family plan is not. Splitting the two is what lets the hospital say
+anything useful at all. A thread's status follows who wrote last rather than being set by a caller,
+nothing is editable or deletable once sent, and every thread carries a standing notice that the
+portal is not monitored continuously — as a field the platform supplies, not as prose a screen
+could drop.
+
+**Its own rate-limit bucket**, a fifth of the general one. Nothing a patient does looks like a
+clinician loading a worklist, and the portal is the only authenticated surface a stranger can
+obtain a session on by asking at a desk — so it neither needs the general allowance nor should be
+able to spend it for every clinician behind the same address.
+
+Not built, and named in the Roadmap rather than half-built: **online payment** (it needs a merchant
+account and live gateway credentials, and a Pay-now button that settled an invoice without
+receiving anything would balance the day book against money that does not exist) and a **published
+clinician directory** for self-booking, which is why the booking form offers the clinicians this
+patient has already seen rather than a list of everybody.
+
 ### `web` — Next.js 16, React 19
 The clinical interface. Server components call the gateway; **the browser never receives an access
 token** — the session lives in httpOnly cookies and every platform call is made server-side.
@@ -587,10 +668,20 @@ them and an empty dropdown is worse than an absent one.
 | Laboratory | worklist, an order's report with collection, result entry and release, specimen labels, scan a tube, test catalogue, reference ranges and interpretation rules — both retunable by a pathologist — analyzers, device messages |
 | Facility | room directory, rooms, floors, room types, beds, departments — all editable by an administrator |
 | Sharing | the consent register with the four conditions on every row, recording a decision (front desk), sending a record under a consent (clinicians), and what has been released about a patient and under what |
-| Messaging | delivery log with the send form, message wording — readable by anybody who may send, editable by an administrator |
+| Messaging | delivery log with the send form, patient questions (the portal's queue, oldest first, where a reply may say what an SMS may not), message wording — readable by anybody who may send, editable by an administrator |
 | Pharmacy | dispensing queue with the override reason on the row, formulary with its ingredient lists, the interaction table with what to do about each pairing, stock by batch with what is about to expire — gated to the roles that may read a medication order |
 | Billing | invoices (open bills first, or one patient's whole history), raise an invoice, the day book split by how money arrived, claims, and — administrator-only — the charge list, payers with their agreed tariffs, and dated tax rates |
 | Administration | staff directory, users (create, roles, reset a password), roles, audit trail |
+
+**The patient portal is a different application in the same codebase.** It is a route group of its
+own — `(portal)` beside `(app)` — with its own layout, its own eight links and no clinical menu at
+all: Overview, Appointments, Test results, Visits, Medicines, Bills, Messages, My record. The list
+above is not shown to a patient even filtered to nothing, because the shape of a menu is itself a
+description of the building. The middleware routes a portal session to `/portal` and back to it if
+they type a clinical path, the layout refuses to render for a staff account, and every endpoint
+behind it is gated `hasRole('PATIENT')` in five services — three layers, of which only the last is
+an authorisation. `menu.test.ts` asserts that a patient reaches nothing in the staff menu and that
+no staff item points into `/portal`.
 
 Three rules hold in the navigation, and each is asserted in `web/e2e/navigation.spec.ts` against a
 real browser for all eight seeded roles:
@@ -795,6 +886,15 @@ The dev profile seeds one account per role:
 | `pharmacist` | PHARMACIST — fills prescriptions, keeps the formulary and the stock. Reads a prescription and an allergy list and **cannot open a chart**, cannot prescribe, and cannot record a dose as given. |
 | `cashier` | CASHIER — raises invoices, takes payments, works claims. The mirror image of the pharmacist: it can collect money and **cannot open a chart**, and `dr.rao` can read a bill and cannot take a payment. |
 
+**The portal seeds no account either, and cannot.** A portal account has to point at a patient
+record, and the seed runs before there is one — so there is no `patient` in the table above and
+there never will be. Enrolling one is the front desk's job and takes half a minute: open a patient
+with an email address on file, use the **Portal access** card on their chart, and read out the
+one-time password. The username is their MRN, the password is shown once and stored only as a hash,
+and the account can do nothing until the patient changes it. Both test suites do exactly that
+rather than reaching for a fixture, which means the enrolment path is exercised before anything
+else about the portal is.
+
 Consent and health-information exchange add **no account**, deliberately: recording what a patient
 decided is the front desk's (`reception`), sending a record under a consent is a clinician's
 (`dr.rao`), and exporting a whole chart is an administrator's. A role called something like
@@ -955,9 +1055,14 @@ to a patient record on its own.
 - **Audit** — every service emits audit events; identity persists them. Writes on deliberately
   failing paths (a rejected login, detected token theft) commit in their own transactions, so the
   trail survives the rollback that follows.
-- **Rate limiting** — per client at the gateway, with a far stricter bucket on `/auth/**`. Account
-  lockout stops guessing at one account; this stops one password sprayed across a thousand
-  usernames, where no single account ever reaches its threshold. Neither substitutes for the other.
+- **Rate limiting** — per client at the gateway, in four buckets that defend against four different
+  things. The general one stops a client exhausting the pool; `/auth/**` is far stricter, because
+  account lockout stops guessing at one account and this stops one password sprayed across a
+  thousand usernames where no single account reaches its threshold; `/public/**` is the loosest,
+  because a corridor display polls and what it returns is a room code and some numbers; and
+  `/portal/**` is a fifth of the general limit with a counter of its own, because nothing a patient
+  does looks like a clinician loading a worklist and a patient on the guest wifi must not be able
+  to spend the allowance of every clinician behind the same address.
 - **Security headers** — set at the gateway, the only thing every browser response passes through:
   `nosniff`, `X-Frame-Options: DENY`, `no-referrer`, a locked-down `Permissions-Policy`, COOP/CORP,
   and a `default-src 'none'` CSP for the JSON API. The web app has its own nonce-based policy. The
@@ -1002,12 +1107,12 @@ make help          # everything else
 Or directly:
 
 ```bash
-mvn -q verify                                     # 571 Java unit and integration tests
+mvn -q verify                                     # 627 Java unit and integration tests
 cd services/ai-service && uv run pytest -q        # 91 Python tests
 cd web && npm run lint && npm run typecheck       # web static checks
-cd web && npm test                                # 45 web unit tests
-cd web && npx playwright test                     # 115 browser tests, no skips
-mvn -Pautomation -pl tests/api verify             # 218 API and security abuse cases
+cd web && npm test                                # 47 web unit tests
+cd web && npx playwright test                     # 124 browser tests, no skips
+mvn -Pautomation -pl tests/api verify             # 229 API and security abuse cases
 ```
 
 | Layer | What runs | Where |
@@ -1040,7 +1145,9 @@ the properties that only appear when it is wired together: that no access token 
 never render on a chart, and that AI output always carries its advisory framing.
 
 **Two suites need the rate limiter raised**, because they deliberately make more sign-in attempts
-per minute than any human would. `make dev-test-stack` starts the stack that way, and both suites
+per minute than any human would — and the browser suite needs the portal bucket raised too, since
+it drives eight portal screens as fast as Chromium can render them and the shipped limit is sized
+for a person. `make dev-test-stack` starts the stack that way, and both suites
 detect a 429 and say exactly what to change rather than reporting a mysterious failure rate. The
 limiter itself is covered by `EdgeFilterTest` in the gateway module, so raising it costs no coverage.
 
@@ -1227,6 +1334,29 @@ Worth writing down, because it is the argument for having built them:
   this and walked forward to the next day with a slot; the booking and queue specs now do the same.
   A test that is green until an invisible counter runs out is the worst kind, because the day it
   breaks has nothing to do with the change that is being blamed.
+- **A new rate-limit bucket had a property nobody had wired up.** The portal gets its own counter,
+  defaulting to 120 requests a minute, and the constructor read
+  `hms.rate-limit.portal-requests-per-minute` — a key that appeared in no YAML file, so the
+  environment variable the other three buckets use had no equivalent and could not raise it. Nothing
+  failed at startup: a `@Value` with a default is a working configuration. It surfaced as a 429 in
+  the middle of a browser test, in a form that had rendered "Request failed (429)" exactly as it
+  should. The key is in `application.yml` now, beside the other three, and in `.env.example`, the
+  `Makefile` and CI beside them as well — which is the actual lesson, since a limit that cannot be
+  raised for a test run is a limit somebody disables instead.
+- **A record component that could not be set was a dead store, and SpotBugs was right about it.**
+  Every message thread carries a standing notice that the portal is not monitored continuously, and
+  the intent was that no caller could suppress it or soften the wording. First attempt: a `notice()`
+  accessor — never serialised at all, because Jackson writes a record's components and its bean
+  getters and that is neither. Second attempt: a component overwritten in the compact constructor —
+  serialised correctly, and a parameter whose value is thrown away, which the quality gate reported
+  as `IP_PARAMETER_IS_DEAD_BUT_OVERWRITTEN`. `getNotice()` is both: serialised because it is a bean
+  getter, and unsettable because it takes no argument.
+- **A JPA association that compiled, ran, and could never insert a row.** A message thread owned its
+  messages through `@OneToMany @JoinColumn`, which reads more tidily than a back-reference and means
+  Hibernate inserts the child with a null foreign key and updates it afterwards — so a `NOT NULL`
+  `thread_id` rejected every message ever written, as a 409 that said "the request conflicts with
+  existing data". Found by the first test that tried to start a conversation. Owning the association
+  on the child is one INSERT carrying the key, and one statement rather than two.
 - **The queue suite failed for forty minutes a day and blamed the queue.** The corridor display
   shows today and nothing else — deliberately, since accepting a date would let anybody on the
   internet read the shape of any past clinic. Its tests therefore have to book on the day, and
@@ -1338,9 +1468,26 @@ SAST/DAST tooling, and performance profiles. Dependency scanning covers Python (
   asserted in unit tests; conformance to the specification's profiles is unproven. A deployment
   that has to demonstrate it should validate the output.
 - **A consent request does not reach the patient.** The front desk records what the patient
-  decided, in front of them; there is no consent manager integration, no notification to a phone
-  and no patient-facing screen to approve one — which is a portal-shaped gap and waits on the
-  portal.
+  decided, in front of them. The portal is built now, and this is still a gap: there is no consent
+  manager integration and no portal screen on which a patient approves or refuses a request. What
+  the portal shows them is their own record, not the register of who has asked to see it.
+- **The portal takes no money.** Bills, lines, tax and what is still owed are all there, and there
+  is no Pay-now button, because taking a payment needs a gateway with a merchant account and live
+  credentials. A button that settled an invoice without receiving anything would balance the day
+  book against money that does not exist, and it would be found at the month end by somebody unable
+  to tell which of the two records was wrong.
+- **No published clinician directory for self-booking.** The portal's booking form offers the
+  clinicians this patient has already seen, because that list is on their own record. A patient
+  choosing somebody new needs a directory of who runs which clinic, which the platform does not
+  have — inventing one here would mean the portal listing clinicians the appointment book does not.
+- **No repeat-prescription request.** The portal shows what has been prescribed and offers no way
+  to ask for more of it. A repeat is a request to a prescriber rather than a prescription, and
+  building it as one inside the medication loop would be building the wrong thing in the most
+  dangerous module on the platform.
+- **A patient cannot correct their own record.** They can read their demographics and their allergy
+  list and are asked to tell the front desk when something is wrong. A self-service edit needs a
+  review step somebody owns, and an allergy list a patient could edit unreviewed is the list that
+  refuses a prescription.
 - **Four of the seven information types have no bundle.** Discharge summary, immunisation record,
   health document and wellness record are in the consent vocabulary because ABDM's is, and a
   consent may legitimately cover them; sharing one is refused with a message saying the platform

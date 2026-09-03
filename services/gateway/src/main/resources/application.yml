@@ -36,6 +36,11 @@ hms:
     # and a handful of numbers. Sharing the general bucket would let one waiting-room screen
     # exhaust the allowance for every clinician behind the same NAT address.
     public-requests-per-minute: ${HMS_RATE_LIMIT_PUBLIC_RPM:3000}
+    # The patient portal: a fifth of the general limit, and its own counter. Nothing a patient does
+    # looks like a clinician loading a worklist, and the portal is the only authenticated surface a
+    # stranger can obtain a session on by asking at a desk -- so it neither needs the general
+    # allowance nor should be able to spend it for the clinicians behind the same NAT address.
+    portal-requests-per-minute: ${HMS_RATE_LIMIT_PORTAL_RPM:120}
   services:
     identity: ${HMS_IDENTITY_URI:http://localhost:8081}
     patient: ${HMS_PATIENT_URI:http://localhost:8082}

@@ -30,9 +30,20 @@ public class RouteConfig {
                 // data of the same kind as departments and staff. `/room-types` is the configurable
                 // taxonomy, not a resource under `/rooms`, so it needs its own prefix - routing it
                 // by accident would have made every new room type a 404.
+                //
+                // `/portal/me` is the first of the `/portal/**` paths, and this is the place to say
+                // what that prefix is. It is not a service: it is one door, opened by a patient's
+                // own token, onto data that stays in the five services that own it. A portal
+                // service would have had to hold a credential able to read every patient's chart
+                // in order to assemble one patient's view, and that credential would be the most
+                // attractive thing on the platform. Instead each service answers for its own data,
+                // reading whose record it is from the `patient_id` claim and never from the
+                // request — so the prefix is split here, one sub-path per owner, and every entry
+                // below names the service that already holds what it returns.
                 .route("patient", r -> r
                         .path("/patients/**", "/staff/**", "/departments/**",
-                              "/floors/**", "/rooms/**", "/room-types/**", "/beds/**")
+                              "/floors/**", "/rooms/**", "/room-types/**", "/beds/**",
+                              "/portal/me", "/portal/me/**")
                         .uri(services.patient()))
                 // Appointments, encounters, clinical notes, vitals and clinician availability.
                 //
@@ -49,15 +60,17 @@ public class RouteConfig {
                 .route("scheduling", r -> r
                         .path("/appointments/**", "/encounters/**", "/schedules/**",
                               "/queue/**", "/public/queue/**", "/escalation-policies/**",
-                              "/order-sets/**", "/care-plans/**")
+                              "/order-sets/**", "/care-plans/**",
+                              "/portal/appointments/**", "/portal/availability",
+                              "/portal/encounters/**")
                         .uri(services.scheduling()))
                 // Laboratory: orders, specimens, results, catalog and analyzer message ingest.
                 .route("laboratory", r -> r
-                        .path("/lab/**")
+                        .path("/lab/**", "/portal/reports/**")
                         .uri(services.laboratory()))
                 // Outbound messaging: the delivery log, and the wording templates behind it.
                 .route("notification", r -> r
-                        .path("/notifications/**")
+                        .path("/notifications/**", "/portal/messages/**")
                         .uri(services.notification()))
                 // Casualty and in-patient care, including the bed map.
                 //
@@ -79,7 +92,8 @@ public class RouteConfig {
                 // otherwise in the one place every client sees. `/emar/**` is the ward's end of the
                 // same loop and is separate for the same reason.
                 .route("pharmacy", r -> r
-                        .path("/pharmacy/**", "/prescriptions/**", "/emar/**")
+                        .path("/pharmacy/**", "/prescriptions/**", "/emar/**",
+                              "/portal/prescriptions/**")
                         .uri(services.pharmacy()))
                 // The revenue cycle: the price list, invoices, payments and payer claims.
                 //
@@ -90,7 +104,8 @@ public class RouteConfig {
                 // only place that records.
                 .route("billing", r -> r
                         .path("/invoices/**", "/charges", "/charge-items/**", "/payers/**",
-                                "/tax-rates/**", "/claims/**", "/day-book")
+                                "/tax-rates/**", "/claims/**", "/day-book",
+                                "/portal/invoices/**")
                         .uri(services.billing()))
                 // Health-information exchange: consent artefacts, FHIR bundles, what leaves.
                 //
@@ -99,7 +114,7 @@ public class RouteConfig {
                 // module's internal detail. `/interop/**` is the machinery — sharing, exporting,
                 // the disclosure log — and is named as machinery because that is what it is.
                 .route("interop", r -> r
-                        .path("/consents/**", "/interop/**")
+                        .path("/consents/**", "/interop/**", "/portal/records/**")
                         .uri(services.interop()))
                 // Clinical decision support: summarisation, triage, no-show risk, coding.
                 .route("ai", r -> r

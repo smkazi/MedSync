@@ -30,11 +30,11 @@ dev: build ## Run the Java services natively against a local Postgres
 # The gateway's rate limiter and a load test want opposite things. The test targets below need a
 # stack started with the limits raised; this variable is what to start it with.
 #
-#   HMS_RATE_LIMIT_AUTH_RPM=5000 HMS_RATE_LIMIT_RPM=100000 make dev
+#   HMS_RATE_LIMIT_AUTH_RPM=5000 HMS_RATE_LIMIT_RPM=100000 HMS_RATE_LIMIT_PORTAL_RPM=100000 make dev
 #
 # The limiter itself is covered by EdgeFilterTest in the gateway module, so raising it for a load
 # run costs no coverage.
-TEST_RATE_LIMITS = HMS_RATE_LIMIT_AUTH_RPM=5000 HMS_RATE_LIMIT_RPM=100000
+TEST_RATE_LIMITS = HMS_RATE_LIMIT_AUTH_RPM=5000 HMS_RATE_LIMIT_RPM=100000 HMS_RATE_LIMIT_PORTAL_RPM=100000
 
 .PHONY: dev-test-stack
 dev-test-stack: build ## Run the stack with rate limits raised, for the API and perf suites

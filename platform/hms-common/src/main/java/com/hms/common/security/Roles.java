@@ -286,6 +286,66 @@ public final class Roles {
 
     public static final String ADMIN_ONLY = "hasRole('ADMIN')";
 
+    /**
+     * A patient, signed in to the portal, reading their own record.
+     *
+     * <p>The only role on this platform that answers two questions rather than one. Every staff
+     * role answers "what may this person do", and the record they may open follows from it. This
+     * one also answers "whose record is this", and the answer is carried by the {@code patient_id}
+     * claim on the token rather than by anything the caller sends. Authority without that claim is
+     * no authority at all: a PATIENT token that names no patient is refused by every portal
+     * endpoint for want of a subject.
+     */
+    public static final String PATIENT = "PATIENT";
+
+    /**
+     * The portal: a patient's own appointments, released reports, invoices and messages.
+     *
+     * <p>{@code hasRole('PATIENT')} and nothing else, and the exclusion of ADMIN is the deliberate
+     * part. Every other constant in this file carries ADMIN, because an administrator is expected
+     * to be able to do the job of any desk in the building. Not here: these endpoints answer "the
+     * signed-in patient's own record", so an administrator reaching one would be asking for the
+     * record of a patient the platform believes them to be. There is no such patient, so the honest
+     * answer is 403 rather than an empty list that reads like "you have no appointments".
+     *
+     * <p>The staff-facing view of the same data already exists and is what an administrator should
+     * use: {@code /appointments}, {@code /lab/orders}, {@code /invoices}. A portal is a second door
+     * to one person's record, not a second API for the hospital.
+     */
+    public static final String PORTAL = "hasRole('PATIENT')";
+
+    /**
+     * Who may enrol a patient in the portal, reset their access, or take it away.
+     *
+     * <p>The front desk, because enrolment happens face to face: somebody has to satisfy themselves
+     * that the person asking for access to a record is the person the record is about, and no
+     * endpoint can do that. It is the same list as {@link #ABHA_LINK} and for the same reason.
+     *
+     * <p>Deliberately not a clinician. A doctor who could mint a portal account against any patient
+     * id could mint one against their own record's neighbour and read it at home, with the audit
+     * trail naming a routine enrolment. Handing out credentials is an administrative act and this
+     * platform keeps it at the desk that already does identity checks.
+     */
+    public static final String PORTAL_ENROL = "hasAnyRole('ADMIN','RECEPTIONIST')";
+
+    /**
+     * Where a room is: its name, its floor and the directions to it.
+     *
+     * <p>{@code isAuthenticated()}, and that is not a gap. This is the only constant in this file
+     * that names no role, because the thing behind it is not confidential in any sense the rest of
+     * this file is about: it is the sign screwed to the wall outside the room, and the corridor
+     * display two doors down is reachable with no session at all. What it is <em>not</em> is the
+     * room read — capacity, dimensions, whether it is bookable, the census of what is in it — which
+     * stays on {@code CLINICAL_READ}.
+     *
+     * <p>It is this wide because of the portal. A patient looking at their own appointment needs to
+     * be told where to go, and that is the single most useful line on the screen; the alternative
+     * was a portal that renders "Ground Floor" as blank because the patient's token could not ask.
+     * Naming every role instead would have produced a nine-role list that means "everybody" while
+     * looking like it means something.
+     */
+    public static final String WAYFINDING = "isAuthenticated()";
+
     private Roles() {
     }
 }

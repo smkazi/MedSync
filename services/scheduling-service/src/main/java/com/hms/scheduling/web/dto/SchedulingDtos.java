@@ -20,6 +20,28 @@ public final class SchedulingDtos {
 
     // ---- appointments ------------------------------------------------------
 
+    /**
+     * What a patient may choose when booking for themselves, and nothing else.
+     *
+     * <p>Deliberately a separate record rather than a reuse of {@link BookAppointmentRequest} with
+     * some fields ignored. A field a request carries and the service quietly drops is a field the
+     * next person to read the DTO believes is honoured — and the two dropped here would be
+     * {@code patientId} and {@code priority}, which is to say "whose appointment is this" and "how
+     * urgent is it". Neither is a patient's to state, and the way to say so is for there to be
+     * nowhere to say it.
+     */
+    public record PortalBookingRequest(
+            @NotNull UUID clinicianId,
+            @NotBlank @Size(max = 16) String departmentCode,
+            @NotNull Instant startsAt,
+            @Min(5) @Max(240) Integer durationMinutes,
+            @Size(max = 500) String reason) {
+    }
+
+    /** Why a patient is cancelling. Optional: "I cannot make it" is the whole of most reasons. */
+    public record PortalCancelRequest(@Size(max = 500) String reason) {
+    }
+
     public record BookAppointmentRequest(
             @NotNull UUID patientId,
             @NotBlank @Size(max = 24) String patientMrn,

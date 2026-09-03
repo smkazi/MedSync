@@ -311,6 +311,10 @@ jobs:
       # The limiter itself is covered by EdgeFilterTest, so raising it here costs no coverage.
       HMS_RATE_LIMIT_AUTH_RPM: "5000"
       HMS_RATE_LIMIT_RPM: "100000"
+      # The portal ships at 120/min, which is generous for a person and nothing like enough for a
+      # browser suite driving eight screens as fast as Chromium can render them. Raised here for
+      # the same reason the other two are: the limit under test is the platform's, not CI's.
+      HMS_RATE_LIMIT_PORTAL_RPM: "100000"
 
     steps:
       - uses: actions/checkout@v4

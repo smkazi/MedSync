@@ -89,6 +89,46 @@ public class PatientDirectoryClient {
                 asString(body.get("mrn")));
     }
 
+    /**
+     * The identity of the patient whose session this is, for a portal report.
+     *
+     * <p>A separate call from {@link #require} because a portal token cannot open
+     * {@code /patients/{id}} — a patient may read one record and the way the platform says so is
+     * that they hold no role which reads the register. {@code /portal/me} is the endpoint that
+     * answers "who is this session", it needs no id, and it returns the same four fields a report
+     * header prints. So a patient printing their own report reads their own name through the one
+     * door they have, rather than through a widened staff endpoint or a service credential.
+     */
+    public PatientIdentity me(String bearerToken) {
+        Map<String, Object> body;
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> response = restClient.get()
+                    .uri("/portal/me")
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + bearerToken)
+                    .retrieve()
+                    .body(Map.class);
+            body = response;
+        } catch (RestClientResponseException ex) {
+            if (ex.getStatusCode().value() == 404) {
+                throw new BadRequestException(
+                        "Your record could not be found. Ask the front desk to check your portal access.");
+            }
+            log.error("Patient directory rejected a portal identity lookup: {}", ex.getStatusCode());
+            throw new IllegalStateException("Could not read your record for this report", ex);
+        } catch (RuntimeException ex) {
+            log.error("Patient directory unreachable while building a portal report", ex);
+            throw new IllegalStateException("The patient directory is unreachable, and a pathology"
+                    + " report must not be printed without the patient's name.", ex);
+        }
+        String fullName = body == null ? null : asString(body.get("fullName"));
+        if (fullName == null || fullName.isBlank()) {
+            throw new IllegalStateException("Your record has no name to print on a report");
+        }
+        return new PatientIdentity(fullName, asString(body.get("sex")), asInteger(body.get("age")),
+                asString(body.get("mrn")));
+    }
+
     private static String asString(Object value) {
         return value == null ? null : String.valueOf(value);
     }

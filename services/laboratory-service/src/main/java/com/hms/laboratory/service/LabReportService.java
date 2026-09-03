@@ -88,6 +88,22 @@ public class LabReportService {
      */
     @Transactional(readOnly = true)
     public Rendered render(java.util.UUID orderId, String bearerToken) {
+        return render(orderId, bearerToken, null);
+    }
+
+    /**
+     * The same report, with the header identity supplied rather than looked up.
+     *
+     * <p>For the portal, where the caller <em>is</em> the patient and therefore cannot open
+     * {@code /patients/{id}} to have their own name read back to them. The portal reads it from
+     * {@code /portal/me} with its own token and passes it in here, so there is one renderer and one
+     * report rather than a second one that could drift from the printed original.
+     *
+     * @param known the identity to print, or null to look it up as the staff path does
+     */
+    @Transactional(readOnly = true)
+    public Rendered render(java.util.UUID orderId, String bearerToken,
+                           PatientDirectoryClient.PatientIdentity known) {
         LabOrder order = orders.requireDetail(orderId);
         // Cancelled is checked before emptiness so the caller gets the accurate reason. Both end in
         // a 400, but "this order was cancelled" and "no results yet" send somebody to different
@@ -102,7 +118,7 @@ public class LabReportService {
         }
 
         PatientDirectoryClient.PatientIdentity patient =
-                patients.require(order.getPatientId(), bearerToken);
+                known != null ? known : patients.require(order.getPatientId(), bearerToken);
 
         boolean verified = order.getStatus() == LabEnums.OrderStatus.VERIFIED;
         List<ReportRow> rows = rowsFor(order, measured);

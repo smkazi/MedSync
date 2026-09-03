@@ -11,6 +11,7 @@ import jakarta.persistence.Table;
 import java.time.Instant;
 import java.util.LinkedHashSet;
 import java.util.Set;
+import java.util.UUID;
 
 @Entity
 @Table(name = "users")
@@ -47,6 +48,19 @@ public class User extends BaseEntity {
     @Column(name = "last_login_at")
     private Instant lastLoginAt;
 
+    /**
+     * The patient this is a portal account for, or null for the staff accounts that are most of
+     * this table.
+     *
+     * <p>Set once, at enrolment, and there is no setter to move it. Re-pointing a live portal
+     * account at a different patient would hand somebody a session that already has their old
+     * secure-messaging thread in it, and would do so without either patient seeing anything
+     * change. Taking access away is {@code deactivate()}; giving it to somebody else is a new
+     * account.
+     */
+    @Column(name = "patient_id", updatable = false)
+    private UUID patientId;
+
     @ManyToMany(fetch = FetchType.EAGER)
     @JoinTable(name = "user_roles",
             joinColumns = @JoinColumn(name = "user_id"),
@@ -61,6 +75,21 @@ public class User extends BaseEntity {
         this.email = email;
         this.passwordHash = passwordHash;
         this.fullName = fullName;
+    }
+
+    /** A portal account: created for one patient, and authorised only over that patient's record. */
+    public User(String username, String email, String passwordHash, String fullName, UUID patientId) {
+        this(username, email, passwordHash, fullName);
+        this.patientId = patientId;
+    }
+
+    public UUID getPatientId() {
+        return patientId;
+    }
+
+    /** Whether this account signs in to the portal rather than to the platform. */
+    public boolean isPortalAccount() {
+        return patientId != null;
     }
 
     public String getUsername() {

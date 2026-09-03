@@ -14,7 +14,13 @@ import {
 } from "@/components/ui";
 import { RecordForm } from "@/components/RecordForm";
 import { linkAbha } from "../../sharing/actions";
-import { archivePatient, removeAllergy, restorePatient } from "./actions";
+import {
+  archivePatient,
+  issuePortalAccess,
+  removeAllergy,
+  restorePatient,
+  withdrawPortalAccess,
+} from "./actions";
 import { AllergyForm } from "./AllergyForm";
 
 /**
@@ -29,10 +35,16 @@ export default async function PatientChart({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ registered?: string; done?: string; problem?: string }>;
+  searchParams: Promise<{
+    registered?: string;
+    done?: string;
+    problem?: string;
+    portalUser?: string;
+    portalPassword?: string;
+  }>;
 }) {
   const { id } = await params;
-  const { registered, done, problem } = await searchParams;
+  const { registered, done, problem, portalUser, portalPassword } = await searchParams;
   const user = await currentUser();
 
   // `load` rather than a bare `api` call, so a role without CLINICAL_READ and a mistyped id both
@@ -58,6 +70,10 @@ export default async function PatientChart({
   // the platform will refuse to dispense. That is CLINICAL_WRITE, and the service enforces it.
   const mayRecordAllergies = hasRole(user, "ADMIN", "DOCTOR", "NURSE");
   const mayArchive = hasRole(user, "ADMIN");
+  // Enrolment is an identity check somebody performs face to face, so it is the front desk's — the
+  // same list ABHA linking uses, and deliberately not a clinician's: a doctor who could mint a
+  // portal account against any patient id could mint one against a neighbour's record.
+  const mayIssuePortalAccess = hasRole(user, "ADMIN", "RECEPTIONIST");
   // Linking a national health identifier happens at the desk, with the patient's card or phone in
   // front of you — not while reading a chart. The service draws the same line.
   const mayLinkAbha = hasRole(user, "ADMIN", "RECEPTIONIST");
@@ -252,6 +268,62 @@ export default async function PatientChart({
           )}
         </Card>
       </div>
+
+      {mayIssuePortalAccess && (
+        <Card title="Portal access">
+          {portalUser && portalPassword ? (
+            <div
+              role="status"
+              className="rounded-md border border-good/40 bg-good-soft px-3 py-2 text-sm text-good"
+            >
+              <p className="font-medium">Read these to the patient now.</p>
+              <p className="mt-1">
+                Username <span className="font-mono">{portalUser}</span> · one-time password{" "}
+                <span className="font-mono">{portalPassword}</span>
+              </p>
+              <p className="mt-1 text-xs">
+                {/* Said plainly rather than left as a surprise: this password is in the address
+                    bar and therefore in this browser's history. It is worthless once the patient
+                    changes it, which the platform requires before their account can do anything. */}
+                It is shown once and is not stored anywhere. The patient must change it before they
+                can see anything, and doing so ends every session issued with it. Navigate away from
+                this page when you have read it out.
+              </p>
+            </div>
+          ) : (
+            <p className="text-sm text-ink-muted">
+              Issue a one-time password so this patient can sign in and read their own appointments,
+              released results, bills and messages. Check who you are talking to first — this hands
+              somebody the keys to a medical record.
+            </p>
+          )}
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <form action={issuePortalAccess}>
+              <input type="hidden" name="id" value={patient.id} />
+              <button
+                type="submit"
+                className="rounded-md border border-line px-3 py-1.5 text-sm hover:bg-surface"
+              >
+                Issue or re-issue access
+              </button>
+            </form>
+            <form action={withdrawPortalAccess}>
+              <input type="hidden" name="id" value={patient.id} />
+              <button
+                type="submit"
+                className="rounded-md border border-critical/40 px-3 py-1.5 text-sm text-critical hover:bg-critical-soft"
+              >
+                Withdraw access
+              </button>
+            </form>
+          </div>
+          <p className="mt-2 text-xs text-ink-muted">
+            The record needs an email address on it before access can be issued: that address is
+            where a password reset would go, and an account nobody can reach is one nobody can
+            recover.
+          </p>
+        </Card>
+      )}
 
       <Card title="Appointments">
         {appointments.length === 0 ? (

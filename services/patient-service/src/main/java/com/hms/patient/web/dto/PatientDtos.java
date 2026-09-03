@@ -99,6 +99,36 @@ public final class PatientDtos {
                                   List<AllergyResponse> allergies, Instant createdAt, Instant updatedAt) {
     }
 
+    /**
+     * The patient's own record, as the portal shows it to them.
+     *
+     * <p>A separate shape from {@link PatientResponse} rather than a reuse of it, and the two
+     * omissions are the reason. {@code notes} is staff free text written <em>about</em> a patient
+     * during registration — "hard to reach on the mobile", "brings her daughter to translate" —
+     * and it is written by people who have never once considered that the subject would read it;
+     * publishing it through a portal would change what gets written there, which is a worse outcome
+     * than a portal that does not show it. And {@code recordedBy} on an allergy names the member of
+     * staff who entered it, which is the hospital's record of its own work rather than anything
+     * about the patient.
+     *
+     * <p>Everything else is here, including the allergy list and the emergency contact: a patient
+     * should be able to check what this hospital believes about them, and an allergy recorded
+     * wrongly is the single most valuable thing on this screen for them to notice.
+     */
+    public record PortalProfile(UUID id, String mrn, String firstName, String lastName,
+                                String fullName, LocalDate dateOfBirth, int age,
+                                Sex sex, String bloodGroup, String phone, String email,
+                                String addressLine1, String addressLine2, String city, String state,
+                                String postalCode, String country, String insuranceProvider,
+                                String emergencyContactName, String emergencyContactPhone,
+                                boolean active, List<PortalAllergy> allergies) {
+    }
+
+    /** An allergy as its subject sees it: what, what it did, how bad. No staff name. */
+    public record PortalAllergy(String substance, String reaction, AllergySeverity severity,
+                                boolean critical, Instant recordedAt) {
+    }
+
     /** Summary row for search results and pick-lists. */
     public record PatientSummary(UUID id, String mrn, String fullName, LocalDate dateOfBirth, int age, Sex sex,
                                  String phone, boolean active, boolean hasCriticalAllergy) {

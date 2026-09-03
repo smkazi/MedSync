@@ -1,5 +1,6 @@
 package com.hms.identity.service;
 
+import com.hms.common.security.CurrentUser;
 import com.hms.identity.domain.RefreshToken;
 import com.hms.identity.domain.User;
 import com.hms.identity.repo.RefreshTokenRepository;
@@ -182,6 +183,14 @@ public class TokenService {
                 .claim("email", user.getEmail())
                 .claim("roles", user.isMustChangePassword() ? List.of() : List.copyOf(user.roleCodes()))
                 .claim(PASSWORD_CHANGE_REQUIRED_CLAIM, user.isMustChangePassword())
+                // Whose record this session may read, for a portal account, and absent entirely for
+                // the staff accounts that are most of this table. It is a claim rather than a
+                // lookup because it has to be true at every hop: the portal endpoints live in five
+                // services, none of which can call back here to ask, and a signed claim is the one
+                // thing they can all trust without another round trip. Signed with the roles, so an
+                // account cannot be pointed at a different patient without minting a new token.
+                .claim(CurrentUser.PATIENT_CLAIM,
+                        user.getPatientId() == null ? null : user.getPatientId().toString())
                 .build();
         JWSHeader header = new JWSHeader.Builder(JWSAlgorithm.RS256)
                 .keyID(keys.activeKey().getKeyID())

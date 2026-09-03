@@ -1055,3 +1055,113 @@ export type ShareOutcome = {
   gateway: string;
   message: string;
 };
+
+// ---- the patient portal ----------------------------------------------------
+
+/**
+ * The patient's own record, as the portal shows it to them.
+ *
+ * <p>Not {@link Patient}: the platform answers a narrower shape here on purpose, and this type
+ * says so. `notes` is staff free text written about a patient during registration and is not
+ * published; an allergy carries no `recordedBy`, which is the hospital's record of its own work.
+ */
+export type PortalProfile = {
+  id: string;
+  mrn: string;
+  firstName: string;
+  lastName: string;
+  fullName: string;
+  dateOfBirth: string;
+  age: number;
+  sex: string;
+  bloodGroup: string | null;
+  phone: string | null;
+  email: string | null;
+  addressLine1: string | null;
+  addressLine2: string | null;
+  city: string | null;
+  state: string | null;
+  postalCode: string | null;
+  country: string | null;
+  insuranceProvider: string | null;
+  emergencyContactName: string | null;
+  emergencyContactPhone: string | null;
+  active: boolean;
+  allergies: PortalAllergy[];
+};
+
+export type PortalAllergy = {
+  substance: string;
+  reaction: string | null;
+  severity: Allergy["severity"];
+  critical: boolean;
+  recordedAt: string;
+};
+
+/**
+ * One of the patient's laboratory orders.
+ *
+ * <p>No result count and no abnormal flag, deliberately: both are live before a pathologist has
+ * verified anything, so a portal carrying them would announce an abnormal result hours before a
+ * clinician had seen it. `reportAvailable` is the only gate this screen needs.
+ */
+export type PortalReport = {
+  orderId: string;
+  orderedAt: string;
+  tests: string[];
+  progress: string;
+  reportAvailable: boolean;
+};
+
+export type PortalBalance = {
+  outstanding: number;
+  unpaidInvoices: number;
+  invoices: number;
+};
+
+export type ThreadStatus = "OPEN" | "ANSWERED" | "CLOSED";
+
+export type MessageThreadSummary = {
+  id: string;
+  patientId: string;
+  patientMrn: string;
+  subject: string;
+  departmentCode: string | null;
+  status: ThreadStatus;
+  lastMessageAt: string;
+  messageCount: number;
+  unreadByPatient: boolean;
+};
+
+export type ThreadMessage = {
+  id: string;
+  authorKind: "PATIENT" | "STAFF";
+  authorName: string;
+  body: string;
+  sentAt: string;
+  readByPatientAt: string | null;
+};
+
+export type MessageThread = Omit<MessageThreadSummary, "messageCount" | "unreadByPatient"> & {
+  closedAt: string | null;
+  messages: ThreadMessage[];
+  /** The standing notice. The platform sets it and a caller cannot suppress or reword it. */
+  notice: string;
+};
+
+/** What the front desk hands a patient. The password exists in readable form once, here. */
+export type PortalAccountIssued = {
+  patientId: string;
+  username: string;
+  temporaryPassword: string;
+  issuedAt: string;
+};
+
+export type PortalAccountState = {
+  patientId: string;
+  username: string;
+  email: string;
+  active: boolean;
+  mustChangePassword: boolean;
+  lastLoginAt: string | null;
+};

@@ -173,6 +173,16 @@ public final class BillingDtos {
                                   String reference, String receivedBy, Instant receivedAt) {
     }
 
+    /**
+     * What the patient owes in total, and across how many bills.
+     *
+     * <p>One number rather than a list to sum, because the browser summing it would make the figure
+     * depend on how many pages had loaded — and the number on a portal's front page is the one thing
+     * a patient will quote back to the counter.
+     */
+    public record PortalBalance(java.math.BigDecimal outstanding, long unpaidInvoices, long invoices) {
+    }
+
     public record CancelInvoiceRequest(@NotBlank @Size(max = 255) String reason) {
     }
 

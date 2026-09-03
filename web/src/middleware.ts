@@ -30,6 +30,24 @@ function contentSecurityPolicy(nonce: string): string {
 }
 
 /**
+ * Whether the signed-in account is a patient rather than a member of staff.
+ *
+ * <p>Read off the session cookie for the same reason {@link owesAPasswordChange} is, and with the
+ * same caveat: this is routing, not authorisation. Forging the cookie either way buys a fully drawn
+ * UI in which every request comes back 403, because the roles that matter are the ones signed into
+ * the bearer token and every portal endpoint in five services checks them independently.
+ */
+function isPatientSession(request: NextRequest): boolean {
+  const raw = request.cookies.get("medsync_user")?.value;
+  if (!raw) return false;
+  try {
+    return ((JSON.parse(raw) as { roles?: string[] }).roles ?? []).includes("PATIENT");
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Whether this session still owes a password change.
  *
  * <p>Read off the session cookie rather than by asking the platform, because the middleware runs
@@ -72,7 +90,7 @@ export function middleware(request: NextRequest): NextResponse {
     return NextResponse.redirect(url);
   }
   if (hasSession && pathname === "/login") {
-    return NextResponse.redirect(new URL("/", request.url));
+    return NextResponse.redirect(new URL(isPatientSession(request) ? "/portal" : "/", request.url));
   }
 
   // An account on its initial password is sent to the one screen it can use. Signing out has to
@@ -84,6 +102,26 @@ export function middleware(request: NextRequest): NextResponse {
     && owesAPasswordChange(request)
   ) {
     return NextResponse.redirect(new URL("/change-password", request.url));
+  }
+
+  // Two doors, and neither opens onto the other. A patient signing in lands in the portal and is
+  // sent back to it if they type a clinical path; a member of staff typing /portal is shown the
+  // portal layout's explanation rather than a redirect loop, because an administrator following a
+  // link a patient sent them should be told what happened.
+  //
+  // Redirect rather than 403 for the patient direction, deliberately: the platform will refuse the
+  // request anyway, and a patient who followed an old bookmark to /appointments is better served by
+  // their own appointments page than by an error. Change-password and sign-out stay reachable from
+  // either side, which is why they are exempt.
+  const patientOnly = pathname === "/portal" || pathname.startsWith("/portal/");
+  if (
+    hasSession
+    && !isPublic
+    && !patientOnly
+    && pathname !== "/change-password"
+    && isPatientSession(request)
+  ) {
+    return NextResponse.redirect(new URL("/portal", request.url));
   }
 
   const nonce = crypto.randomUUID();

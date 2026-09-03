@@ -49,6 +49,10 @@ hms:
     transport: ${HMS_EVENTS_TRANSPORT:log}
   laboratory:
     accession-prefix: ${HMS_ACCESSION_PREFIX:L}
+  patient:
+    # The register, for the name a report is printed under. Every call forwards the caller's own
+    # token, so this is an address rather than a credential.
+    base-url: ${HMS_PATIENT_URI:http://localhost:8082}
 
 spring.security.oauth2.resourceserver.jwt.jwk-set-uri: ${HMS_JWKS_URI:http://localhost:8081/.well-known/jwks.json}
 

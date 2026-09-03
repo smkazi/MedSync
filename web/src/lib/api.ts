@@ -97,6 +97,48 @@ export async function apiText(path: string, accept = "*/*"): Promise<string> {
   return text;
 }
 
+/**
+ * Fetches a binary resource from the gateway, on the server, for a browser to download.
+ *
+ * <p>The same reason {@link apiText} exists: the bearer token lives in an httpOnly cookie the
+ * browser never sees, so an `<a href="/portal/reports/x.pdf">` pointed at the gateway would arrive
+ * unauthenticated. The portal's download links point at a route handler in this app, which calls
+ * this and streams the bytes back with the platform's own content type and filename.
+ *
+ * <p>Returns the status and body on a failure rather than throwing, because a route handler has to
+ * answer with a status code and not with an exception page.
+ */
+export async function apiBinary(
+  path: string,
+  accept = "*/*",
+): Promise<
+  | { ok: true; bytes: ArrayBuffer; contentType: string; contentDisposition: string | null }
+  | { ok: false; status: number; detail: string }
+> {
+  const token = await accessToken();
+  const response = await fetch(`${GATEWAY}${path}`, {
+    headers: {
+      Accept: accept,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    const problem = safeParse(await response.text()) as { detail?: string; title?: string } | undefined;
+    return {
+      ok: false,
+      status: response.status,
+      detail: problem?.detail ?? problem?.title ?? `Request failed (${response.status})`,
+    };
+  }
+  return {
+    ok: true,
+    bytes: await response.arrayBuffer(),
+    contentType: response.headers.get("content-type") ?? "application/octet-stream",
+    contentDisposition: response.headers.get("content-disposition"),
+  };
+}
+
 function safeParse(text: string): unknown {
   try {
     return JSON.parse(text);

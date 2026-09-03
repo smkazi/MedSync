@@ -1,5 +1,6 @@
 package com.hms.common.security;
 
+import com.hms.common.error.BadRequestException;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.security.core.Authentication;
@@ -10,11 +11,41 @@ import org.springframework.security.oauth2.server.resource.authentication.JwtAut
 /** Reads the authenticated principal out of the security context without leaking Spring types upward. */
 public final class CurrentUser {
 
+    /** The claim identity-service puts on a portal token. Read here and nowhere else. */
+    public static final String PATIENT_CLAIM = "patient_id";
+
     private CurrentUser() {
     }
 
     public static Optional<UUID> id() {
         return jwt().map(Jwt::getSubject).flatMap(CurrentUser::parseUuid);
+    }
+
+    /**
+     * The patient a portal session belongs to, if this is a portal session.
+     *
+     * <p>The claim exists only on a token minted for an account linked to a patient record, and it
+     * is the only place a portal endpoint may learn whose record it is looking at. Not the path,
+     * not a query parameter, not a body field: a portal endpoint that took a patient id from the
+     * caller would be one tampered request away from another person's chart, and no amount of
+     * checking afterwards is as good as there being nothing to tamper with.
+     */
+    public static Optional<UUID> patientId() {
+        return jwt().map(token -> token.getClaimAsString(PATIENT_CLAIM)).flatMap(CurrentUser::parseUuid);
+    }
+
+    /**
+     * The patient this portal session belongs to, or a refusal saying the session names none.
+     *
+     * <p>A PATIENT token with no {@code patient_id} should not exist — enrolment writes the link
+     * and the role together — but "should not exist" is not a guarantee, and the alternative to
+     * failing here is a query with a null patient id, which in this platform's repositories means
+     * either everybody's rows or nobody's. Neither is an acceptable answer to "show me my results".
+     */
+    public static UUID requirePatientId() {
+        return patientId().orElseThrow(() -> new BadRequestException(
+                "This session is not linked to a patient record, so there is nothing of yours to "
+                        + "show. Ask the front desk to re-issue your portal access."));
     }
 
     public static Optional<String> username() {

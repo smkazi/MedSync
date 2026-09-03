@@ -5,6 +5,7 @@ import com.hms.common.error.ConflictException;
 import com.hms.common.security.CurrentUser;
 import com.hms.interop.client.AbdmGateway;
 import com.hms.interop.client.ClinicalDataClient;
+import com.hms.interop.client.PortalClinicalClient;
 import com.hms.interop.client.dto.ClinicalViews.EncounterView;
 import com.hms.interop.client.dto.ClinicalViews.LabOrderView;
 import com.hms.interop.client.dto.ClinicalViews.PatientView;
@@ -52,6 +53,7 @@ public class ExchangeService {
 
     private final ConsentService consents;
     private final ClinicalDataClient clinical;
+    private final PortalClinicalClient portal;
     private final DisclosureRepository disclosures;
     private final AbdmGateway gateway;
     private final AuditService audit;
@@ -59,6 +61,7 @@ public class ExchangeService {
     private final FhirBundleBuilder fhir;
 
     public ExchangeService(ConsentService consents, ClinicalDataClient clinical,
+                           PortalClinicalClient portal,
                            DisclosureRepository disclosures, AbdmGateway gateway,
                            AuditService audit, ObjectMapper objectMapper,
                            @Value("${hms.interop.facility-name:An unnamed clinical establishment}")
@@ -66,6 +69,7 @@ public class ExchangeService {
                            @Value("${hms.interop.facility-id:UNSET}") String facilityId) {
         this.consents = consents;
         this.clinical = clinical;
+        this.portal = portal;
         this.disclosures = disclosures;
         this.gateway = gateway;
         this.audit = audit;
@@ -148,6 +152,18 @@ public class ExchangeService {
             documents.add(fhir.prescription(patient, clinical.prescription(id, bearerToken)));
         }
 
+        return searchset(patient, patientId, documents, CurrentUser.usernameOrSystem());
+    }
+
+    /**
+     * Wraps the documents, registers the disclosure and writes the audit line.
+     *
+     * <p>Shared by both exports on purpose. The two differ in who runs them and how the contents
+     * are chosen, and in nothing else — so if the bundle shape, the disclosure row or the audit
+     * line ever diverged, one of the two would be the one that stopped being a record of what left.
+     */
+    private Map<String, Object> searchset(PatientView patient, UUID patientId,
+                                          List<Map<String, Object>> documents, String releasedBy) {
         Map<String, Object> export = new LinkedHashMap<>();
         export.put("resourceType", "Bundle");
         export.put("id", UUID.randomUUID().toString());
@@ -162,15 +178,55 @@ public class ExchangeService {
         int bytes = objectMapper.writeValueAsBytes(export).length;
         Disclosure disclosure = disclosures.save(new Disclosure(null, patientId, patient.mrn(),
                 HiType.HEALTH_DOCUMENT_RECORD, DisclosureKind.PATIENT_EXPORT, patient.mrn(),
-                resources, bytes, CurrentUser.usernameOrSystem()));
+                resources, bytes, releasedBy));
 
         // Loud on purpose. A whole-record export is the single most sensitive operation the
         // platform performs, and the audit line is what makes it visible rather than routine.
         audit.record("EHI_EXPORT", "Disclosure", disclosure.getId(),
                 "%d document(s), %d resource(s) about %s exported by %s".formatted(
-                        documents.size(), resources, patient.mrn(),
-                        CurrentUser.usernameOrSystem()));
+                        documents.size(), resources, patient.mrn(), releasedBy));
         return export;
+    }
+
+    /**
+     * A patient's own record, exported by the patient.
+     *
+     * <p>The certification criterion's other half: view, download and <em>transmit</em>. What
+     * distinguishes it from {@link #exportForPatient} is not the format — it is the same
+     * {@code searchset} of the same documents — but who assembles it and how the contents are
+     * chosen. There, an administrator names the encounters, orders and prescriptions to include;
+     * here the platform lists everything the portal itself would show, because a patient asking for
+     * their record means all of it.
+     *
+     * <p>The disclosure is recorded exactly as any other export is. A patient downloading their own
+     * record is not a disclosure to anybody new, and that is precisely why it must be logged: the
+     * register answers "what has left this platform, and to whom", and a register with one category
+     * of departure missing is a register that cannot be relied on for the others.
+     */
+    @Transactional
+    public Map<String, Object> exportForSelf(UUID patientId, String bearerToken) {
+        PatientView patient = portal.me(bearerToken);
+        if (!patient.id().equals(patientId)) {
+            // Cannot happen: the id is the token's claim and the record is what the register
+            // answered for that same token. Stated because the alternative to failing here is
+            // handing one person a bundle assembled from another person's record.
+            throw new IllegalStateException(
+                    "The signed-in patient and the record read for them do not match");
+        }
+
+        List<Map<String, Object>> documents = new ArrayList<>();
+        for (var encounter : portal.myEncounters(bearerToken)) {
+            documents.add(fhir.opConsultation(patient, encounter));
+        }
+        for (var order : portal.myReleasedLabOrders(bearerToken)) {
+            documents.add(fhir.diagnosticReport(patient, order));
+        }
+        for (var prescription : portal.myPrescriptions(bearerToken)) {
+            documents.add(fhir.prescription(patient, prescription));
+        }
+        // The portal account's own username, which is the patient's MRN: the register says who
+        // released a record, and "the patient" would be true of every self-export ever made.
+        return searchset(patient, patientId, documents, CurrentUser.usernameOrSystem());
     }
 
     @Transactional(readOnly = true)

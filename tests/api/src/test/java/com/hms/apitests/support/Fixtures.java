@@ -24,6 +24,18 @@ public final class Fixtures {
     }
 
     /** A bookable consulting room created for this run. */
+    /**
+     * A patient with live portal access, and the token their browser would carry.
+     *
+     * <p>The token is what the tests use, not a role name: every other identity in this suite is a
+     * seeded staff account, and a portal account cannot be seeded because it has to point at a
+     * patient record and the seed runs before there is one. So a portal patient is enrolled for
+     * real, through the front desk, and the one-time password is changed exactly as the patient
+     * would change it — which makes this fixture a test of enrolment as well as a fixture.
+     */
+    public record PortalPatient(String id, String mrn, String username, String accessToken) {
+    }
+
     public record ConsultingRoom(String id, String code) {
     }
 
@@ -42,6 +54,55 @@ public final class Fixtures {
                 .then().statusCode(201)
                 .extract().jsonPath();
         return new Patient(body.getString("id"), body.getString("mrn"), body.getString("fullName"));
+    }
+
+    /**
+     * Registers a patient and gives them working portal access.
+     *
+     * <p>Four steps, all through the API, in the order a hospital does them: the front desk
+     * registers the patient with an address on the record, the desk issues a one-time password, the
+     * patient signs in with it — receiving a token carrying no roles at all, which is the platform's
+     * existing initial-password gate — and then chooses their own password, at which point the next
+     * sign-in mints the token this fixture returns.
+     *
+     * <p>The email is unique per patient, because identity-service refuses two accounts on one
+     * address: two people sharing an inbox would each be able to reset the other's access.
+     */
+    public static PortalPatient portalPatient(String surname) {
+        String email = "portal." + UUID.randomUUID().toString().substring(0, 12) + "@example.invalid";
+        var registered = given().spec(Api.as(Api.RECEPTIONIST))
+                .body(Map.of(
+                        "firstName", "Portal" + UUID.randomUUID().toString().substring(0, 4),
+                        "lastName", surname + RUN,
+                        "dateOfBirth", "1985-04-11",
+                        "sex", "FEMALE",
+                        "email", email,
+                        "phone", "+9715" + (1000000 + (int) (Math.random() * 8999999)),
+                        "forceDuplicate", true))
+                .when().post("/patients")
+                .then().statusCode(201)
+                .extract().jsonPath();
+        String patientId = registered.getString("id");
+        String mrn = registered.getString("mrn");
+
+        var issued = given().spec(Api.as(Api.RECEPTIONIST))
+                .when().post("/patients/{id}/portal-account", patientId)
+                .then().statusCode(201)
+                .extract().jsonPath();
+        String username = issued.getString("username");
+        String temporary = issued.getString("temporaryPassword");
+
+        // The first sign-in carries no roles: the account owes a password change and the platform
+        // says so structurally rather than with a flag the UI could ignore.
+        String chosen = "ChosenByThePatient!2026";
+        String firstToken = Api.login(username, temporary).accessToken();
+        given().spec(Api.withToken(firstToken))
+                .body(Map.of("currentPassword", temporary, "newPassword", chosen))
+                .when().post("/auth/change-password")
+                .then().statusCode(200);
+
+        return new PortalPatient(patientId, mrn, username,
+                Api.login(username, chosen).accessToken());
     }
 
     /**

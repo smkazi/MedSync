@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { readForm, refused, withoutBlanks } from "@/lib/form";
 import { submit } from "@/lib/mutate";
-import type { Allergy, Patient } from "@/lib/types";
+import type { Allergy, Patient, PortalAccountIssued } from "@/lib/types";
 import {
   ALLERGY_FIELDS,
   EDIT_FIELDS,
@@ -124,4 +124,37 @@ function finish(id: string, problem: string | null, done: string | null): never 
   if (problem) params.set("problem", problem);
   if (done) params.set("done", done);
   redirect(`/patients/${id}?${params}`);
+}
+
+/**
+ * Issues or re-issues this patient's portal access.
+ *
+ * <p>The one-time password comes back in the response and exists in readable form nowhere else —
+ * not stored, not logged, not emailed. It is passed to the chart as a query parameter so the desk
+ * can read it out, which means it is briefly in a URL and therefore in the browser's history: the
+ * screen says so, and the password is worthless the moment the patient changes it, which the
+ * platform requires before the account can do anything at all.
+ */
+export async function issuePortalAccess(form: FormData): Promise<void> {
+  const id = String(form.get("id") ?? "");
+  const result = await submit<PortalAccountIssued>(`/patients/${id}/portal-account`, "POST");
+  revalidatePath(`/patients/${id}`);
+  redirect(
+    result.ok
+      ? `/patients/${id}?portalUser=${encodeURIComponent(result.data.username)}`
+        + `&portalPassword=${encodeURIComponent(result.data.temporaryPassword)}`
+      : `/patients/${id}?problem=${encodeURIComponent(result.error)}`,
+  );
+}
+
+/** Withdraws portal access and ends every live session the patient holds. */
+export async function withdrawPortalAccess(form: FormData): Promise<void> {
+  const id = String(form.get("id") ?? "");
+  const result = await submit<unknown>(`/patients/${id}/portal-account`, "DELETE");
+  revalidatePath(`/patients/${id}`);
+  redirect(
+    result.ok
+      ? `/patients/${id}?done=${encodeURIComponent("Portal access withdrawn and every session ended.")}`
+      : `/patients/${id}?problem=${encodeURIComponent(result.error)}`,
+  );
 }

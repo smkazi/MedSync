@@ -165,6 +165,22 @@ describe("reachableHrefs", () => {
   it("is empty with no session", () => {
     expect(reachableHrefs(null)).toEqual([]);
   });
+
+  it("gives a patient nothing at all", () => {
+    // A portal session holds one role and this menu enumerates the modules a hospital runs. The
+    // shape of that list is itself a description of the building, so a patient is not shown it
+    // filtered down to two items — they are shown the portal's own navigation, in its own layout,
+    // and the middleware keeps them there. This is the assertion that stops somebody adding a
+    // convenience item without a `roles` list and quietly publishing it to every patient.
+    expect(reachableHrefs(userWith("PATIENT" as never))).toEqual([]);
+  });
+
+  it("offers the patient-question queue to whoever may message a patient", () => {
+    expect(reachableHrefs(userWith("NURSE"))).toContain("/messaging/threads");
+    expect(reachableHrefs(userWith("RECEPTIONIST"))).toContain("/messaging/threads");
+    // The bench does not read a patient's correspondence.
+    expect(reachableHrefs(userWith("LAB_TECH"))).not.toContain("/messaging/threads");
+  });
 });
 
 describe("MENUS as data", () => {
@@ -182,6 +198,10 @@ describe("MENUS as data", () => {
       for (const item of menu.items ?? []) {
         expect(item.href).not.toMatch(/^\/not-built\//);
         expect(item.href.startsWith("/")).toBe(true);
+        // Nothing in the staff menu points into the portal. The two are separate route groups with
+        // separate layouts on purpose, and a staff link into /portal would be the first step back
+        // towards one navigation for both audiences.
+        expect(item.href.startsWith("/portal")).toBe(false);
       }
     }
   });

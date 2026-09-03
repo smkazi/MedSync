@@ -139,9 +139,14 @@ public class FacilityController {
      * <p>Its own endpoint rather than the full room read, so the cross-service contract stays
      * explicit: scheduling gets an id, a name, a floor and a directions string, and does not
      * acquire a dependency on capacity or dimensions.
+     *
+     * <p>{@link Roles#WAYFINDING} rather than {@code CLINICAL_READ}, which is a deliberate
+     * widening and the only one in this controller: a patient reading their own appointment in the
+     * portal has to be told where to go, and this narrow shape is a sign on a wall rather than a
+     * fact about the building's use. Every other room endpoint here is unchanged.
      */
     @GetMapping("/rooms/{code}/location")
-    @PreAuthorize(Roles.CLINICAL_READ)
+    @PreAuthorize(Roles.WAYFINDING)
     public FacilityDtos.RoomLocation location(@PathVariable String code) {
         return service.locationOf(code);
     }

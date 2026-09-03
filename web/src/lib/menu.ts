@@ -51,6 +51,25 @@ export type Menu = {
 };
 
 /** Everyone who may read clinical data at all — the widest tier the platform has. */
+/**
+ * Every role that works in the building.
+ *
+ * <p>Exists for the Dashboard item, which used to carry no role list at all and therefore meant
+ * "everybody with a session". That was true while every session was a staff session; a portal
+ * account is a session too, and it belongs to somebody who has no business being offered the
+ * platform's clinical home page. Naming the staff roles says what was always meant.
+ */
+const STAFF: RoleName[] = [
+  "ADMIN",
+  "DOCTOR",
+  "NURSE",
+  "RECEPTIONIST",
+  "LAB_TECH",
+  "PATHOLOGIST",
+  "PHARMACIST",
+  "CASHIER",
+];
+
 const CLINICAL_READ: RoleName[] = [
   "ADMIN",
   "DOCTOR",
@@ -107,7 +126,7 @@ const ADMIN_ONLY: RoleName[] = ["ADMIN"];
  * control.
  */
 export const MENUS: Menu[] = [
-  { label: "Dashboard", href: "/" },
+  { label: "Dashboard", href: "/", roles: STAFF },
 
   {
     label: "Patients",
@@ -273,6 +292,12 @@ export const MENUS: Menu[] = [
         href: "/messaging",
         roles: NOTIFY,
         note: "What was sent, and whether it arrived",
+      },
+      {
+        label: "Patient questions",
+        href: "/messaging/threads",
+        roles: NOTIFY,
+        note: "Written questions from the portal, oldest first",
       },
       {
         label: "Message wording",

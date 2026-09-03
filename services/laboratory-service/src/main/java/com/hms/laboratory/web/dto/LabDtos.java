@@ -110,6 +110,25 @@ public final class LabDtos {
                                boolean hasAbnormalResults, String accessionNo) {
     }
 
+    /**
+     * One of the patient's own laboratory orders, as the portal lists it.
+     *
+     * <p>Its own shape rather than {@link OrderSummary}, and the two missing fields are the reason.
+     * {@code resultCount} and {@code hasAbnormalResults} are both live before a pathologist has
+     * verified anything — the bench enters a value and the flag is set by the reference range — so
+     * a portal reusing that shape would tell a patient "one of your results is abnormal" hours
+     * before a clinician has looked at it and while the number itself is still provisional. That is
+     * the exact disclosure the release step exists to prevent, delivered by a status field instead
+     * of by a report.
+     *
+     * <p>What is here is what a patient can act on: what was ordered, when, roughly where it has
+     * got to, and whether there is a released report to open. {@code reportAvailable} is the only
+     * gate the screen needs, and it is the same condition the report endpoint enforces.
+     */
+    public record PortalReportSummary(UUID orderId, Instant orderedAt, List<String> tests,
+                                      String progress, boolean reportAvailable) {
+    }
+
     public record CatalogEntryResponse(UUID id, String code, String name, String department, String specimenType,
                                        List<String> parameters) {
     }

@@ -109,6 +109,9 @@ services:
       <<: *platform-env
       SERVER_PORT: 8082
       HMS_PATIENT_PORT: 8082
+      # Portal enrolment creates the account in identity-service, forwarding the receptionist's
+      # own token. An address, not a credential.
+      HMS_IDENTITY_URI: http://identity-service:8081
     expose:
       - "8082"
 
@@ -130,6 +133,9 @@ services:
       # laboratory order cannot be raised.
       HMS_LABORATORY_URI: http://laboratory-service:8084
       HMS_PHARMACY_URI: http://pharmacy-service:8087
+      # The facility directory for room validation, and /portal/me for a self-booking patient's
+      # own MRN. Both forward the caller's token.
+      HMS_PATIENT_URI: http://patient-service:8082
     expose:
       - "8083"
 
@@ -144,6 +150,9 @@ services:
       <<: *platform-env
       SERVER_PORT: 8084
       HMS_LABORATORY_PORT: 8084
+      # The register, for the name a report is printed under -- and, for a portal report, the
+      # patient's own record read through /portal/me with their own token.
+      HMS_PATIENT_URI: http://patient-service:8082
     expose:
       - "8084"
 

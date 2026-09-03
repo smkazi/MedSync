@@ -2,8 +2,11 @@ package com.hms.patient.web;
 
 import com.hms.common.api.PageResponse;
 import com.hms.common.security.Roles;
+import com.hms.patient.client.IdentityClient;
 import com.hms.patient.service.PatientService;
+import com.hms.patient.service.PortalEnrolmentService;
 import com.hms.patient.web.dto.PatientDtos;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import java.util.List;
 import java.util.UUID;
@@ -30,9 +33,11 @@ public class PatientController {
     private static final int MAX_PAGE_SIZE = 100;
 
     private final PatientService service;
+    private final PortalEnrolmentService portal;
 
-    public PatientController(PatientService service) {
+    public PatientController(PatientService service, PortalEnrolmentService portal) {
         this.service = service;
+        this.portal = portal;
     }
 
     @PostMapping
@@ -90,14 +95,6 @@ public class PatientController {
     }
 
     /**
-     * Where the patient can be reached, and nothing else.
-     *
-     * <p>Its own endpoint rather than a field on the chart, because the caller is a service that
-     * needs a phone number and giving it {@code CLINICAL_READ} to get one would hand it the rest
-     * of the record. The same line {@code CHART_READ} draws between looking a patient up and
-     * reading their chart, drawn once more a level lower.
-     */
-    /**
      * Links an ABHA to a record that already exists.
      *
      * <p>{@code PUT} rather than {@code PATCH} because it replaces both halves together: a number
@@ -109,6 +106,61 @@ public class PatientController {
     public PatientDtos.PatientResponse linkAbha(@PathVariable UUID id,
             @Valid @RequestBody PatientDtos.LinkAbhaRequest request) {
         return service.linkAbha(id, request);
+    }
+
+    /**
+     * Where the patient can be reached, and nothing else.
+     *
+     * <p>Its own endpoint rather than a field on the chart, because the caller is a service that
+     * needs a phone number and giving it {@code CLINICAL_READ} to get one would hand it the rest
+     * of the record. The same line {@code CHART_READ} draws between looking a patient up and
+     * reading their chart, drawn once more a level lower.
+     */
+    /**
+     * Issues or re-issues this patient's portal access, answering the one-time password once.
+     *
+     * <p>{@code POST} on a sub-resource rather than a field on the record, because issuing a
+     * credential is an act and not a state: calling it twice issues two passwords, of which only
+     * the second works, and that is the correct behaviour rather than an idempotency problem.
+     *
+     * <p>The response is the only time the password exists in readable form anywhere. It is not
+     * stored, not logged and not emailed — the front desk reads it to the patient, who changes it
+     * on first sign-in, at which point every session issued with it is revoked.
+     */
+    @PostMapping("/{id}/portal-account")
+    @ResponseStatus(HttpStatus.CREATED)
+    @PreAuthorize(Roles.PORTAL_ENROL)
+    public IdentityClient.PortalAccountIssued issuePortalAccess(@PathVariable UUID id,
+            HttpServletRequest request) {
+        return portal.enrol(id, bearer(request));
+    }
+
+    /** Whether this patient has portal access, and whether they have ever used it. */
+    @GetMapping("/{id}/portal-account")
+    @PreAuthorize(Roles.PORTAL_ENROL)
+    public IdentityClient.PortalAccountState portalAccess(@PathVariable UUID id,
+            HttpServletRequest request) {
+        return portal.find(id, bearer(request));
+    }
+
+    /** Withdraws portal access and ends every live session. The account and its history stay. */
+    @DeleteMapping("/{id}/portal-account")
+    @PreAuthorize(Roles.PORTAL_ENROL)
+    public IdentityClient.PortalAccountState withdrawPortalAccess(@PathVariable UUID id,
+            HttpServletRequest request) {
+        return portal.withdraw(id, bearer(request));
+    }
+
+    /**
+     * The caller's own token, forwarded to identity-service.
+     *
+     * <p>Read from the header rather than rebuilt from the decoded {@code Jwt}: a resource server
+     * holds the claims, not the encoded string, and this service holds no signing key with which
+     * to mint a replacement — which is the property that stops it enrolling anybody on its own.
+     */
+    private static String bearer(HttpServletRequest request) {
+        String header = request.getHeader(org.springframework.http.HttpHeaders.AUTHORIZATION);
+        return header == null ? "" : header;
     }
 
     @GetMapping("/{id}/contact")
