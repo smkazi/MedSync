@@ -1273,15 +1273,36 @@ winget stays installed, because it belongs to the machine and not to this.
 
 **How it is verified, and what is not.** The installer is Go, cross-compiled, and the seven
 platform-independent files of it — detection, download, the database ladder, build, start order,
-smoke — are exercised on Linux through a second build of the same source. That leaves the Windows
-half, which cannot be executed where it was written: the console-window detection, the detached
-process flags, `taskkill /T`, the Program Files search paths, `initdb` and `pg_ctl` under Windows,
-the registry `PATH` re-read. Those are covered by the `windows-installer` workflow on a real
-`windows-latest` runner, which builds the .exe and runs `doctor`, `fetch`, `db` and `uninstall`
-against the PostgreSQL that image ships, on every push. A second job does the whole install —
-fourteen Maven modules, the web app, twelve services, the smoke test — nightly and on demand, and
-also asserts that the cashier account is still refused a chart, because the account list this
-installer prints is a claim and a claim should have a test.
+smoke — are exercised on Linux through a second build of the same source: a full install against a
+fresh database migrated the eleven service schemas, seeded the accounts, started every service and
+passed all seventeen checks.
+
+That leaves the Windows half, which cannot be executed where it was written: the console-window
+detection, the detached process flags, `taskkill /T`, the Program Files search paths, `initdb` and
+`pg_ctl` under Windows, the registry `PATH` re-read. The `windows-installer` workflow runs those on
+a real `windows-latest` runner on every push, and **it is green**. What it establishes, quoted from
+the run rather than described:
+
+- `java -version` parsed on Windows, and the version floor applied to it — a JDK pinned to 17 is
+  read as 17, reported "too old", and refused outright once the route is pinned with
+  `MEDSYNC_MODE=native`; then JDK 21 goes on and the same command passes.
+- The Program Files search finding what PATH does not:
+  `PostgreSQL server binaries at C:\Program Files\PostgreSQL\17\bin`.
+- Installed and running told apart — `Docker Desktop 29.1.5, engine running` on one runner and
+  "installed, but the engine is not running" on another, each choosing the correct route.
+- A checkout beside the executable winning over a download, *and* the download itself unpacking a
+  whole tree when there is no checkout.
+- A private cluster created from nothing and answering:
+  `mode=private port=55432 dir=D:\a\_temp\medsync\pgdata`, then `extensions: btree_gist,pg_trgm`
+  read back out of `pg_extension` by `psql`.
+- `uninstall` stopping the cluster, freeing every port, and leaving nothing behind.
+
+A second job does the whole install — fourteen Maven modules, the web app, twelve services, the
+smoke test — nightly and on demand rather than on every push, because it takes twenty to forty
+minutes and CI that people stop waiting for is CI that stops being read. It also asserts that the
+cashier account is still refused a chart, because the account list this installer prints is a claim
+and a claim should have a test. **That job has not run yet**, so the full Windows install is
+reviewed rather than exercised; the fast job above is what is proven.
 
 ### One command, on Linux and macOS: `medsync.sh`
 
@@ -1995,6 +2016,22 @@ set; when it is not, the job writes an explicit notice and a run-summary entry s
 
 Worth writing down, because it is the argument for having built them:
 
+- **The Windows installer could not create its own database, and only Windows could say so.** Found
+  by the `windows-installer` workflow on the fourth attempt at getting it green, after every
+  assertion before it had passed. `initdb` handed a data directory that already exists tries to
+  tighten its permissions rather than create it with the right ones, and on Windows that fails
+  outright — *"could not change permissions of directory ...: Permission denied"* — on a directory
+  the installer had itself just created and owned. The parent is created now and the directory is
+  left to `initdb`. Nothing about this is reachable from Linux, where the same code path works;
+  the reason it was caught at all is that the installer's platform-specific calls are four small
+  functions behind a build tag, so a CI job on a real runner could exercise them.
+  Three more of that workflow's failures were the *assertions* being wrong rather than the code,
+  and each is worth its own line because each was a fact about Windows or Actions worth learning:
+  a job-level `env:` naming `runner.temp` fails the whole workflow at validation with no job to
+  attribute it to; a backslash in a PowerShell double-quoted string reaches the regex engine as an
+  escape, so a Windows path doubled "to be safe" matches nothing; and Actions appends
+  `exit $LASTEXITCODE` to a `run:` block, so a step whose last command was *meant* to fail fails
+  itself, silently. The installer was right in all three.
 - **A stock screen that could list every lot could not exist, and building it is what said so.**
   The vaccine-stock page was written to show the whole fridge; `GET /vaccines/lots` requires a
   `productCode` and there is no all-lots read. Two ways out — loop the catalogue client-side, which
