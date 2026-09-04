@@ -46,6 +46,25 @@ public final class Topics {
      */
     public static final String IMAGING = "hms.imaging.events";
 
+    /**
+     * Immunisations: what was given, and to whom.
+     *
+     * <p>Its own topic, on the rule the others follow — a distinct aggregate family with a distinct
+     * key. An immunisation is not an appointment and not a prescription: it is a fact about a person
+     * that outlives both, which is why it is a separate FHIR resource too.
+     *
+     * <p>The event carries the product code <em>and</em> the antigen codes rather than a count, for
+     * the reason the imaging and laboratory events both had to learn: a count cannot be priced, and
+     * a vaccine administration is chargeable. The antigens are there because they are what a
+     * downstream register or a coverage report keys on, and expanding a product into them needs
+     * this service's own join table.
+     *
+     * <p>Published from the first commit though nothing consumes it yet, which is the rule stated
+     * twice above: a module that has to be changed to become observable is a module nobody makes
+     * observable.
+     */
+    public static final String IMMUNISATION = "hms.immunisation.events";
+
     private Topics() {
     }
 }

@@ -1,0 +1,169 @@
+package com.hms.immunisation.web.dto;
+
+import com.hms.immunisation.domain.ImmunisationEnums.ExemptionKind;
+import com.hms.immunisation.domain.ImmunisationEnums.ImmunisationSource;
+import com.hms.immunisation.domain.ImmunisationEnums.Outcome;
+import com.hms.immunisation.domain.ImmunisationEnums.Route;
+import com.hms.immunisation.domain.ImmunisationEnums.Seriousness;
+import jakarta.validation.constraints.AssertTrue;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Set;
+import java.util.UUID;
+
+/** The register's API shapes. */
+public final class ImmunisationDtos {
+
+    private ImmunisationDtos() {
+    }
+
+    // ---- the catalogue -------------------------------------------------------
+
+    public record AntigenResponse(String code, String name, String protectsAgainst, boolean active) {
+    }
+
+    public record ProductResponse(String code, String name, String manufacturer, Route route,
+                                  int dosesPerVial, boolean active, List<String> antigenCodes) {
+
+        public ProductResponse {
+            antigenCodes = List.copyOf(antigenCodes);
+        }
+    }
+
+    public record CreateAntigenRequest(
+            @NotBlank @Size(max = 32) String code,
+            @NotBlank @Size(max = 160) String name,
+            @NotBlank @Size(max = 160) String protectsAgainst) {
+    }
+
+    /**
+     * A new product, and what it contains.
+     *
+     * <p>{@code antigenCodes} is required and non-empty: a vaccine that protects against nothing is
+     * not a vaccine, and a product with an empty contents list would be silently invisible to every
+     * coverage question ever asked of it.
+     */
+    public record CreateProductRequest(
+            @NotBlank @Size(max = 32) String code,
+            @NotBlank @Size(max = 160) String name,
+            @NotBlank @Size(max = 160) String manufacturer,
+            @NotNull Route route,
+            @Min(1) int dosesPerVial,
+            @NotNull Set<@NotBlank @Size(max = 32) String> antigenCodes) {
+
+        @AssertTrue(message = "A product must contain at least one antigen")
+        public boolean isContentsListed() {
+            return antigenCodes != null && !antigenCodes.isEmpty();
+        }
+    }
+
+    // ---- stock ---------------------------------------------------------------
+
+    public record LotResponse(UUID id, String productCode, String productName, String lotNo,
+                              LocalDate expiresOn, int quantityOnHand, LocalDate receivedOn,
+                              Short vvmStage, String withdrawnReason, boolean usable) {
+    }
+
+    public record ReceiveLotRequest(
+            @NotBlank @Size(max = 32) String productCode,
+            @NotBlank @Size(max = 48) String lotNo,
+            @NotNull LocalDate expiresOn,
+            @Min(1) int quantity,
+            // The vial monitor stage as read at receipt, if anybody read one. Optional, because a
+            // deployment without VVM-labelled vaccine has nothing to read -- and a required field
+            // nobody can answer is a field somebody types 1 into.
+            Short vvmStage) {
+    }
+
+    public record WithdrawLotRequest(@NotBlank @Size(max = 255) String reason) {
+    }
+
+    // ---- doses ---------------------------------------------------------------
+
+    /**
+     * A dose given here.
+     *
+     * <p>No route: it comes from the product, because the route is a property of the vaccine. No
+     * source either — this endpoint <em>is</em> the source, and a body that could name a different
+     * one would let a caller record a historical dose through the path that demands a lot.
+     */
+    public record RecordDoseRequest(
+            @NotNull UUID patientId,
+            @NotBlank @Size(max = 24) String patientMrn,
+            UUID encounterId,
+            @NotBlank @Size(max = 32) String productCode,
+            // The lot it came out of. Named rather than picked from a list: the nurse is holding
+            // the vial, and the label on it is the evidence.
+            @NotBlank @Size(max = 48) String lotNo,
+            @NotNull LocalDate givenOn,
+            @NotBlank @Size(max = 32) String site) {
+    }
+
+    public record DoseResponse(UUID id, UUID patientId, String patientMrn, UUID encounterId,
+                               String productCode, String productName, List<String> antigenCodes,
+                               String lotNo, ImmunisationSource source, LocalDate givenOn,
+                               boolean givenOnEstimated, Route route, String site, String givenBy,
+                               String evidence, Instant recordedAt, String recordedBy,
+                               List<AdverseEventResponse> adverseEvents) {
+
+        public DoseResponse {
+            antigenCodes = List.copyOf(antigenCodes);
+            adverseEvents = List.copyOf(adverseEvents);
+        }
+    }
+
+    // ---- adverse events ------------------------------------------------------
+
+    public record ReportAefiRequest(
+            @NotNull LocalDate onsetOn,
+            @NotBlank @Size(min = 8, max = 1000) String description,
+            @NotNull Seriousness seriousness,
+            @NotNull Outcome outcome) {
+    }
+
+    public record AdverseEventResponse(UUID id, UUID immunisationId, LocalDate onsetOn,
+                                       String description, Seriousness seriousness, Outcome outcome,
+                                       boolean reportable, String reportedBy, Instant reportedAt) {
+    }
+
+    // ---- exemptions ----------------------------------------------------------
+
+    /**
+     * Recording why a child will not be vaccinated.
+     *
+     * <p>{@code antigenCode} null means every antigen. The reason has a twenty-character floor, the
+     * same one break-glass sets and for the same reason: this takes a child out of a coverage
+     * measure's denominator, and "medical" is what a free-text box collects when it does not insist
+     * on a sentence.
+     */
+    public record RecordExemptionRequest(
+            @NotNull UUID patientId,
+            @NotBlank @Size(max = 24) String patientMrn,
+            @Size(max = 32) String antigenCode,
+            @NotNull ExemptionKind kind,
+            @NotBlank @Size(min = 20, max = 500) String reason,
+            LocalDate expiresOn) {
+    }
+
+    public record ExemptionResponse(UUID id, UUID patientId, String antigenCode, ExemptionKind kind,
+                                    String reason, LocalDate expiresOn, boolean live,
+                                    String recordedBy, Instant recordedAt) {
+    }
+
+    // ---- the patient's register ---------------------------------------------
+
+    /** Everything this service knows about one patient, in one read. */
+    public record RegisterResponse(UUID patientId, String patientMrn, List<DoseResponse> doses,
+                                   List<ExemptionResponse> exemptions) {
+
+        public RegisterResponse {
+            doses = List.copyOf(doses);
+            exemptions = List.copyOf(exemptions);
+        }
+    }
+}

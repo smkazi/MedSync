@@ -6,6 +6,21 @@ spring:
     username: ${HMS_DB_USER:hms}
     password: ${HMS_DB_PASSWORD:hms}
     hikari:
+      # The connection budget, stated rather than left to a default.
+      #
+      # Hikari defaults to ten connections per service. That is a fine number for one service and
+      # an arithmetic trap for a platform of them: eleven Java services against one PostgreSQL is
+      # 110 connections against a default max_connections of 100, and the failure is not a slow
+      # query -- it is the eleventh service refusing to start with "sorry, too many clients
+      # already", which is how this comment came to be written.
+      #
+      # Five each because these are request-scoped reads and writes rather than long transactions,
+      # and because the budget has to leave room for what else connects: Flyway takes its own
+      # connection at startup, the test suites take theirs, and somebody needs to be able to open
+      # psql while the stack is up. Eleven fives is 55 of 100 -- and every service is
+      # on it, including the one with no other reason to have a hikari block.
+      maximum-pool-size: ${HMS_DB_POOL_MAX:5}
+      minimum-idle: ${HMS_DB_POOL_MIN:1}
       schema: billing
   jpa:
     open-in-view: false

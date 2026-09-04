@@ -22,6 +22,7 @@ COPY services/pharmacy-service/pom.xml services/pharmacy-service/
 COPY services/billing-service/pom.xml services/billing-service/
 COPY services/interop-service/pom.xml services/interop-service/
 COPY services/imaging-service/pom.xml services/imaging-service/
+COPY services/immunisation-service/pom.xml services/immunisation-service/
 RUN mvn -B -q dependency:go-offline -DskipTests || true
 
 COPY platform platform

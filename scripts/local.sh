@@ -19,6 +19,7 @@ SERVICES=(
   "billing-service:8088"
   "interop-service:8089"
   "imaging-service:8090"
+  "immunisation-service:8091"
   "gateway:8080"
 )
 

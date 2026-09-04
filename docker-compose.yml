@@ -319,6 +319,22 @@ services:
     expose:
       - "8090"
 
+  immunisation-service:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: Dockerfile.java
+      args:
+        SERVICE: immunisation-service
+    environment:
+      <<: *platform-env
+      HMS_DB_USER: ${HMS_DB_IMMUNISATION_USER:-${HMS_DB_USER:-hms}}
+      HMS_DB_PASSWORD: "${HMS_DB_IMMUNISATION_PASSWORD:-${HMS_DB_PASSWORD}}"
+      SERVER_PORT: 8091
+      HMS_IMMUNISATION_PORT: 8091
+    expose:
+      - "8091"
+
   ai-service:
     build:
       context: ./services/ai-service
@@ -351,6 +367,7 @@ services:
       HMS_BILLING_URI: http://billing-service:8088
       HMS_INTEROP_URI: http://interop-service:8089
       HMS_IMAGING_URI: http://imaging-service:8090
+      HMS_IMMUNISATION_URI: http://immunisation-service:8091
       HMS_AI_URI: http://ai-service:8000
       HMS_CORS_ALLOWED_ORIGINS: http://localhost:3000
     ports:
@@ -375,6 +392,8 @@ services:
       interop-service:
         condition: service_started
       imaging-service:
+        condition: service_started
+      immunisation-service:
         condition: service_started
     restart: unless-stopped
 

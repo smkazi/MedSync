@@ -6,6 +6,13 @@ spring:
     username: ${HMS_DB_USER:hms}
     password: ${HMS_DB_PASSWORD:hms}
     hikari:
+      # The connection budget, stated rather than left to a default. Hikari's default of ten per
+      # service is an arithmetic trap for a platform of eleven: 110 connections against a default
+      # max_connections of 100, and the failure is the eleventh service refusing to start with
+      # "sorry, too many clients already". Five each, leaving room for Flyway's own connection at
+      # startup, the test suites, and somebody opening psql while the stack is up.
+      maximum-pool-size: ${HMS_DB_POOL_MAX:5}
+      minimum-idle: ${HMS_DB_POOL_MIN:1}
       # Sets the connection's search_path. Hibernate's default_schema only qualifies mapped
       # entities, so native SQL (the MRN sequence) needs the schema on the connection itself.
       schema: patient

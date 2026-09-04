@@ -124,6 +124,16 @@ public class RouteConfig {
                 .route("imaging", r -> r
                         .path("/imaging/**")
                         .uri(services.imaging()))
+                // The immunisation register. Two prefixes, because they are two different things
+                // people ask for: /immunisations is a fact about a patient, and /vaccines is the
+                // catalogue and the fridge. The same reasoning that gives billing a top-level
+                // noun per thing rather than one module prefix over all of them.
+                .route("immunisations", r -> r
+                        .path("/immunisations/**")
+                        .uri(services.immunisation()))
+                .route("vaccines", r -> r
+                        .path("/vaccines/**")
+                        .uri(services.immunisation()))
                 // Clinical decision support: summarisation, triage, no-show risk, coding.
                 .route("ai", r -> r
                         .path("/ai/**")

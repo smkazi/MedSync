@@ -404,6 +404,56 @@ public final class Roles {
     public static final String IMAGING_READ =
             "hasAnyRole('ADMIN','DOCTOR','NURSE','RADIOLOGIST','RADIOGRAPHER')";
 
+    /**
+     * Giving a vaccine, and recording one that was given elsewhere.
+     *
+     * <p><strong>No new role.</strong> A nurse gives vaccines, and in an immunisation clinic a
+     * nurse gives nearly all of them — so this is the same membership as {@link #CLINICAL_WRITE}
+     * and it is a separate constant for the reason {@code BED_MANAGE} is separate from it:
+     * vaccinating and charting are different acts that happen to share a role list today, and a
+     * later decision about either must not silently move the other.
+     *
+     * <p>It also covers recording a dose given somewhere else, which is deliberate rather than
+     * overlooked — reading a card and writing down what it says is the same clinical judgement as
+     * giving the dose, and a separate role for it would mean the person holding the card has to
+     * find somebody else to type it.
+     */
+    public static final String IMMUNISE = "hasAnyRole('ADMIN','DOCTOR','NURSE')";
+
+    /**
+     * Reading the register: a patient's doses, what they are due, and the department's cohort list.
+     *
+     * <p>Wider than {@link #IMMUNISE} and narrower than everybody. A pharmacist is here because a
+     * vaccine is a drug they keep the cold chain for; the front desk is not, because an
+     * immunisation history is a chart. The care-relationship narrowing then applies on top for the
+     * clinical roles, exactly as it does to a laboratory order — with one deliberate exception the
+     * service documents: the cohort due list is not narrowed per row, because calling a birth
+     * cohort in for their vaccinations is inherently cross-patient work.
+     */
+    public static final String IMMUNISATION_READ =
+            "hasAnyRole('ADMIN','DOCTOR','NURSE','PHARMACIST')";
+
+    /**
+     * The vaccine catalogue and the schedule: what exists, and when it is due.
+     *
+     * <p>Administrator only, and it is the tightest gate in the module because it is the one that
+     * changes what every other answer means. Editing a schedule row moves the due date for every
+     * child in the district at once, and adding an antigen to a product retrospectively changes
+     * what past doses are counted as covering.
+     */
+    public static final String IMMUNISATION_CONFIG = "hasRole('ADMIN')";
+
+    /**
+     * Vaccine stock: receiving a lot, and taking one out of use.
+     *
+     * <p>The pharmacy keeps the cold chain, so the pharmacist is here; a nurse is here too because
+     * the person who opens the fridge at eight in the morning is the person who finds the vial
+     * monitor has turned, and a withdrawal that needs an administrator would not happen that
+     * morning. Not {@link #IMMUNISE}: giving a dose and managing the stock it came from are
+     * different jobs in a large clinic and the same person in a small one.
+     */
+    public static final String VACCINE_STOCK = "hasAnyRole('ADMIN','PHARMACIST','NURSE')";
+
     private Roles() {
     }
 }

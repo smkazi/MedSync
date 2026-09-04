@@ -1169,6 +1169,7 @@ Every service is environment-driven. The ones you are most likely to set:
 | `HMS_RATE_LIMIT_RPM` | `600` | Per-client requests a minute at the gateway |
 | `HMS_RATE_LIMIT_AUTH_RPM` | `20` | The same, for `/auth/**` |
 | `HMS_RATE_LIMIT_ENABLED` | `true` | Turn off if something in front already limits |
+| `HMS_DB_POOL_MAX` / `HMS_DB_POOL_MIN` | `5` / `1` | Connections per service. Eleven services against one database is a budget rather than a per-service default — see the finding below on how that was learned |
 | `HMS_IMAGING_STORAGE_DIR` | **unset** | Where DICOM instances are written. Unset means the platform keeps the record of an examination and not the images, and the screens say so — see [imaging-service](#imaging-service--schema-imaging) |
 | `NEXT_PUBLIC_HMS_ZONE` | `Asia/Kolkata` | The zone the web app renders instants in *and* reads a typed wall-clock time in. `NEXT_PUBLIC_` because both directions run in the browser as well as on the server; set it to match `HMS_ZONE` |
 
@@ -1918,6 +1919,14 @@ Worth writing down, because it is the argument for having built them:
   conversion *back* — a typed wall-clock time to an instant — is pinned to the same zone rather
   than to the container's `TZ` or the operator's laptop, which is what a radiographer booking a
   scanner slot depends on.
+- **The connection budget was implicit, and the eleventh service found the ceiling.** Adding
+  immunisation-service made the platform eleven Java services against one PostgreSQL, and it
+  refused to start: `FATAL: sorry, too many clients already`. Hikari defaults to ten connections
+  per service and `max_connections` defaults to 100, so ten services had been using exactly all of
+  them — which is also why `psql` could not connect to diagnose it. Nothing was misconfigured; the
+  budget had simply never been stated, and the arithmetic ran out. Every service now sets
+  `maximum-pool-size` explicitly (five, `HMS_DB_POOL_MAX`), which is 55 of 100 and leaves room for
+  Flyway's own connection at startup, the test suites, and a twelfth service.
 - **No clinical order validates the patient id it is given, and I found that out by expecting it
   to.** A ZAP row was written asserting 404 for a radiology order against a patient who does not
   exist; run against the live stack it answered 201, and so did the same request to the laboratory.

@@ -5,6 +5,13 @@ spring:
     url: ${HMS_DB_URL:jdbc:postgresql://localhost:5432/hms}
     username: ${HMS_DB_USER:hms}
     password: ${HMS_DB_PASSWORD:hms}
+    hikari:
+      # The connection budget. This service has no `schema:` here -- Hibernate's default_schema
+      # qualifies everything it maps and identity runs no native SQL -- so this block exists only
+      # for the pool, and it exists because leaving one service on Hikari's default of ten is the
+      # implicitness the whole budget is a correction to.
+      maximum-pool-size: ${HMS_DB_POOL_MAX:5}
+      minimum-idle: ${HMS_DB_POOL_MIN:1}
   jpa:
     open-in-view: false
     hibernate:

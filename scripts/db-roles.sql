@@ -100,6 +100,10 @@
 \else
   \set imaging_password :app_password
 \endif
+\if :{?immunisation_password}
+\else
+  \set immunisation_password :app_password
+\endif
 
 -- ---------------------------------------------------------------------------
 -- Extensions, installed once by the superuser running this
@@ -137,7 +141,8 @@ SELECT format('CREATE ROLE %I LOGIN', role)
            ('hms_pharmacy'),
            ('hms_billing'),
            ('hms_interop'),
-           ('hms_imaging')
+           ('hms_imaging'),
+           ('hms_immunisation')
        ) AS t(role)
  WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = t.role)
 \gexec
@@ -160,7 +165,8 @@ SELECT format('ALTER ROLE %I PASSWORD %L', role, pw)
            ('hms_pharmacy', :'pharmacy_password'),
            ('hms_billing', :'billing_password'),
            ('hms_interop', :'interop_password'),
-           ('hms_imaging', :'imaging_password')
+           ('hms_imaging', :'imaging_password'),
+           ('hms_immunisation', :'immunisation_password')
        ) AS t(role, pw)
 \gexec
 
@@ -181,7 +187,8 @@ SELECT format('ALTER ROLE %I NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS', r
            ('hms_pharmacy'),
            ('hms_billing'),
            ('hms_interop'),
-           ('hms_imaging')
+           ('hms_imaging'),
+           ('hms_immunisation')
        ) AS t(role)
 \gexec
 
@@ -198,7 +205,8 @@ SELECT format('GRANT CONNECT ON DATABASE %I TO %I', current_database(), role)
            ('hms_pharmacy'),
            ('hms_billing'),
            ('hms_interop'),
-           ('hms_imaging')
+           ('hms_imaging'),
+           ('hms_immunisation')
        ) AS t(role)
 \gexec
 
@@ -214,7 +222,7 @@ DECLARE
 BEGIN
     FOREACH service_schema IN ARRAY ARRAY[
         'identity', 'patient', 'scheduling', 'laboratory', 'notification',
-        'admissions', 'pharmacy', 'billing', 'interop', 'imaging'
+        'admissions', 'pharmacy', 'billing', 'interop', 'imaging', 'immunisation'
     ]
     LOOP
         EXECUTE format('CREATE SCHEMA IF NOT EXISTS %I AUTHORIZATION hms_migrate', service_schema);
@@ -281,18 +289,18 @@ BEGIN
         SELECT 'TABLE' AS kind, format('%I.%I', schemaname, tablename) AS name
           FROM pg_tables
          WHERE schemaname IN ('identity', 'patient', 'scheduling', 'laboratory', 'notification',
-                              'admissions', 'pharmacy', 'billing', 'interop', 'imaging')
+                              'admissions', 'pharmacy', 'billing', 'interop', 'imaging', 'immunisation')
            AND tableowner <> 'hms_migrate'
         UNION ALL
         SELECT 'SEQUENCE', format('%I.%I', sequence_schema, sequence_name)
           FROM information_schema.sequences
          WHERE sequence_schema IN ('identity', 'patient', 'scheduling', 'laboratory', 'notification',
-                                   'admissions', 'pharmacy', 'billing', 'interop', 'imaging')
+                                   'admissions', 'pharmacy', 'billing', 'interop', 'imaging', 'immunisation')
         UNION ALL
         SELECT 'VIEW', format('%I.%I', schemaname, viewname)
           FROM pg_views
          WHERE schemaname IN ('identity', 'patient', 'scheduling', 'laboratory', 'notification',
-                              'admissions', 'pharmacy', 'billing', 'interop', 'imaging')
+                              'admissions', 'pharmacy', 'billing', 'interop', 'imaging', 'immunisation')
            AND viewowner <> 'hms_migrate'
     LOOP
         EXECUTE format('ALTER %s %s OWNER TO hms_migrate', obj.kind, obj.name);
@@ -324,7 +332,8 @@ SELECT format('GRANT USAGE ON SCHEMA public TO %I', role)
            ('hms_pharmacy'),
            ('hms_billing'),
            ('hms_interop'),
-           ('hms_imaging')
+           ('hms_imaging'),
+           ('hms_immunisation')
        ) AS t(role)
 \gexec
 
@@ -350,7 +359,8 @@ SELECT CASE count(*)
            ('pharmacy', :'pharmacy_password'),
            ('billing', :'billing_password'),
            ('interop', :'interop_password'),
-           ('imaging', :'imaging_password')
+           ('imaging', :'imaging_password'),
+           ('immunisation', :'immunisation_password')
        ) AS t(service, pw)
  WHERE pw = :'app_password';
 

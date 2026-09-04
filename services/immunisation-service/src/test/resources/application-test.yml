@@ -1,0 +1,33 @@
+# Integration tests run against a real PostgreSQL. The rules this module depends on are database
+# rules — a lot number present exactly when the dose was given here, one dose of one product per
+# patient per day, a reason on every exemption — and none of them has an in-memory substitute that
+# enforces anything. An H2 that accepted a historical dose carrying a lot number would make the
+# whole point of this schema untestable.
+spring:
+  datasource:
+    url: ${HMS_TEST_DB_URL:jdbc:postgresql://localhost:5432/hms_test}
+    username: ${HMS_TEST_DB_USER:hms}
+    password: ${HMS_TEST_DB_PASSWORD:hms}
+    hikari:
+      schema: immunisation
+  flyway:
+    enabled: true
+hms:
+  # The care-relationship check calls scheduling-service, which is not running here. It fails
+  # closed, so left on it would refuse every clinician read in this file and every assertion about
+  # the register would become a 403 about something else entirely. Off here, and proved on its own
+  # in CareRelationshipNarrowingTest, which stands up a stub and asserts both directions —
+  # including that an unreachable scheduling-service refuses rather than opens. The same split the
+  # laboratory and radiology make.
+  care-team:
+    narrow-patient-records: false
+  events:
+    transport: log
+  immunisation:
+    # Pinned, and not left to default from HMS_ZONE. Two assertions here depend on what "today" is
+    # — that a dose cannot be recorded in the future, and that an expired lot is refused — and a
+    # test whose answer moves with the machine's zone is a test that fails once a day somewhere.
+    zone: UTC
+logging:
+  level:
+    org.flywaydb: WARN
