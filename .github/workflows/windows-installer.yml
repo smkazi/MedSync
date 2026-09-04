@@ -114,7 +114,7 @@ jobs:
       # produces a binary Windows will not load fails as its own distinct error.
       - name: Build natively
         working-directory: installer/windows
-        run: go build -ldflags "-s -w" -o ..\..\dist\MedSync-Setup.exe .
+        run: go build -trimpath -ldflags "-s -w" -o ..\..\dist\MedSync-Setup.exe .
 
       - name: version
         run: .\dist\MedSync-Setup.exe version
@@ -294,7 +294,7 @@ jobs:
 
       - name: Build the installer
         working-directory: installer/windows
-        run: go build -ldflags "-s -w" -o ..\..\dist\MedSync-Setup.exe .
+        run: go build -trimpath -ldflags "-s -w" -o ..\..\dist\MedSync-Setup.exe .
 
       - name: doctor
         run: .\dist\MedSync-Setup.exe doctor
