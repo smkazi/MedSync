@@ -1,0 +1,297 @@
+# Builds MedSync-Setup.exe and, on a real Windows runner, proves it does what it says.
+#
+# This workflow exists because of a limitation rather than a preference: the installer targets
+# Windows and was written on Linux, so its Windows-specific half — the console-window detection, the
+# detached process flags, taskkill /T, the Program Files search paths, initdb and pg_ctl under
+# Windows, the registry PATH re-read — cannot be executed at all on the machine it was written on.
+# A `windows-latest` runner can execute it, and that turns "reviewed" into "verified", which for an
+# executable a stranger is about to double-click is not a small difference.
+#
+# Two jobs, split by how long they take:
+#
+#   fast   — every push. Cross-compiles, then on Windows runs version/doctor/fetch/db/status/down.
+#            That covers every Windows-only code path except the build itself, in about five
+#            minutes, so it can gate every commit.
+#   full   — on demand and nightly. The whole thing: fourteen Maven modules, the web app, twelve
+#            services, the smoke test. Twenty to forty minutes on a Windows runner, which is why it
+#            is not on the push path — CI that people stop waiting for is CI that stops being read.
+
+name: Windows installer
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "installer/**"
+      - ".github/workflows/windows-installer.yml"
+  pull_request:
+    paths:
+      - "installer/**"
+  workflow_dispatch:
+    inputs:
+      full:
+        description: "Also run the full install (build + start + smoke) on Windows"
+        type: boolean
+        default: true
+  schedule:
+    # 03:30 UTC, after the nightly security workflow rather than beside it: two long jobs competing
+    # for runners means both report late.
+    - cron: "30 3 * * *"
+
+concurrency:
+  group: windows-installer-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cross-compile:
+    name: Cross-compile (linux -> windows)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          # No dependencies to cache: the installer is standard library only, deliberately, so
+          # there is no module download step to go wrong or to slow this down.
+          cache: false
+
+      - name: Vet
+        working-directory: installer/windows
+        run: go vet ./...
+
+      # Both platforms, because the Unix build is not a curiosity: it is how the seven
+      # platform-independent files get exercised locally, and a break in it means that verification
+      # path has quietly gone away.
+      - name: Build for Windows and for Linux
+        run: |
+          bash installer/windows/build.sh
+          bash installer/windows/build.sh --linux
+
+      - name: Confirm the output really is a Windows executable
+        run: |
+          file dist/MedSync-Setup.exe | tee /dev/stderr | grep -q "PE32+ executable (console) x86-64"
+          file dist/MedSync-Setup-arm64.exe | grep -q "PE32+ executable (console) Aarch64"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MedSync-Setup
+          path: |
+            dist/MedSync-Setup.exe
+            dist/MedSync-Setup-arm64.exe
+          if-no-files-found: error
+          retention-days: 30
+
+  windows-fast:
+    name: Windows (the paths Linux cannot run)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    # One home for the whole job, and not the real %LOCALAPPDATA%: a CI job that writes where a
+    # developer's install would live is a job whose cleanup step matters, and runner.temp is thrown
+    # away regardless of how this ends.
+    env:
+      MEDSYNC_HOME: ${{ runner.temp }}\medsync
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache: false
+
+      # Built natively here rather than downloaded from the job above, so a cross-compilation that
+      # produces a binary Windows will not load fails as its own distinct error.
+      - name: Build natively
+        working-directory: installer/windows
+        run: go build -ldflags "-s -w" -o ..\..\dist\MedSync-Setup.exe .
+
+      - name: version
+        run: .\dist\MedSync-Setup.exe version
+
+      - name: help
+        run: .\dist\MedSync-Setup.exe help
+
+      # doctor exits non-zero when a port is occupied, which on a fresh runner it is not — so a
+      # failure here is a real finding rather than noise. `-ErrorAction Stop` because PowerShell
+      # does not fail a step on a native non-zero exit unless it is told to.
+      - name: doctor
+        run: |
+          .\dist\MedSync-Setup.exe doctor
+          if ($LASTEXITCODE -ne 0) { throw "doctor exited $LASTEXITCODE" }
+
+      # The download and unpack path: HTTPS, gzip, tar, the path-traversal guard and the strip of
+      # GitHub's wrapper directory, all on Windows path separators.
+      # Skipped on pull requests: the ref there is a synthetic merge ref that codeload cannot
+      # serve, so the step would fail for a reason that has nothing to do with the installer.
+      - name: fetch
+        if: github.event_name != 'pull_request'
+        env:
+          MEDSYNC_REF: ${{ github.ref_name }}
+        run: |
+          .\dist\MedSync-Setup.exe fetch
+          if ($LASTEXITCODE -ne 0) { throw "fetch exited $LASTEXITCODE" }
+          if (-not (Test-Path "$env:MEDSYNC_HOME\src\pom.xml")) { throw "no pom.xml in the fetched tree" }
+          if (-not (Test-Path "$env:MEDSYNC_HOME\src\services\identity-service")) { throw "incomplete tree" }
+
+      # The database ladder against the PostgreSQL that windows-latest ships stopped: initdb into
+      # LocalAppData, pg_ctl start on a port of its own, then the two extensions. This is the rung
+      # the Linux run cannot reach, because initdb refuses to run as root and CI containers are.
+      - name: db (private cluster)
+        run: |
+          .\dist\MedSync-Setup.exe db
+          if ($LASTEXITCODE -ne 0) { throw "db exited $LASTEXITCODE" }
+
+      - name: The cluster is really there and really answers
+        run: |
+          $state = Get-Content "$env:MEDSYNC_HOME\state.json" | ConvertFrom-Json
+          "mode=$($state.dbMode) port=$($state.dbPort) dir=$($state.dbDir)"
+          if ($state.dbMode -ne "private") { throw "expected a private cluster, got '$($state.dbMode)'" }
+          if (-not $state.phiKey) { throw "no PHI key was generated" }
+          $psql = (Get-ChildItem "C:\Program Files\PostgreSQL\*\bin\psql.exe" | Select-Object -Last 1).FullName
+          $env:PGPASSWORD = "hms"
+          # The extensions are what `db` is really being asked about: without them the first
+          # migration fails, and it fails minutes later inside a service log rather than here.
+          $out = & $psql "postgresql://hms@127.0.0.1:$($state.dbPort)/hms" -tAc "select string_agg(extname, ',' order by extname) from pg_extension where extname in ('pg_trgm','btree_gist')"
+          "extensions: $out"
+          if ($out -notmatch "btree_gist" -or $out -notmatch "pg_trgm") { throw "the extensions are missing" }
+
+      - name: status
+        run: .\dist\MedSync-Setup.exe status
+
+      # Removes the cluster it just made, which also exercises pg_ctl stop and the RemoveAll of
+      # MEDSYNC_HOME. Piped "y" because uninstall asks first, deliberately.
+      - name: uninstall
+        run: |
+          "y" | .\dist\MedSync-Setup.exe uninstall
+          if (Test-Path "$env:MEDSYNC_HOME") { throw "$env:MEDSYNC_HOME survived uninstall" }
+
+      - name: The logs, whatever happened
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-fast-logs
+          path: ${{ runner.temp }}\medsync\logs
+          if-no-files-found: ignore
+
+  windows-full:
+    name: Windows (the whole install)
+    # Not on the push path. Dispatched with the box ticked, or nightly.
+    if: (github.event_name == 'workflow_dispatch' && inputs.full) || github.event_name == 'schedule'
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache: false
+
+      - name: Build the installer
+        working-directory: installer/windows
+        run: go build -ldflags "-s -w" -o ..\..\dist\MedSync-Setup.exe .
+
+      - name: doctor
+        run: .\dist\MedSync-Setup.exe doctor
+
+      # The real thing, against this checkout rather than a download: findSource looks beside the
+      # executable first, and dist\ is inside the repository, so this builds the commit under test
+      # instead of whatever is on the branch.
+      #
+      # The rate limits are raised because the smoke test signs in and then makes seventeen
+      # requests in a few seconds, which the auth bucket is sized to discourage. The limiter has its
+      # own unit coverage in the gateway module, so raising it here costs no coverage.
+      - name: up (build, start, smoke)
+        env:
+          MEDSYNC_HOME: ${{ runner.temp }}\medsync
+          MEDSYNC_NO_BROWSER: "1"
+          MEDSYNC_MODE: native
+          HMS_RATE_LIMIT_AUTH_RPM: "5000"
+          HMS_RATE_LIMIT_RPM: "100000"
+        run: |
+          .\dist\MedSync-Setup.exe up
+          if ($LASTEXITCODE -ne 0) { throw "up exited $LASTEXITCODE" }
+
+      # Twice on purpose. The first run is part of `up`; this one proves the platform is still
+      # serving after the installer has exited, which is the whole question the detached-process
+      # flags exist to answer — a stack that dies with the installer's console would pass the first
+      # check and fail this one.
+      - name: smoke, after the installer has exited
+        env:
+          MEDSYNC_HOME: ${{ runner.temp }}\medsync
+        run: |
+          .\dist\MedSync-Setup.exe smoke
+          if ($LASTEXITCODE -ne 0) { throw "smoke exited $LASTEXITCODE" }
+
+      - name: The seeded separations are real, not cosmetic
+        run: |
+          $login = @{ username = "cashier"; password = "ChangeMe!Dev2026" } | ConvertTo-Json
+          $token = (Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8080/auth/login" -ContentType "application/json" -Body $login).accessToken
+          if (-not $token) { throw "the cashier could not sign in" }
+          # A cashier reading a chart must be refused by the service. If this ever answers 200, the
+          # role separation the installer's own closing message advertises has stopped being true,
+          # and the thing that prints that list should be the thing that notices.
+          #
+          # A bare catch that reads the status off the exception, rather than catching a named
+          # exception type: Invoke-WebRequest throws System.Net.WebException under Windows
+          # PowerShell 5.1 and HttpResponseException under PowerShell 7, and a typed catch naming
+          # the wrong one turns a passing assertion into an unhandled error.
+          $code = 0
+          try {
+            $r = Invoke-WebRequest -Uri "http://127.0.0.1:8080/encounters/00000000-0000-4000-8000-000000000000" -Headers @{ Authorization = "Bearer $token" } -UseBasicParsing -ErrorAction Stop
+            $code = [int]$r.StatusCode
+          } catch {
+            if ($_.Exception.Response) { $code = [int]$_.Exception.Response.StatusCode }
+          }
+          "cashier on /encounters/{id} -> $code"
+          if ($code -ne 403) { throw "expected 403, got $code" }
+
+      - name: status
+        env:
+          MEDSYNC_HOME: ${{ runner.temp }}\medsync
+        run: .\dist\MedSync-Setup.exe status
+
+      - name: down
+        env:
+          MEDSYNC_HOME: ${{ runner.temp }}\medsync
+        run: |
+          .\dist\MedSync-Setup.exe down
+          if ($LASTEXITCODE -ne 0) { throw "down exited $LASTEXITCODE" }
+
+      # taskkill /T is the Windows answer to the defect the Unix script had, where killing the
+      # recorded pid left next-server holding port 3000. Asserting the ports are free is how that
+      # stays fixed rather than being fixed once.
+      # A raw TcpClient rather than a networking cmdlet: the connect-or-refuse question is the whole
+      # test, and going straight to .NET removes any dependence on which cmdlets this runner image
+      # happens to have.
+      - name: Every port is actually free
+        run: |
+          Start-Sleep -Seconds 5
+          $stuck = @()
+          foreach ($p in 3000,8080,8081,8082,8083,8084,8085,8086,8087,8088,8089,8090,8091) {
+            $c = New-Object System.Net.Sockets.TcpClient
+            try { $c.Connect("127.0.0.1", $p); $stuck += $p } catch { } finally { $c.Dispose() }
+          }
+          if ($stuck.Count -gt 0) { throw "still listening after down: $($stuck -join ', ')" }
+          "every port is free"
+
+      - name: The logs, whatever happened
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-full-logs
+          path: ${{ runner.temp }}\medsync\logs
+          if-no-files-found: ignore

@@ -103,6 +103,7 @@ order) are plain columns, not foreign keys, so a service survives another's outa
 ```
 .
 ├── medsync.sh                   the whole installation in one file. `./medsync.sh up`
+├── installer/windows/           MedSync-Setup.exe, in Go: one-click install on Windows
 ├── pom.xml                      Maven aggregator; -Pquality / -Psecurity / -Pmutation / -Pautomation
 ├── Makefile                     every task, one place. `make help`
 ├── docker-compose.yml           postgres, kafka (KRaft), twelve services, ai-service, web
@@ -1223,7 +1224,66 @@ produced it.
 
 ## Running it
 
-### The shortest way: one file
+### One click, on Windows: `MedSync-Setup.exe`
+
+Download it from the [**Windows installer**](../../actions/workflows/windows-installer.yml) workflow
+— open the newest run and take `MedSync-Setup` from its artifacts — then double-click it.
+
+It is a single 6 MB executable with no runtime behind it: no .NET, no Visual C++ redistributable,
+no installer framework, nothing to unpack. What it does, in order:
+
+1. **Looks at the machine** and prints what is there — JDK 21, Maven, Node 22, PostgreSQL, Docker
+   Desktop — and whether the engine behind Docker is actually running, which is a different
+   question from whether Docker is installed.
+2. **Offers to install what is missing**, by name, with the exact `winget` command for each, and
+   **only after you say yes.** Every package is the vendor's own from Microsoft's repository and
+   every one of them comes back out with `winget uninstall`. An installer that puts a JDK and a
+   database server on your machine because you double-clicked a file to look at a demo has done
+   something you did not agree to.
+3. **Picks a route.** Docker Desktop if its engine is running — that path needs no JDK, no Maven,
+   no Node and no PostgreSQL at all. Otherwise it builds and runs natively. `set MEDSYNC_MODE=native`
+   or `=docker` overrides the guess in either direction.
+4. **Downloads the source over HTTPS** and unpacks it with no `git` involved, which removes the one
+   prerequisite a Windows user is least likely to have. Drop the .exe into a checkout instead and
+   it builds that tree rather than downloading a second copy.
+5. **Provisions a database**, up a four-rung ladder that names the rung it used: an `HMS_DB_URL` you
+   set, a PostgreSQL already listening on 5432, a private cluster it creates on port 55432 in
+   `%LOCALAPPDATA%\MedSync` and owns, or a container.
+6. **Builds, starts and then checks** — signing in as a real seeded user and reading one real
+   endpoint from every service through the gateway, plus the unauthenticated corridor display. A
+   health check would have passed on a platform that cannot serve a request; this is the smallest
+   thing that tells "up" apart from "working".
+7. **Opens your browser**, and prints the twelve demo accounts with what each one is for and what
+   each one is refused.
+
+```
+MedSync-Setup.exe              double-click: install, start, check, open a browser
+MedSync-Setup.exe doctor       prerequisites, the database and the ports
+MedSync-Setup.exe fetch        download the source only
+MedSync-Setup.exe db           provision a PostgreSQL and print its URL, nothing else
+MedSync-Setup.exe smoke        sign in and read one screen from every service
+MedSync-Setup.exe status       what is running, and on which port
+MedSync-Setup.exe down         stop everything
+MedSync-Setup.exe uninstall    stop everything and delete what it created
+```
+
+Everything it creates lives in `%LOCALAPPDATA%\MedSync` — the database cluster, the source, the
+logs and the generated PHI key — and `uninstall` removes all of it. Anything installed through
+winget stays installed, because it belongs to the machine and not to this.
+
+**How it is verified, and what is not.** The installer is Go, cross-compiled, and the seven
+platform-independent files of it — detection, download, the database ladder, build, start order,
+smoke — are exercised on Linux through a second build of the same source. That leaves the Windows
+half, which cannot be executed where it was written: the console-window detection, the detached
+process flags, `taskkill /T`, the Program Files search paths, `initdb` and `pg_ctl` under Windows,
+the registry `PATH` re-read. Those are covered by the `windows-installer` workflow on a real
+`windows-latest` runner, which builds the .exe and runs `doctor`, `fetch`, `db` and `uninstall`
+against the PostgreSQL that image ships, on every push. A second job does the whole install —
+fourteen Maven modules, the web app, twelve services, the smoke test — nightly and on demand, and
+also asserts that the cashier account is still refused a chart, because the account list this
+installer prints is a claim and a claim should have a test.
+
+### One command, on Linux and macOS: `medsync.sh`
 
 ```bash
 ./medsync.sh up

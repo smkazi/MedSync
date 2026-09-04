@@ -18,6 +18,13 @@ help: ## Show this help
 install: ## Install, start, smoke-test and open the whole platform (one file, no arguments)
 	./medsync.sh up
 
+# Cross-compiles from anywhere Go runs, so a Windows binary can be produced and reviewed without a
+# Windows machine. What it cannot do is *run* the result - see the windows-installer workflow, which
+# does that on a real runner.
+.PHONY: installer-exe
+installer-exe: ## Cross-compile the Windows one-click installer into dist/
+	installer/windows/build.sh
+
 .PHONY: build
 build: ## Build every Java module
 	mvn -q package -DskipTests

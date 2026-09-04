@@ -37,6 +37,11 @@ services/ai-service/models/*.joblib
 .DS_Store
 *.log
 
+# Compiled installers (installer/windows/build.sh). A binary in the repository is a binary nobody
+# can review and everybody has to trust; the downloadable .exe comes from the windows-installer
+# workflow, built from this source on GitHub's own runners.
+dist/
+
 # Web
 /web/.next/
 /web/test-results/
