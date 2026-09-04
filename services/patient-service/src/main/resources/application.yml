@@ -64,6 +64,16 @@ hms:
     phi-key: ${HMS_PHI_KEY:}
   patient:
     mrn-prefix: ${HMS_MRN_PREFIX:MRN}
+    # The most children one birth-cohort read will return.
+    #
+    # Two thousand is roughly a fortnight of births in a large district, which is the unit an
+    # immunisation clinic actually works in. It is a cap rather than a page size: the response says
+    # when it bit and the answer to that is a narrower birth range, because a caller walking a
+    # decade in pages is doing something that endpoint does not exist for. And it announces itself
+    # rather than silently shortening the list -- the README's findings record what a silently
+    # capped pick-list cost once, and a calling list truncated in silence drops exactly the
+    # children nobody then telephones.
+    cohort-max-rows: ${HMS_PATIENT_COHORT_MAX:2000}
   identity:
     # Where portal accounts are created. Enrolment forwards the receptionist's own token, so this
     # is an address rather than a credential -- this service can mint an account for nobody.

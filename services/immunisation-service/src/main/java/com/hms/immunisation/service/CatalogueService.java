@@ -8,7 +8,9 @@ import com.hms.immunisation.domain.VaccineProduct;
 import com.hms.immunisation.repo.AntigenRepository;
 import com.hms.immunisation.repo.VaccineProductRepository;
 import com.hms.immunisation.web.dto.ImmunisationDtos;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -45,6 +47,27 @@ public class CatalogueService {
     @Transactional(readOnly = true)
     public List<ImmunisationDtos.ProductResponse> products() {
         return products.findByActiveTrueOrderByNameAsc().stream().map(CatalogueService::toResponse).toList();
+    }
+
+    /**
+     * Every product's contents, keyed by product code, in one read.
+     *
+     * <p>What the due list expands a register into. A schedule is written in antigens and the
+     * register records products, so somewhere the two have to meet; doing it here, once per due
+     * list, is the alternative to {@code requireProduct} per recorded dose — which for a cohort of
+     * a few thousand children is a few thousand round trips to answer one screen.
+     *
+     * <p>Retired products are included, deliberately. A product withdrawn last year still has doses
+     * recorded against it, and leaving it out would stop those doses counting toward anything —
+     * which would read as a district losing its coverage the day a brand changed.
+     */
+    @Transactional(readOnly = true)
+    public Map<String, Set<String>> antigensByProduct() {
+        Map<String, Set<String>> byProduct = new HashMap<>();
+        for (VaccineProduct product : products.findAll()) {
+            byProduct.put(product.getCode(), Set.copyOf(product.getAntigenCodes()));
+        }
+        return byProduct;
     }
 
     @Transactional(readOnly = true)

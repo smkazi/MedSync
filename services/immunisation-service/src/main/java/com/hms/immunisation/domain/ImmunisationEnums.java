@@ -74,4 +74,46 @@ public final class ImmunisationEnums {
     public enum Outcome {
         RECOVERED, RECOVERING, NOT_RECOVERED, DIED, UNKNOWN
     }
+
+    /**
+     * Where one antigen's next dose stands, as at a date.
+     *
+     * <p>Computed, never stored. A dose becomes overdue because a day passed — nothing happens,
+     * nobody writes a row, no event is published — so a column holding this would be a cache whose
+     * invalidation key is the wall clock, refreshed by a scheduler this platform deliberately does
+     * not have. {@code ImmunisationScheduleCalculator} derives it on every read instead, from a date
+     * of birth and the register.
+     *
+     * <p>Every value is reported rather than filtered out, which is {@code SlotCalculator}'s
+     * precedent: a screen that shows the whole picture and greys out what cannot be acted on beats a
+     * shorter list that silently omits it. {@code Evaluation.outstanding()} is what a calling list
+     * filters on.
+     *
+     * <p><strong>The two kinds of exemption behave differently here, and only one of them is
+     * {@code EXEMPT}.</strong> A {@code MEDICAL} contraindication means the dose must not be given,
+     * so it is not due and nobody should be telephoned. A {@code REFUSED} exemption does
+     * <em>not</em> suppress the row: a family who declined last year is exactly who a clinic may
+     * want to speak to again, and a platform that hid them would make one refusal permanent by
+     * accident. The row carries {@code refusalRecorded} instead, so whoever picks up the telephone
+     * knows what happened last time. The same behavioural split {@link ExemptionKind} makes for a
+     * coverage denominator, one screen along.
+     */
+    public enum DueStatus {
+        /** The date has not arrived yet. */
+        NOT_YET_DUE,
+        /** Due now, and still inside the grace period the schedule allows. */
+        DUE,
+        /** Past the due date and past the grace period. This is what a calling list is made of. */
+        OVERDUE,
+        /** Every dose of this antigen in this schedule has been given and counted. */
+        COMPLETE,
+        /** A live medical contraindication covers this antigen. Not due, and not a call to make. */
+        EXEMPT,
+        /**
+         * The window closed before it was given: a birth dose at eight months is not a birth dose.
+         * Reported rather than dropped, because "this child never had it and never will" is a fact
+         * somebody should be able to see rather than infer from an absence.
+         */
+        NO_LONGER_GIVEN
+    }
 }

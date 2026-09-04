@@ -236,6 +236,30 @@ public final class Roles {
     public static final String PATIENT_IDENTIFY = "hasAnyRole('ADMIN','CASHIER')";
 
     /**
+     * Who may list a birth cohort: the children born between two dates, with their birthdays.
+     *
+     * <p>The fourth narrowing of the {@link #CONTACT_READ} / {@link #ALLERGY_READ} /
+     * {@link #PATIENT_IDENTIFY} kind, and the only one that <strong>widens</strong> what an earlier
+     * one withheld — so it gets its own argument rather than reusing a role list. Read
+     * {@link #PATIENT_IDENTIFY} above: it names date of birth as precisely the field that endpoint
+     * exists not to hand over. Granting this through that constant would have widened by three
+     * words what a paragraph there spends narrowing.
+     *
+     * <p>A birthday is unavoidable here, because it is the whole question. "Which children are due
+     * their measles dose" is arithmetic on a date of birth, and an immunisation clinic calling a
+     * cohort in needs the birthday to know what is due and the name to know who to ask for. So the
+     * endpoint answers an id, an MRN, a name and a date of birth, and nothing else — no phone
+     * number, no address, no allergy marker, no chart.
+     *
+     * <p>The role list is the jobs that telephone a family: an administrator, a doctor, a nurse.
+     * Deliberately <em>not</em> everybody who holds {@link #IMMUNISATION_READ} — a pharmacist keeps
+     * the cold chain and reads the register, and does not run the calling list — and deliberately
+     * not the cashier who holds {@link #PATIENT_IDENTIFY}, who has no reason to ask which children
+     * were born in a fortnight.
+     */
+    public static final String PATIENT_COHORT_READ = "hasAnyRole('ADMIN','DOCTOR','NURSE')";
+
+    /**
      * Who may write a national health identifier onto a patient record.
      *
      * <p>The front desk and an administrator, and no clinician: linking an ABHA is a registration

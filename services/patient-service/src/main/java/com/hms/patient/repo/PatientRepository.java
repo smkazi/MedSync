@@ -86,6 +86,49 @@ public interface PatientRepository extends JpaRepository<Patient, UUID> {
     List<Patient> findPotentialDuplicates(@Param("lastName") String lastName,
                                           @Param("dateOfBirth") LocalDate dateOfBirth);
 
+    /**
+     * A birth cohort: everybody born between two dates, oldest first.
+     *
+     * <p>The first date-of-birth <em>range</em> query on the platform. Modelled on
+     * {@link #findPotentialDuplicates} — triple-quoted JPQL with a {@code @Param} on every argument
+     * — rather than on {@link com.hms.common.data.QueryPatterns}, which exists for strings and has
+     * nothing to say about dates. Inclusive at both ends, because a caller asking for the children
+     * born in a fortnight names the first day and the last one.
+     *
+     * <p><strong>Two predicates, and the second is not one {@code identify} applies.</strong>
+     * {@code PatientService.identify} filters {@code active} and leaves {@code deceased} alone,
+     * correctly: a deceased patient's record is still the right answer to "who is MRN-1234". This
+     * is not a lookup, it is a calling list, and the worst thing it can produce is a telephone call
+     * to the mother of a dead child. So both are filtered here, and the difference from the
+     * endpoint next door is deliberate rather than overlooked.
+     *
+     * <p>Served by {@code idx_patients_dob}, which is a plain btree on {@code date_of_birth}, so
+     * the two boolean predicates are a heap recheck rather than part of the index. Left measured
+     * rather than pre-optimised: a partial index would bake today's two predicates into DDL, and
+     * this query has one caller.
+     */
+    @Query("""
+            select p from Patient p
+            where p.dateOfBirth >= :bornFrom
+              and p.dateOfBirth <= :bornTo
+              and p.active = true
+              and p.deceased = false
+            order by p.dateOfBirth asc, p.lastName asc, p.firstName asc
+            """)
+    List<Patient> findBornBetween(@Param("bornFrom") LocalDate bornFrom,
+                                  @Param("bornTo") LocalDate bornTo,
+                                  Pageable pageable);
+
+    /** How many there are altogether, so a truncated cohort can say what it left out. */
+    @Query("""
+            select count(p) from Patient p
+            where p.dateOfBirth >= :bornFrom
+              and p.dateOfBirth <= :bornTo
+              and p.active = true
+              and p.deceased = false
+            """)
+    long countBornBetween(@Param("bornFrom") LocalDate bornFrom, @Param("bornTo") LocalDate bornTo);
+
     @Query(value = "select nextval('mrn_seq')", nativeQuery = true)
     long nextMrnSequence();
 }

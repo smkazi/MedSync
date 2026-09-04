@@ -3,6 +3,7 @@ package com.hms.immunisation.web;
 import com.hms.common.security.Roles;
 import com.hms.immunisation.domain.ImmunisationEnums.ImmunisationSource;
 import com.hms.immunisation.service.CatalogueService;
+import com.hms.immunisation.service.DueListService;
 import com.hms.immunisation.service.ImmunisationService;
 import com.hms.immunisation.service.VaccineStockService;
 import com.hms.immunisation.web.dto.ImmunisationDtos;
@@ -13,6 +14,7 @@ import jakarta.validation.constraints.Size;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -39,12 +41,14 @@ public class ImmunisationController {
     private final ImmunisationService register;
     private final CatalogueService catalogue;
     private final VaccineStockService stock;
+    private final DueListService dueList;
 
     public ImmunisationController(ImmunisationService register, CatalogueService catalogue,
-                                  VaccineStockService stock) {
+                                  VaccineStockService stock, DueListService dueList) {
         this.register = register;
         this.catalogue = catalogue;
         this.stock = stock;
+        this.dueList = dueList;
     }
 
     // ---- the catalogue -------------------------------------------------------
@@ -94,6 +98,47 @@ public class ImmunisationController {
     }
 
     public record SetActiveRequest(@NotNull Boolean active) {
+    }
+
+    // ---- the schedule --------------------------------------------------------
+
+    /**
+     * The published schedules, with their doses.
+     *
+     * <p>Readable by anybody signed in, like the catalogue above: a national immunisation schedule
+     * is a public health document with no patient anywhere in it, and a recording screen that could
+     * not read it could not tell a nurse what the child in front of them is due.
+     */
+    @GetMapping("/immunisations/schedules")
+    @PreAuthorize("isAuthenticated()")
+    public List<ImmunisationDtos.ScheduleResponse> schedules() {
+        return dueList.published();
+    }
+
+    /**
+     * What a birth cohort is due.
+     *
+     * <p>Asked for a birth range rather than for a patient, and there is no unbounded form of this
+     * query on purpose — see {@code DueListService} for why an "every overdue child" endpoint would
+     * have to ship every patient identifier on the platform to answer.
+     *
+     * <p>{@code IMMUNISATION_READ} says which jobs may look at immunisations, and — the one
+     * deliberate exception that constant's own javadoc names — the care-relationship narrowing does
+     * <em>not</em> apply per row here: a cohort narrowed to the caller's own patients is not a
+     * cohort. What gates it instead is patient-service's own {@code PATIENT_COHORT_READ}, enforced
+     * there against this caller's forwarded token, so a pharmacist holding {@code IMMUNISATION_READ}
+     * is refused a list of children and their birthdays.
+     */
+    @GetMapping("/immunisations/due")
+    @PreAuthorize(Roles.IMMUNISATION_READ)
+    public ImmunisationDtos.DueListResponse due(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate bornFrom,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate bornTo,
+            @RequestParam(required = false) String scheduleCode,
+            @RequestParam(required = false) Integer limit,
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate asAt) {
+        return dueList.due(bornFrom, bornTo, scheduleCode, limit, asAt);
     }
 
     // ---- stock ---------------------------------------------------------------

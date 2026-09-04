@@ -244,6 +244,152 @@ class PatientApiIntegrationTest {
                 .andExpect(status().isForbidden());
     }
 
+    // ---- the birth cohort ----------------------------------------------------
+
+    /**
+     * A birthday nothing else in the database shares.
+     *
+     * <p>Every cohort test asks for exactly one date, so its fixtures have to be the only patients
+     * born on it — the seeded demo patients and every other test's registrations live in the same
+     * database. Far enough back that no seed row reaches it.
+     */
+    private static LocalDate aBirthdayOfItsOwn() {
+        return LocalDate.of(1901, 1, 1)
+                .plusDays(Math.abs(UUID.randomUUID().getMostSignificantBits() % 9000));
+    }
+
+    private JsonNode registerBornOn(String surname, LocalDate bornOn) throws Exception {
+        Map<String, Object> body = new HashMap<>(validRegistration(surname));
+        body.put("dateOfBirth", bornOn.toString());
+        return objectMapper.readTree(
+                mockMvc.perform(registrationRequest(body, "RECEPTIONIST"))
+                        .andExpect(status().isCreated())
+                        .andReturn().getResponse().getContentAsString());
+    }
+
+    private MockHttpServletRequestBuilder cohortRequest(LocalDate bornOn) {
+        return get("/patients/cohort")
+                .param("bornFrom", bornOn.toString())
+                .param("bornTo", bornOn.toString());
+    }
+
+    private JsonNode cohort(LocalDate bornOn, String limit, String... roles) throws Exception {
+        MockHttpServletRequestBuilder request = cohortRequest(bornOn);
+        if (limit != null) {
+            request = request.param("limit", limit);
+        }
+        return objectMapper.readTree(mockMvc.perform(request.with(as(roles)))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString());
+    }
+
+    @Test
+    @DisplayName("a cohort answers a birthday and a name, and nothing else")
+    void cohortAnswersFourFields() throws Exception {
+        LocalDate bornOn = aBirthdayOfItsOwn();
+        JsonNode patient = registerBornOn(uniqueSurname(), bornOn);
+
+        JsonNode answer = cohort(bornOn, null, "NURSE");
+
+        assertThat(answer.get("members").size()).isEqualTo(1);
+        JsonNode member = answer.get("members").get(0);
+        assertThat(member.get("mrn").asString()).isEqualTo(patient.get("mrn").asString());
+        assertThat(member.get("dateOfBirth").asString()).isEqualTo(bornOn.toString());
+        // A birthday is what this endpoint exists to hand over, and everything else on a summary row
+        // is a field a calling list does not need. Exactly four properties, rather than a summary
+        // with the interesting ones removed.
+        assertThat(member.propertyNames())
+                .containsExactlyInAnyOrder("id", "mrn", "fullName", "dateOfBirth");
+    }
+
+    @Test
+    @DisplayName("a cohort is its own permission: a nurse may list one and a cashier may not")
+    void cohortHasItsOwnRole() throws Exception {
+        LocalDate bornOn = aBirthdayOfItsOwn();
+
+        mockMvc.perform(cohortRequest(bornOn).with(as("NURSE"))).andExpect(status().isOk());
+        mockMvc.perform(cohortRequest(bornOn).with(as("DOCTOR"))).andExpect(status().isOk());
+
+        // The cashier holds PATIENT_IDENTIFY, whose own javadoc names date of birth as the field
+        // that endpoint exists to withhold. Granting this through that constant would have widened
+        // by three words what a paragraph there spends narrowing, and this is the row that says so.
+        mockMvc.perform(cohortRequest(bornOn).with(as("CASHIER"))).andExpect(status().isForbidden());
+        // And the pharmacist, who holds IMMUNISATION_READ in the module that calls this: reading a
+        // register is not running the calling list.
+        mockMvc.perform(cohortRequest(bornOn).with(as("PHARMACIST")))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(cohortRequest(bornOn).with(as("LAB_TECH")))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("a deceased child and an archived record are not on the calling list")
+    void theDeceasedAndTheArchivedAreNotCalled() throws Exception {
+        LocalDate bornOn = aBirthdayOfItsOwn();
+        JsonNode living = registerBornOn(uniqueSurname(), bornOn);
+        UUID died = UUID.fromString(registerBornOn(uniqueSurname(), bornOn).get("id").asString());
+        UUID archived = UUID.fromString(registerBornOn(uniqueSurname(), bornOn).get("id").asString());
+
+        patients.findById(died).ifPresent(patient -> {
+            patient.setDeceased(true);
+            patients.save(patient);
+        });
+        patients.findById(archived).ifPresent(patient -> {
+            patient.setActive(false);
+            patients.save(patient);
+        });
+
+        JsonNode answer = cohort(bornOn, null, "NURSE");
+
+        // The predicate `identify` deliberately does not apply, and this is why: the worst thing a
+        // calling list can produce is a telephone call to the mother of a dead child.
+        assertThat(answer.get("members").size()).isEqualTo(1);
+        assertThat(answer.get("members").get(0).get("mrn").asString())
+                .isEqualTo(living.get("mrn").asString());
+        assertThat(answer.get("total").asLong()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("a capped cohort says so rather than quietly returning a shorter list")
+    void theCapAnnouncesItself() throws Exception {
+        LocalDate bornOn = aBirthdayOfItsOwn();
+        registerBornOn(uniqueSurname(), bornOn);
+        registerBornOn(uniqueSurname(), bornOn);
+
+        JsonNode answer = cohort(bornOn, "1", "NURSE");
+
+        // The README's findings record what a silently capped pick-list cost once. A calling list
+        // truncated in silence drops exactly the children nobody then telephones, so the cap is
+        // stated on the response.
+        assertThat(answer.get("members").size()).isEqualTo(1);
+        assertThat(answer.get("total").asLong()).isEqualTo(2);
+        assertThat(answer.get("truncated").asBoolean()).isTrue();
+        assertThat(answer.get("note").asString()).contains("narrow the birth range");
+    }
+
+    @Test
+    @DisplayName("a full cohort carries no truncation note at all")
+    void anUntruncatedCohortSaysNothing() throws Exception {
+        LocalDate bornOn = aBirthdayOfItsOwn();
+        registerBornOn(uniqueSurname(), bornOn);
+
+        JsonNode answer = cohort(bornOn, null, "NURSE");
+
+        assertThat(answer.get("truncated").asBoolean()).isFalse();
+        assertThat(answer.get("note").isNull()).isTrue();
+    }
+
+    @Test
+    @DisplayName("a birth range that runs backwards is refused, not answered empty")
+    void aBackwardsRangeIsRefused() throws Exception {
+        mockMvc.perform(get("/patients/cohort")
+                        .param("bornFrom", "2026-01-31")
+                        .param("bornTo", "2026-01-01")
+                        .with(as("NURSE")))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string(containsString("runs backwards")));
+    }
+
     @Test
     @DisplayName("MRNs are unique across registrations")
     void mrnsAreUnique() throws Exception {

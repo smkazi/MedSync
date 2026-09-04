@@ -1,5 +1,6 @@
 package com.hms.immunisation.web.dto;
 
+import com.hms.immunisation.domain.ImmunisationEnums.DueStatus;
 import com.hms.immunisation.domain.ImmunisationEnums.ExemptionKind;
 import com.hms.immunisation.domain.ImmunisationEnums.ImmunisationSource;
 import com.hms.immunisation.domain.ImmunisationEnums.Outcome;
@@ -153,6 +154,83 @@ public final class ImmunisationDtos {
     public record ExemptionResponse(UUID id, UUID patientId, String antigenCode, ExemptionKind kind,
                                     String reason, LocalDate expiresOn, boolean live,
                                     String recordedBy, Instant recordedAt) {
+    }
+
+    // ---- the schedule --------------------------------------------------------
+
+    /**
+     * A published schedule and its doses.
+     *
+     * <p>Readable by anybody signed in, like the catalogue: a national immunisation schedule is a
+     * public health document with no patient anywhere in it, and a recording screen that could not
+     * read it could not tell a nurse what the child in front of them is due.
+     */
+    public record ScheduleResponse(String code, String name, int appliesFromAgeDays,
+                                   int appliesToAgeDays, String source, boolean active,
+                                   List<ScheduleDoseResponse> doses) {
+
+        public ScheduleResponse {
+            doses = List.copyOf(doses);
+        }
+    }
+
+    /** One expected dose. Every number is days from date of birth; see the migration for why. */
+    public record ScheduleDoseResponse(String antigenCode, int doseNumber, String label,
+                                       int minAgeDays, int dueAgeDays, Integer minIntervalDays,
+                                       int graceDays, Integer maxAgeDays) {
+    }
+
+    // ---- the due list --------------------------------------------------------
+
+    /**
+     * What a birth cohort is due, as at a date.
+     *
+     * <p>{@code asAt} is on the response rather than implied, because every status in it is a
+     * statement about one day: the same cohort read tomorrow gives different answers, and a printed
+     * calling list with no date on it is a list nobody can check.
+     *
+     * @param truncated true when patient-service capped the cohort. Carried rather than dropped —
+     *                  the children past the cap are precisely the ones nobody telephones
+     */
+    public record DueListResponse(String scheduleCode, String scheduleName, LocalDate asAt,
+                                  LocalDate bornFrom, LocalDate bornTo, int cohortSize, long total,
+                                  boolean truncated, String note, List<PatientDueResponse> children) {
+
+        public DueListResponse {
+            children = List.copyOf(children);
+        }
+    }
+
+    /** One child's position against the schedule. */
+    public record PatientDueResponse(UUID patientId, String mrn, String fullName,
+                                     LocalDate dateOfBirth, int ageDays, boolean inSchedule,
+                                     String note, List<DueResponse> due,
+                                     List<UncountedDoseResponse> uncounted) {
+
+        public PatientDueResponse {
+            due = List.copyOf(due);
+            uncounted = List.copyOf(uncounted);
+        }
+    }
+
+    /**
+     * One antigen's next dose.
+     *
+     * <p>{@code because} is the sentence a clinician can check the row against, which is the rule
+     * {@code AllergyChecker} states as "matched on AMOXICILLIN is checkable and allergy detected is
+     * not". {@code refusalRecorded} is present rather than folded into the status: see
+     * {@code DueStatus} for why a refusal does not suppress a row.
+     */
+    public record DueResponse(String antigenCode, int doseNumber, String label, DueStatus status,
+                              LocalDate earliestOn, LocalDate dueOn, LocalDate overdueFrom,
+                              LocalDate windowClosesOn, int dosesCounted,
+                              boolean basedOnEstimatedDate, boolean refusalRecorded,
+                              String because) {
+    }
+
+    /** A recorded dose that does not advance a series, and the rule that says so. */
+    public record UncountedDoseResponse(UUID doseId, String antigenCode, String productCode,
+                                        LocalDate givenOn, int doseNumberAttempted, String because) {
     }
 
     // ---- the patient's register ---------------------------------------------

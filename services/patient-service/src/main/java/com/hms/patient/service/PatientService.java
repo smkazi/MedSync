@@ -15,10 +15,12 @@ import com.hms.patient.domain.Patient;
 import com.hms.patient.domain.PatientAllergy;
 import com.hms.patient.label.WristbandRenderer;
 import com.hms.patient.web.dto.PatientDtos;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -38,14 +40,17 @@ public class PatientService {
     private final EventPublisher events;
     private final AuditService audit;
     private final WristbandRenderer wristbands;
+    private final int cohortMaxRows;
 
     public PatientService(com.hms.patient.repo.PatientRepository patients, MrnGenerator mrnGenerator,
-                          EventPublisher events, AuditService audit, WristbandRenderer wristbands) {
+                          EventPublisher events, AuditService audit, WristbandRenderer wristbands,
+                          @Value("${hms.patient.cohort-max-rows:2000}") int cohortMaxRows) {
         this.patients = patients;
         this.mrnGenerator = mrnGenerator;
         this.events = events;
         this.audit = audit;
         this.wristbands = wristbands;
+        this.cohortMaxRows = cohortMaxRows;
     }
 
     /**
@@ -111,6 +116,55 @@ public class PatientService {
                 .map(patient -> new PatientDtos.PatientIdentity(patient.getId(), patient.getMrn(),
                         patient.fullName(), patient.isActive()))
                 .toList();
+    }
+
+    /**
+     * A birth cohort: the children born between two dates, with their birthdays.
+     *
+     * <p>Audited like {@link #identify}, and for the reason stated there: a narrow endpoint held by
+     * a role that cannot read the register is exactly the endpoint somebody will later ask "who has
+     * been reading these?" about. The detail is the range and the count — what was asked for, and
+     * how much came back — and never the children who matched. {@code entityId} is null because
+     * this answer is about a period rather than about a patient.
+     *
+     * <p><strong>Bounded, and it says so when the bound bites.</strong> A due list truncated in
+     * silence is the pick-list bug in the README's findings with a worse outcome: the children past
+     * the cap are the ones nobody telephones. So the response carries the cap, and the caller has
+     * to narrow the range rather than page — an immunisation clinic works a fortnight at a time,
+     * and a caller walking a decade in pages is doing something this endpoint does not exist for.
+     *
+     * @throws BadRequestException if the range runs backwards. A cohort from a later date to an
+     *                             earlier one is an empty list that looks like "no children born
+     *                             then", which is a wrong answer rather than a refusal.
+     */
+    @Transactional
+    public PatientDtos.Cohort cohort(LocalDate bornFrom, LocalDate bornTo, Integer limit) {
+        if (bornFrom == null || bornTo == null) {
+            throw new BadRequestException("A cohort needs both ends of a birth range: bornFrom and bornTo.");
+        }
+        if (bornTo.isBefore(bornFrom)) {
+            throw new BadRequestException(("A birth range from %s to %s runs backwards. Nobody was "
+                    + "born between those two dates in that order.").formatted(bornFrom, bornTo));
+        }
+        int rows = limit == null ? cohortMaxRows : Math.min(Math.max(limit, 1), cohortMaxRows);
+        List<Patient> found = patients.findBornBetween(bornFrom, bornTo, PageRequest.of(0, rows));
+        long total = patients.countBornBetween(bornFrom, bornTo);
+
+        audit.record("PATIENT_COHORT", "Patient", null,
+                "%d of %d born %s..%s, for %s".formatted(found.size(), total, bornFrom, bornTo,
+                        CurrentUser.usernameOrSystem()));
+
+        boolean truncated = total > found.size();
+        return new PatientDtos.Cohort(
+                found.stream()
+                        .map(patient -> new PatientDtos.CohortMember(patient.getId(), patient.getMrn(),
+                                patient.fullName(), patient.getDateOfBirth()))
+                        .toList(),
+                found.size(), total, truncated,
+                truncated
+                        ? ("%d of %d children came back; narrow the birth range for the rest, or "
+                                + "raise hms.patient.cohort-max-rows.").formatted(found.size(), total)
+                        : null);
     }
 
     /** Resolves the critical-allergy marker for a whole page in one query. */

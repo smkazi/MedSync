@@ -79,6 +79,14 @@ hms:
     # difference between two dates and has no zone in it, which is the whole reason
     # ImmunisationScheduleCalculator takes an `asAt` date rather than a clock.
     zone: ${HMS_IMMUNISATION_ZONE:${HMS_ZONE:Asia/Kolkata}}
+    # Which published schedule a due list is computed against when the caller does not say. A
+    # deployment running a different national schedule inserts its rows and points this at them,
+    # and changes no code.
+    #
+    # Note where the cohort cap is NOT: it is hms.patient.cohort-max-rows, in patient-service,
+    # because that is where the query runs and a bound stated anywhere else would be a bound the
+    # database does not have.
+    default-schedule: ${HMS_IMMUNISATION_SCHEDULE:UIP-2024}
 
 spring.security.oauth2.resourceserver.jwt.jwk-set-uri: ${HMS_JWKS_URI:http://localhost:8081/.well-known/jwks.json}
 

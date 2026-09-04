@@ -8,10 +8,12 @@ import com.hms.patient.service.PortalEnrolmentService;
 import com.hms.patient.web.dto.PatientDtos;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -72,6 +74,27 @@ public class PatientController {
     @PreAuthorize(Roles.PATIENT_IDENTIFY)
     public List<PatientDtos.PatientIdentity> identify(@RequestParam(required = false) String q) {
         return service.identify(q);
+    }
+
+    /**
+     * The children born between two dates: a birthday to compute against, and a name to ask for.
+     *
+     * <p>Above {@code /{id}} for the reason {@code /identify} is, and gated by its own role rather
+     * than that one's — {@code PATIENT_IDENTIFY}'s own javadoc names date of birth as the field it
+     * exists to withhold, and this endpoint's whole purpose is to hand it over. See
+     * {@link Roles#PATIENT_COHORT_READ} for the argument.
+     *
+     * <p>The caller is an immunisation clinic working out who to call in. It cannot page: the
+     * response says when it was truncated and the answer to that is a narrower range, because a
+     * caller walking a decade in pages is doing something this endpoint does not exist for.
+     */
+    @GetMapping("/cohort")
+    @PreAuthorize(Roles.PATIENT_COHORT_READ)
+    public PatientDtos.Cohort cohort(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate bornFrom,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate bornTo,
+            @RequestParam(required = false) Integer limit) {
+        return service.cohort(bornFrom, bornTo, limit);
     }
 
     @GetMapping("/{id}")

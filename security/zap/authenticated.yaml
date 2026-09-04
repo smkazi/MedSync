@@ -76,6 +76,21 @@ jobs:
         method: GET
       - url: "${ZAP_TARGET}/appointments/availability?clinicianId=00000000-0000-0000-0000-000000000000&date=2026-06-01"
         method: GET
+      # The birth cohort and the due list, seeded for the active scanner rather than only asserted.
+      # Both take dates straight off the query string into a query, and the cohort is the platform's
+      # first date-of-birth RANGE -- exactly the shape somebody tries an injection against. Both are
+      # 200 for a doctor, who legitimately runs a calling list; the refusals live in tests/api,
+      # where a request can carry a valid range. A row here with no parameters would be answered 400
+      # before @PreAuthorize was reached and would pass whatever the role rules said.
+      - url: "${ZAP_TARGET}/patients/cohort?bornFrom=2024-01-01&bornTo=2024-01-31"
+        method: GET
+        responseCode: 200
+      - url: "${ZAP_TARGET}/immunisations/due?bornFrom=2024-01-01&bornTo=2024-01-31"
+        method: GET
+        responseCode: 200
+      - url: "${ZAP_TARGET}/immunisations/schedules"
+        method: GET
+        responseCode: 200
       - url: "${ZAP_TARGET}/lab/orders?status=ORDERED&mrn=MRN-000001&page=0&size=20"
         method: GET
       - url: "${ZAP_TARGET}/lab/catalog"

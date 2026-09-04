@@ -144,6 +144,42 @@ public final class PatientDtos {
     public record PatientIdentity(UUID id, String mrn, String fullName, boolean active) {
     }
 
+    /**
+     * One child in a birth cohort: a birthday to compute against, and a name to ask for.
+     *
+     * <p>{@link PatientIdentity} plus the one field it exists to withhold, which is why the
+     * endpoint behind this has its own role rather than that one's — see
+     * {@code Roles.PATIENT_COHORT_READ}. Everything else on {@link PatientSummary} stays off it:
+     * an immunisation clinic working through a calling list needs to know who is due what and who
+     * to ask for, and a phone number, an address and a critical-allergy marker are none of that.
+     *
+     * <p>No {@code active} field, unlike {@link PatientIdentity}: this list is filtered to the
+     * living and the un-archived at the query, so a flag on the row would be a constant.
+     */
+    public record CohortMember(UUID id, String mrn, String fullName, LocalDate dateOfBirth) {
+    }
+
+    /**
+     * A birth cohort, and whether it is all of one.
+     *
+     * <p>A wrapper rather than a bare {@code List}, which is the one place this endpoint departs
+     * from {@code identify}'s shape, and the reason is a bug this repository has already recorded
+     * once: a pick-list silently capped at 100 rows (README, "findings"). A calling list truncated
+     * in silence is the same bug with a worse outcome, because the children it drops are the ones
+     * nobody rings. So the cap is stated on the response — the JSON form of the audit export's
+     * {@code TRUNCATED} sentinel.
+     *
+     * @param note present only when {@code truncated}, saying how many of how many came back and
+     *             what to do about it
+     */
+    public record Cohort(List<CohortMember> members, int returned, long total, boolean truncated,
+                         String note) {
+
+        public Cohort {
+            members = List.copyOf(members);
+        }
+    }
+
     /** The encrypted identifiers, released only to authorised roles and audited on every read. */
     public record PatientIdentifiers(UUID id, String mrn, String nationalId,
                                      String insurancePolicyNo, String abhaNumber,

@@ -10,8 +10,8 @@ haematology analyzer over its own wire protocol and released by a pathologist.
 
 > **Status:** the clinical core, the laboratory (including analyzer integration), the AI service
 > and the web UI are implemented and verified end to end against a real stack, and so are the
-> containerisation, TLS, security-testing and performance-testing layers. **1,340 tests pass** —
-> 762 Java unit and integration, 91 Python, 70 web unit, 274 black-box API and security abuse cases,
+> containerisation, TLS, security-testing and performance-testing layers. **1,407 tests pass** —
+> 828 Java unit and integration, 91 Python, 70 web unit, 275 black-box API and security abuse cases,
 > and 143 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
 > [Security](#security); what is left is in the [Roadmap](#roadmap).
 
@@ -56,11 +56,16 @@ haematology analyzer over its own wire protocol and released by a pathologist.
       SMTP · HTTP SMS      bed occupancy       prescribe·dispense  GST invoices
       no PHI outbound      transfers           eMAR, two scans     payments · claims
 
-      interop :8089        imaging :8090        ai :8000
-      consent artefacts    modality worklist    FastAPI
-      FHIR R4 bundles      DICOM header ingest  4 capabilities
-      ABDM · EHI export    reports · sign       (Claude + models)
-      HL7 v2 · MLLP        RIS, not a PACS
+      interop :8089        imaging :8090        immunisation :8091
+      consent artefacts    modality worklist    register · schedule
+      FHIR R4 bundles      DICOM header ingest  due list on read
+      ABDM · EHI export    reports · sign       lots · AEFI
+      HL7 v2 · MLLP        RIS, not a PACS      no zone in the maths
+
+      ai :8000
+      FastAPI
+      4 capabilities
+      (Claude + models)
 
       /portal/** — the patient's own door, split across the five services that own the
       data. Not a service: assembling one patient's view from a portal service would
@@ -68,11 +73,12 @@ haematology analyzer over its own wire protocol and released by a pathologist.
       from a signed claim on the token, never from the request.
              │                 │                    │                  │
              └── Kafka: hms.patient · hms.appointment · hms.lab · hms.admission ·
-                        hms.pharmacy · hms.billing · hms.imaging · hms.audit ──────┘
+                        hms.pharmacy · hms.billing · hms.imaging ·
+                        hms.immunisation · hms.audit ─────────────────────────────┘
                                      │
                     PostgreSQL 16 — one schema per service
     identity · patient · scheduling · laboratory · notification · admissions ·
-    pharmacy · billing · interop · imaging
+    pharmacy · billing · interop · imaging · immunisation
 ```
 
 **Authentication.** `identity-service` is the only holder of passwords and the only issuer of
@@ -114,6 +120,7 @@ order) are plain columns, not foreign keys, so a service survives another's outa
 │   ├── billing-service/         charge capture, GST invoicing, payments, payer claims
 │   ├── interop-service/         consent artefacts, FHIR R4 bundles, ABDM, EHI export, HL7 v2
 │   ├── imaging-service/         radiology: worklist, DICOM header ingest, reports (RIS)
+│   ├── immunisation-service/    register, schedule, due list on read, vaccine lots, AEFI
 │   │                            (`/portal/**` is split across the five services above, not a
 │   │                             service of its own — see "The patient portal")
 │   └── ai-service/              FastAPI: summarisation, no-show risk, triage, ICD-10
@@ -767,6 +774,91 @@ Publishes `imaging.report.signed` carrying the procedure code, so billing can pr
 correction S7 recorded for the laboratory, where a count could not be priced. notification-service's
 PHI rule applies unchanged: a message says a report is ready and links to the portal.
 
+### `immunisation-service` — schema `immunisation`
+The vaccination register: what a child has had, what they are due, the cold chain the vials came out
+of, and the reasons a dose will not be given.
+
+**The catalogue is keyed on the antigen *and* the product, joined.** This is the pharmacy's argument
+one department along — *"ingredients, not brand names, are what the checks run on"* — and the
+immunisation form of it is that a child vaccinated against measles is vaccinated against it under
+every trade name and inside every combination product it arrived in. Keying on the product alone
+fails the question a register exists to answer: a pentavalent vial delivers five antigens in one
+injection, so *"is this child covered for Hib?"* would need code that knows what PENTA contains.
+Keying on the antigen alone fails a recall, which names **a lot of a product** — and a register that
+cannot say which arm a recalled vial went into cannot do the one thing a register is for in a bad
+week. A contents list is written once and never edited: a child recorded as having had PENTA in 2024
+had whatever PENTA contained in 2024.
+
+**A lot number is evidence, so it exists exactly when there is evidence to have** —
+`CHECK ((source = 'ADMINISTERED_HERE') = (lot_id IS NOT NULL))`, a biconditional, and both halves
+are load-bearing. Without the forward half a remembered dose could carry an invented lot; without
+the reverse half a dose given here could be recorded with no lot at all and the recall query would
+miss it silently, which is the worse of the two.
+
+**Due and overdue are computed on every read, never stored.** The decisive argument is that *the
+state transition that matters has no event behind it*: a dose becomes overdue because a day passed —
+nothing happens, nobody writes a row, no message is published. A materialised due table would
+therefore be a cache whose invalidation key is the wall clock, and the only thing that could refresh
+it is a scheduler this platform deliberately does not have. The specific failure that argument is
+about: a stale row reading DUE for a child vaccinated yesterday is worse than no row, because
+somebody telephones a mother about an appointment she kept, and the register — which is right —
+never gets consulted. Two structural reasons besides: **date of birth lives in patient-service and
+is mutable**, so a copy would go stale exactly when a front desk corrected a mistyped birthday; and
+a database view is unavailable across the schema boundary the role split draws.
+
+**The schedule is rows, in days from date of birth.** Not weeks, not months: "10 weeks" is exactly
+70 days and "2 months" is 59, 60, 61 or 62 depending on which two months, so a schedule written in
+months is up to four days wrong for every child in the district at once, in the same direction,
+silently. An interval exists exactly when there is a previous dose to measure it from
+(`chk_interval_iff_not_first`), and the seeded `UIP-2024` schedule is 42 rows across 13 antigens
+with a per-dose grace period, because *how late is overdue* is a local judgement while the ages are
+not.
+
+**`ImmunisationScheduleCalculator` is pure, and no `ZoneId` appears in it or in its test.** It is
+the sixth calculator in the platform's chain — `SlotCalculator`, `News2Calculator`, `AllergyChecker`,
+`InteractionChecker`, `Pricer` — and it takes an `asAt` **date** rather than reading a clock. Two
+things fall out of that and both are the point: a schedule means the same thing in a UTC container
+and in an IST one, and the register can answer *"what was due on the first"*, which is what makes a
+coverage measure evaluable at a child's birthday rather than only today. An invalid dose — given
+before the minimum age, or sooner after the previous one than the interval allows — does not advance
+the series and is **not** dropped: it comes back in `uncounted` naming the rule and the date it was
+measured against, because a dose silently ignored is a dose the clinician gives again.
+
+**A due list is asked for a birth cohort, and there is no unbounded form of it.** This service holds
+no birthday, so an "every overdue child in the district" endpoint would have to ship every patient
+identifier on the platform across a service boundary to answer. An immunisation clinic works a
+fortnight of birthdays at a time; patient-service answers that from `idx_patients_dob`, and this
+service makes one `patient_id in (:ids)` read. The cost is stated rather than hidden, and the cap is
+announced on the response rather than quietly shortening the list.
+
+**The cohort endpoint has its own role, and that is the interesting part.**
+`GET /patients/cohort` answers an id, an MRN, a name and a date of birth — the fourth narrowing of
+the `CONTACT_READ` / `ALLERGY_READ` / `PATIENT_IDENTIFY` kind, and the only one that *widens* what an
+earlier one withheld: `PATIENT_IDENTIFY`'s own comment names date of birth as precisely the field it
+exists not to hand over. So `PATIENT_COHORT_READ` is argued separately and held by the jobs that
+telephone a family — an administrator, a doctor, a nurse — and not by the cashier who holds
+`PATIENT_IDENTIFY` or the pharmacist who holds `IMMUNISATION_READ`. It also filters `deceased`,
+which `identify` correctly does not: a deceased patient's record is still the right answer to a
+lookup, and the worst thing a calling list can produce is a telephone call to the mother of a dead
+child.
+
+**The due list is deliberately not narrowed per row** — a cohort narrowed to the caller's own
+patients is not a cohort — so what stands in for the care-relationship narrowing is the cohort
+permission one service along, enforced there against the caller's own forwarded token. Everything
+per-patient in this module *is* narrowed, including the write path: recording a dose asks
+scheduling-service first, which no other module does, because a register is a lifetime record and a
+dose recorded against the wrong patient is a dose that child will not be called for again.
+
+**Recording is idempotent by constraint, not by a check.** `uq_dose_per_day` — one product, one
+patient, one day — is the arbiter, and the service catches the violation rather than looking first:
+two clinics entering the same card both pass a check and only one can win an insert.
+
+`vvm_stage` records what the vial monitor read at receipt and **enforces nothing**, because this
+platform has no cold-chain telemetry: nothing here knows what a fridge did overnight, and the
+judgement is a person's, at the fridge, with the vial in their hand. Publishes
+`hms.immunisation.events` carrying the product code **and** the antigens it contains — a count
+cannot be priced, and only this service can expand a product into what it protects against.
+
 ### The patient portal — a prefix, not a service
 `/portal/**` is the patient's own door onto their record: their appointments and self-booking,
 released laboratory reports, the visits a clinician has signed, their prescriptions, their bills,
@@ -1171,6 +1263,8 @@ Every service is environment-driven. The ones you are most likely to set:
 | `HMS_RATE_LIMIT_ENABLED` | `true` | Turn off if something in front already limits |
 | `HMS_DB_POOL_MAX` / `HMS_DB_POOL_MIN` | `5` / `1` | Connections per service. Eleven services against one database is a budget rather than a per-service default — see the finding below on how that was learned |
 | `HMS_IMAGING_STORAGE_DIR` | **unset** | Where DICOM instances are written. Unset means the platform keeps the record of an examination and not the images, and the screens say so — see [imaging-service](#imaging-service--schema-imaging) |
+| `HMS_IMMUNISATION_SCHEDULE` | `UIP-2024` | Which published schedule a due list is computed against when the caller does not name one. A deployment running a different national schedule inserts its rows and points this at them |
+| `HMS_PATIENT_COHORT_MAX` | `2000` | The most children one birth-cohort read returns — roughly a fortnight of births in a large district. A cap rather than a page size, and it says so on the response when it bites: the answer is a narrower birth range |
 | `NEXT_PUBLIC_HMS_ZONE` | `Asia/Kolkata` | The zone the web app renders instants in *and* reads a typed wall-clock time in. `NEXT_PUBLIC_` because both directions run in the browser as well as on the server; set it to match `HMS_ZONE` |
 
 ### TLS
@@ -1457,12 +1551,12 @@ make help          # everything else
 Or directly:
 
 ```bash
-mvn -q verify                                     # 762 Java unit and integration tests
+mvn -q verify                                     # 828 Java unit and integration tests
 cd services/ai-service && uv run pytest -q        # 91 Python tests
 cd web && npm run lint && npm run typecheck       # web static checks
 cd web && npm test                                # 70 web unit tests
 cd web && npx playwright test                     # 143 browser tests, no skips
-mvn -Pautomation -pl tests/api verify             # 274 API and security abuse cases
+mvn -Pautomation -pl tests/api verify             # 275 API and security abuse cases
 ```
 
 | Layer | What runs | Where |
@@ -1645,6 +1739,26 @@ set; when it is not, the job writes an explicit notice and a run-summary entry s
 
 Worth writing down, because it is the argument for having built them:
 
+- **The due calculator counted a six-week dose as a birth dose, and three separate things had to be
+  read to see it.** Found by writing the API test rather than the unit test: a hepatitis B birth
+  dose has a minimum age of zero and a window that shuts at fourteen days, and the matcher checked
+  that window only on doses *not yet given* — so the first pentavalent dose at six weeks satisfied
+  the birth-dose row. The register then said a child had their birth dose, on a date that proves
+  they did not, and the schedule was one dose short for the rest of their childhood. A row is now
+  unavailable to a dose given after its window shut, which is checked twice with two different
+  dates: against each dose's date, and against the date being evaluated.
+- **Asking what a child was due nine months ago answered with the benefit of hindsight.** Found by
+  hand against the live stack, with the whole thing already green: `asAt` bounded the *statuses* and
+  not the register, so an evaluation of a past date counted doses given since — and the next dose's
+  interval was measured from one the child had not yet received. Left alone it would have surfaced
+  as the coverage measure in the next slice producing a rate that improved retroactively, which is
+  the kind of number nobody can audit. The register is now filtered to what it held on `asAt`.
+- **A series whose every window had shut also reported itself complete.** Found by reading the first
+  due list produced against a real cohort: a child past every rotavirus window got three
+  `NO_LONGER_GIVEN` rows and then a `COMPLETE` one reading *"0 of the 3 doses are recorded and
+  counted"* — a contradiction on one screen. Complete now means every dose was given, not that the
+  schedule ran out of rows to offer. All three of these were in code that the unit suite passed:
+  what caught them was running the thing and reading the output.
 - **Every error on an SVG endpoint was a 500 with an empty body — if the caller asked properly.**
   Found by hand against the live stack while adding the wristband, and not by any suite: an
   endpoint declaring `produces = "image/svg+xml"` has no acceptable representation for a
@@ -1981,6 +2095,19 @@ SAST/DAST tooling, and performance profiles. Dependency scanning covers Python (
   created nor deleted; a morphology cut-off's **note** is likewise read-only, since it appears
   verbatim on signed reports. There is no critical-value concept anywhere in the service — no
   column, field, flag or notification — so there is no critical-range editor to build yet.
+- **The immunisation register has no screens yet, and the schedule has no write endpoint.** The
+  register, the schedule, the cohort due list and the cold chain are all built and reachable through
+  the API; nothing in the web app leads to them, so there is no recording form, no patient register
+  view and no calling list. Two smaller gaps in the same module, each named rather than half-built:
+  a schedule is edited by migration — the ages, intervals and grace periods are rows, and the write
+  endpoint an administrator would use to retune them is not there, so the screen would front a form
+  that 405s — and there is no per-patient due endpoint, only the cohort one, which answers for a
+  single child when both ends of the range are their birthday. **Vitamin A is deliberately absent
+  from the seeded schedule**: it is in the same national programme and it is not a vaccine, so nine
+  six-monthly doses of a supplement have no antigen to be covered for, and including it would make
+  every coverage question answer about something that is not immunity. And **cold-chain enforcement
+  is not built**: `vvm_stage` records what the vial monitor read at receipt and nothing acts on it,
+  because this platform has no fridge telemetry — see [immunisation-service](#immunisation-service--schema-immunisation).
 - **There is no PACS, no viewer, and no DICOM network layer.** Radiology itself is built — the
   request, the worklist, the study register, the report — and the line this stops at is the one the
   earlier version of this entry drew: DICOM is a storage protocol, a network protocol *and* a
@@ -2070,8 +2197,11 @@ SAST/DAST tooling, and performance profiles. Dependency scanning covers Python (
 - **Four of the seven information types have no bundle.** Discharge summary, immunisation record,
   health document and wellness record are in the consent vocabulary because ABDM's is, and a
   consent may legitimately cover them; sharing one is refused with a message saying the platform
-  cannot build it. That is better than an empty document, and it is a gap: the platform records no
-  immunisations, holds no documents, and has no portal for a patient to record wellness data in.
+  cannot build it. That is better than an empty document, and it is a gap — a smaller one than it
+  was. The platform now **does** record immunisations: there is a register, a schedule and a due
+  list, and what is missing on that information type is only the FHIR `Immunization` resource
+  builder to turn them into a bundle. It still holds no documents and has no portal for a patient to
+  record wellness data in.
 - **Matching a patient by ABHA number.** Stored encrypted with a randomised IV, so it cannot be
   looked up or compared — ABDM linking will need a deterministic hash column, and the migration
   says so rather than pretending a UNIQUE constraint would help.

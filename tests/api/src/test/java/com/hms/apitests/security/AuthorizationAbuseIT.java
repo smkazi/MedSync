@@ -295,6 +295,52 @@ class AuthorizationAbuseIT extends RequiresRunningStack {
                 .body("find { it.memberRole == 'BREAK_GLASS' }.reason", containsString("on call"));
     }
 
+    @Test
+    @DisplayName("a birth cohort is its own permission, and the due list rests on it")
+    void theBirthCohortIsItsOwnPermission() {
+        // Not in the table above, and for the reason the audit export below is not either: the
+        // harness there sends no query parameters, and both of these endpoints require a birth
+        // range -- so every row would answer 400 before @PreAuthorize was reached, and the harness
+        // counts 400 as a pass. A refusal has to be the role's to mean anything.
+        String bornFrom = "2024-01-01";
+        String bornTo = "2024-01-31";
+
+        // The nurse who runs the calling list, in both places.
+        given().spec(Api.as(Api.NURSE))
+                .queryParam("bornFrom", bornFrom).queryParam("bornTo", bornTo)
+                .when().get("/patients/cohort")
+                .then().statusCode(200);
+        given().spec(Api.as(Api.NURSE))
+                .queryParam("bornFrom", bornFrom).queryParam("bornTo", bornTo)
+                .when().get("/immunisations/due")
+                .then().statusCode(200);
+
+        // And the roles that must not list children with their birthdays. The cashier holds
+        // PATIENT_IDENTIFY, whose own javadoc names date of birth as the field that endpoint exists
+        // to withhold; the bench and the front desk have no calling list at all.
+        for (String username : List.of(Api.CASHIER, Api.LAB_TECH, Api.RECEPTIONIST)) {
+            given().spec(Api.as(username))
+                    .queryParam("bornFrom", bornFrom).queryParam("bornTo", bornTo)
+                    .when().get("/patients/cohort")
+                    .then().statusCode(403);
+        }
+
+        // The pharmacist is the case worth having. They hold IMMUNISATION_READ, so the due list's
+        // own gate lets them in, and the cohort gate one service along refuses them. That is the
+        // whole design: the due list is deliberately not narrowed per row -- a cohort narrowed to
+        // the caller's own patients is not a cohort -- so patient-service's permission is what
+        // stands in for the narrowing, and this is the row that goes red the day somebody widens it
+        // because a screen needed a name.
+        given().spec(Api.as(Api.PHARMACIST))
+                .queryParam("bornFrom", bornFrom).queryParam("bornTo", bornTo)
+                .when().get("/immunisations/due")
+                .then().statusCode(403);
+        given().spec(Api.as(Api.RECEPTIONIST))
+                .queryParam("bornFrom", bornFrom).queryParam("bornTo", bornTo)
+                .when().get("/immunisations/due")
+                .then().statusCode(403);
+    }
+
     @ParameterizedTest(name = "{0} must not download the audit trail")
     @org.junit.jupiter.params.provider.ValueSource(strings = {"dr.rao", "nurse.iqbal", "reception"})
     void theAuditExportIsAdminOnly(String username) {
