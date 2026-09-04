@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -86,8 +87,8 @@ func pgTool(name string) string {
 // initCluster runs initdb, unless the cluster is already there.
 //
 // Unlike on Linux there is no root problem here — Windows has no equivalent refusal — but there is
-// a different one: initdb will not write into a directory that already exists and is not empty, so
-// a half-created cluster from an interrupted run has to be cleared rather than reused.
+// a different one, and it took a Windows runner to find it: initdb must be the thing that creates
+// the data directory. See the comment on the RemoveAll below.
 func (s *state) initCluster() bool {
 	initdb := pgTool("initdb")
 	if initdb == "" {
@@ -97,9 +98,17 @@ func (s *state) initCluster() bool {
 		return true
 	}
 	step("Creating a private PostgreSQL cluster in %s", s.DBDir)
+	// The parent, and deliberately NOT the data directory itself.
+	//
+	// This is the bug a Windows runner found and a Linux one never could. Handed a directory that
+	// already exists, initdb tries to tighten its permissions rather than create it with the right
+	// ones — and on Windows that fails outright: "could not change permissions of directory ...:
+	// Permission denied", on a directory this process had just made and owned. Letting initdb
+	// create it is also what its own documentation describes, so this is the ordinary path rather
+	// than a workaround.
 	_ = os.RemoveAll(s.DBDir)
-	if err := os.MkdirAll(s.DBDir, 0o755); err != nil {
-		warn("could not create %s: %v", s.DBDir, err)
+	if err := os.MkdirAll(filepath.Dir(s.DBDir), 0o755); err != nil {
+		warn("could not create %s: %v", filepath.Dir(s.DBDir), err)
 		return false
 	}
 	// trust authentication, and only because of what this cluster is: it listens on 127.0.0.1
@@ -158,9 +167,19 @@ func (s *state) startDockerDB() bool {
 			"-p", fmt.Sprintf("127.0.0.1:%d:5432", s.DBPort),
 			"-e", "POSTGRES_USER=hms", "-e", "POSTGRES_PASSWORD=hms", "-e", "POSTGRES_DB=hms",
 			"postgres:16")
-		run.Stdout, run.Stderr = os.Stdout, os.Stderr
-		if err := run.Run(); err != nil {
+		out, err := run.CombinedOutput()
+		if err != nil {
+			os.Stderr.Write(out)
 			warn("docker run failed: %v", err)
+			// A Docker Desktop switched to Windows containers answers "no matching manifest for
+			// windows(...)/amd64", which reads like a broken image rather than a mode the user can
+			// change in one click. Naming the actual problem is the difference between a dead end
+			// and a fix — and every other image this platform would want is Linux too.
+			if strings.Contains(string(out), "no matching manifest") {
+				dim("this Docker engine is in Windows-container mode, and postgres:16 is a Linux image.")
+				dim("right-click the Docker tray icon and choose \"Switch to Linux containers\",")
+				dim("or install PostgreSQL, or set HMS_DB_URL.")
+			}
 			return false
 		}
 	}
