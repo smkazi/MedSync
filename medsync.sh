@@ -146,7 +146,7 @@ check_one() {
 cmd_doctor() {
   step "Prerequisites"
   check_one java 21    openjdk@21   required "Java"       || true
-  check_one mvn  3.9   maven        required "Maven"      || true
+  check_one mvn  3.9   maven        optional "Maven (the bundled wrapper covers it)" || true
   check_one node 22    node         required "Node"       || true
   check_one git  2.0   git          required "git"        || true
   check_one curl ""    curl         required "curl"       || true
@@ -525,10 +525,28 @@ export_stack_env() {
 }
 
 # ---- build -----------------------------------------------------------------------------------
+# Which Maven to run, and it is not necessarily an installed one.
+#
+# The repository ships a Maven wrapper, so a machine with no Maven builds this perfectly well -
+# `./mvnw` fetches the exact version the project pins into the user's own ~/.m2 and runs it. That is
+# why Maven moved out of the required prerequisites: a real Windows install stopped for want of a
+# Maven the project does not require, which is a refusal that is correct by its own rules and wrong
+# about the world. An installed Maven still wins when there is one, because it needs no download.
+maven_cmd() {
+  if have mvn && version_at_least "$(version_of mvn)" 3.9; then
+    echo "mvn"
+  elif [ -x "$SRC/mvnw" ]; then
+    echo "$SRC/mvnw"
+  else
+    echo "mvn"
+  fi
+}
+
 build_java() {
   step "Building the Java modules"
+  dim "using $(maven_cmd)"
   dim "first run downloads the Maven dependencies - several minutes"
-  ( cd "$SRC" && mvn -q -B package -DskipTests ) || die "the Java build failed"
+  ( cd "$SRC" && "$(maven_cmd)" -q -B package -DskipTests ) || die "the Java build failed"
   ok "$(ls "$SRC"/services/*/target/*.jar 2>/dev/null | grep -vc sources || echo 0) service jars built"
 }
 
@@ -765,7 +783,7 @@ cmd_up() {
   step "Checking prerequisites"
   MISSING_REQUIRED=0
   check_one java 21  openjdk@21 required "Java"  || true
-  check_one mvn  3.9 maven      required "Maven" || true
+  check_one mvn  3.9 maven      optional "Maven (the bundled wrapper covers it)" || true
   check_one node 22  node       required "Node"  || true
   check_one git  2.0 git        required "git"   || true
   check_one curl ""  curl       required "curl"  || true
@@ -917,7 +935,7 @@ cmd_test() {
       "$psql_bin" "postgresql://hms@127.0.0.1:$DB_PORT/postgres" -q \
         -c 'create database hms_test' >/dev/null 2>&1 || true
     fi
-    ( cd "$SRC" && mvn -B verify ) || die "the Java suites failed"
+    ( cd "$SRC" && "$(maven_cmd)" -B verify ) || die "the Java suites failed"
     ( cd "$SRC" && scripts/local.sh start ) || die "the stack did not come back up after the rebuild"
   fi
 
@@ -928,7 +946,7 @@ cmd_test() {
 
   if [ "$run_api" = 1 ]; then
     step "Cross-service API journeys and the authorization abuse suite"
-    ( cd "$SRC" && mvn -B -Pautomation -pl tests/api verify ) || die "the API suites failed"
+    ( cd "$SRC" && "$(maven_cmd)" -B -Pautomation -pl tests/api verify ) || die "the API suites failed"
   fi
 
   if [ "$run_browser" = 1 ]; then

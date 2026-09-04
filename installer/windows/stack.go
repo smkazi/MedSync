@@ -26,18 +26,33 @@ import (
 // Windows resolves executables through PATHEXT rather than through a shebang.
 var onWindows = runtime.GOOS == "windows"
 
-func mavenCmd() string {
+// mavenCmd picks how to run Maven, and reports which it picked.
+//
+// A Maven on PATH first, because it needs no download. The wrapper the repository ships second,
+// which is why an installed Maven is not a prerequisite at all: mvnw.cmd fetches the exact Maven
+// the project pins into the user's own ~/.m2 and runs it. Nothing here can reach the third case —
+// there is no third case — but it returns a plain "mvn" so the failure, if the wrapper is ever
+// removed, is Maven's own "not recognised" rather than something obscure from this function.
+func mavenCmd(src string) (string, string) {
+	t := &tool{command: "mvn", minMaj: 3}
 	if onWindows {
 		if p, err := exec.LookPath("mvn.cmd"); err == nil {
-			return p
+			return p, "Maven on PATH"
 		}
 	}
-	t := &tool{command: "mvn"}
 	t.look()
-	if t.found {
-		return t.path
+	if t.satisfied() {
+		return t.path, "Maven " + t.version + " on PATH"
 	}
-	return "mvn"
+
+	wrapper := filepath.Join(src, "mvnw")
+	if onWindows {
+		wrapper = filepath.Join(src, "mvnw.cmd")
+	}
+	if _, err := os.Stat(wrapper); err == nil {
+		return wrapper, "the bundled Maven wrapper (no Maven installed)"
+	}
+	return "mvn", "Maven on PATH"
 }
 
 func nodeTool(name string) string {
@@ -84,8 +99,10 @@ func runQuiet(dir string, env []string, logName string, name string, args ...str
 
 func (s *state) build(src string) {
 	step("Building the Java modules")
+	mvn, how := mavenCmd(src)
+	dim("using %s", how)
 	dim("the first run downloads the Maven dependencies — expect several minutes")
-	if err := run(src, s.serviceEnv(), mavenCmd(), "-B", "-ntp", "-q", "package", "-DskipTests"); err != nil {
+	if err := run(src, s.serviceEnv(), mvn, "-B", "-ntp", "-q", "package", "-DskipTests"); err != nil {
 		fail("the Java build failed: %v", err)
 	}
 	jars, _ := filepath.Glob(filepath.Join(src, "services", "*", "target", "*.jar"))

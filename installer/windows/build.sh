@@ -41,5 +41,10 @@ fi
 # the cross-compile is free.
 ( cd "$HERE" && GOOS=windows GOARCH=arm64 CGO_ENABLED=0 go build $BUILDFLAGS -ldflags "$LDFLAGS" -o "$OUT/MedSync-Setup-arm64.exe" . )
 
-ls -la "$OUT"/MedSync-Setup*.exe
+# The README travels with the executables, because "in the same folder as the .exe" is where
+# somebody who has just unzipped this will look for it, and a README in the repository is a README
+# they never see.
+cp "$HERE/README.txt" "$OUT/README.txt"
+
+ls -la "$OUT"/MedSync-Setup*.exe "$OUT/README.txt"
 command -v file >/dev/null && file "$OUT"/MedSync-Setup*.exe

@@ -1375,7 +1375,7 @@ automated, which is why it is the one recommended above.
 | | Version | Note |
 | --- | --- | --- |
 | Java | 21+ | |
-| Maven | 3.9+ | |
+| Maven | — | **not needed.** `./mvnw` (`mvnw.cmd` on Windows) fetches the pinned 3.9.11 itself. An installed Maven is used when there is one. |
 | PostgreSQL | 16 | one instance; the services create their own schemas |
 | Python | 3.11+ | with [`uv`](https://docs.astral.sh/uv/) for `ai-service` |
 | Node | 22+ | for the web app |
@@ -1402,7 +1402,7 @@ rather than a prerequisite.
 ### 2. Build and start the Java services
 
 ```bash
-mvn -q package -DskipTests
+./mvnw -q package -DskipTests    # or `mvn` if you have one; the wrapper needs no Maven installed
 scripts/local.sh start          # identity, patient, scheduling, laboratory, notification, admissions, pharmacy, billing, interop, gateway
 scripts/local.sh status
 scripts/local.sh logs identity-service
@@ -2032,6 +2032,25 @@ Worth writing down, because it is the argument for having built them:
   escape, so a Windows path doubled "to be safe" matches nothing; and Actions appends
   `exit $LASTEXITCODE` to a `run:` block, so a step whose last command was *meant* to fail fails
   itself, silently. The installer was right in all three.
+- **The installer demanded a prerequisite the project does not have, and refused a machine that
+  could have run it.** Found by somebody running the .exe on their own Windows laptop, not by any
+  suite here. `winget install --id Apache.Maven` answered *"No package found matching input
+  criteria"*, so the install stopped — with Java 21, Node 24 and PostgreSQL 16 all present and
+  correct. Two things were wrong. The package id is not reliably in winget's sources, and shipping
+  one that may not exist is worse than shipping none. And Maven should never have been on the list:
+  the repository now carries a Maven wrapper, so `mvnw.cmd` fetches the exact version the build
+  pins and no Maven need be installed at all. Verified by hiding `mvn` from `PATH` entirely and
+  running a full install — the wrapper downloaded 3.9.11, built twelve service jars and the web
+  app, and every smoke check passed.
+- **The next thing that would have broken on that same laptop: the database ladder assumed
+  credentials on somebody else's server.** Found by reading their screenshot rather than by running
+  anything. PostgreSQL 16 was installed, so a server was listening on 5432, and the ladder took
+  that rung on "something answered" — then `create database` would have failed on authentication,
+  because a normal PostgreSQL install has a `postgres` superuser with a password its owner chose
+  and not the `hms`/`hms` this platform defaults to. The rung now requires an actual successful
+  login before it is taken, and falls through to a private cluster when it cannot get one. That is
+  also the more polite behaviour: writing eleven schemas into a developer's own database because it
+  happened to be running is not something an installer should do by accident.
 - **A stock screen that could list every lot could not exist, and building it is what said so.**
   The vaccine-stock page was written to show the whole fridge; `GET /vaccines/lots` requires a
   `productCode` and there is no all-lots read. Two ways out — loop the catalogue client-side, which

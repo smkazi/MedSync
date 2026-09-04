@@ -158,8 +158,13 @@ type environment struct {
 
 func inspect() *environment {
 	e := &environment{
-		java:  &tool{name: "Java (JDK 21+)", command: "java", minMaj: 21, winget: "EclipseAdoptium.Temurin.21.JDK", url: "https://adoptium.net/temurin/releases/?version=21"},
-		maven: &tool{name: "Maven 3.9+", command: "mvn", minMaj: 3, winget: "Apache.Maven", url: "https://maven.apache.org/download.cgi"},
+		java: &tool{name: "Java (JDK 21+)", command: "java", minMaj: 21, winget: "EclipseAdoptium.Temurin.21.JDK", url: "https://adoptium.net/temurin/releases/?version=21"},
+		// No winget id, deliberately. `winget install --id Apache.Maven` answered "No package found
+		// matching input criteria" on a real machine, which stopped an install that had otherwise
+		// succeeded — and shipping a package id that may or may not exist in somebody's winget
+		// source is worse than shipping none. Maven is not needed anyway: the repository carries a
+		// Maven wrapper, so `mvnw.cmd` builds the project with no Maven installed at all.
+		maven: &tool{name: "Maven 3.9+", command: "mvn", minMaj: 3, winget: "", url: "https://maven.apache.org/download.cgi"},
 		node:  &tool{name: "Node 22+", command: "node", minMaj: 22, winget: "OpenJS.NodeJS.LTS", url: "https://nodejs.org/en/download"},
 		psql:  &tool{name: "PostgreSQL 14+", command: "psql", minMaj: 14, winget: "PostgreSQL.PostgreSQL.16", url: "https://www.postgresql.org/download/windows/"},
 		docker: &tool{name: "Docker Desktop", command: "docker", minMaj: 0,
@@ -189,7 +194,10 @@ func inspect() *environment {
 // report prints the table and returns the tools that are missing or too old.
 func (e *environment) report() []*tool {
 	var short []*tool
-	for _, t := range []*tool{e.java, e.maven, e.node, e.psql} {
+	// Maven is not in this loop, and that is the whole point of it not being here: the repository
+	// ships a Maven wrapper, so a machine with no Maven builds the project perfectly well. It is
+	// reported below as information rather than as something to go and install.
+	for _, t := range []*tool{e.java, e.node, e.psql} {
 		switch {
 		case !t.found:
 			warn("%-16s not found", t.name)
@@ -202,6 +210,14 @@ func (e *environment) report() []*tool {
 		}
 	}
 	switch {
+	case e.maven.satisfied():
+		ok("%-16s %s", e.maven.name, e.maven.version)
+	case e.maven.found:
+		dim("%-16s %s — the bundled Maven wrapper will be used instead", e.maven.name, e.maven.version)
+	default:
+		dim("%-16s not installed — the bundled Maven wrapper will be used", e.maven.name)
+	}
+	switch {
 	case e.dockerRunning:
 		ok("%-16s %s, engine running", e.docker.name, e.docker.version)
 	case e.docker.found:
@@ -212,11 +228,15 @@ func (e *environment) report() []*tool {
 	return short
 }
 
-// nativePathReady is true when the platform can be built and run without Docker. PostgreSQL is not
-// in the list: the database ladder in db.go can reach one four different ways, and only one of them
-// needs psql on this machine.
+// nativePathReady is true when the platform can be built and run without Docker.
+//
+// Two things are deliberately absent. PostgreSQL, because the ladder in db.go can reach one four
+// different ways and only one of them needs psql on this machine. And Maven, because the repository
+// ships a wrapper — a real install stopped here for want of a Maven that the project does not
+// actually require, which is the worst kind of refusal: correct by its own rules and wrong about
+// the world.
 func (e *environment) nativePathReady() bool {
-	return e.java.satisfied() && e.maven.satisfied() && e.node.satisfied()
+	return e.java.satisfied() && e.node.satisfied()
 }
 
 func hasWinget() bool {

@@ -80,6 +80,7 @@ jobs:
           path: |
             dist/MedSync-Setup.exe
             dist/MedSync-Setup-arm64.exe
+            dist/README.txt
           if-no-files-found: error
           retention-days: 30
 

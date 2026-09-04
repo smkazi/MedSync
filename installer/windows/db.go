@@ -51,11 +51,28 @@ func (s *state) database() {
 		}
 	}
 
+	// An existing server is used only if we can actually sign in to it, and that condition is not
+	// pedantry — it is the next thing that would have broken on a real machine. Somebody who
+	// installed PostgreSQL the normal way has a `postgres` superuser with a password they chose,
+	// not the `hms`/`hms` this platform defaults to, so taking the rung on "something is listening"
+	// alone gets as far as `create database` and then fails on authentication, after the ladder has
+	// already committed to it.
+	//
+	// Failing the probe is also the more polite outcome. Writing eleven schemas into a developer's
+	// own PostgreSQL without being asked is not something an installer should do by accident; if it
+	// cannot authenticate, it stands up its own cluster instead and says so.
 	if portBusy(5432) {
-		s.DBMode, s.DBPort = "existing", 5432
-		ok("Database: the PostgreSQL already running on 5432")
-		s.save()
-		return
+		if s.canSignIn(5432) {
+			s.DBMode, s.DBPort = "existing", 5432
+			ok("Database: the PostgreSQL already running on 5432")
+			s.save()
+			return
+		}
+		warn("something is listening on 5432 but would not accept the %s login", envOr("HMS_DB_USER", "hms"))
+		dim("leaving it alone and creating a private cluster instead")
+		dim("to use it, create the role and pass its credentials:")
+		dim("  set HMS_DB_URL=jdbc:postgresql://127.0.0.1:5432/hms")
+		dim("  set HMS_DB_USER=...   &   set HMS_DB_PASSWORD=...")
 	}
 	if s.DBDir == "" {
 		s.DBDir = filepath.Join(homeDir(), "pgdata")
@@ -73,6 +90,29 @@ func (s *state) database() {
 		"Install PostgreSQL 16 (winget install PostgreSQL.PostgreSQL.16), or start Docker\n" +
 		"Desktop, or point this at a server you already have:\n\n" +
 		"    set HMS_DB_URL=jdbc:postgresql://host:5432/hms")
+}
+
+// canSignIn asks the question the ladder used to assume the answer to: can this platform's
+// credentials actually open a session on that port?
+//
+// Without psql there is no way to find out, and the honest answer to "I cannot check" is no: the
+// alternative is committing to a server on a guess and failing several steps later, where the error
+// names a database rather than a decision.
+func (s *state) canSignIn(port int) bool {
+	psql := pgTool("psql")
+	if psql == "" {
+		return false
+	}
+	user := envOr("HMS_DB_USER", "hms")
+	pass := envOr("HMS_DB_PASSWORD", "hms")
+	cmd := exec.Command(psql,
+		fmt.Sprintf("postgresql://%s:%s@127.0.0.1:%d/postgres", user, pass, port),
+		"-tAc", "select 1")
+	// PGCONNECT_TIMEOUT so a server that accepts the socket and then stalls cannot hang the
+	// installer on its very first check.
+	cmd.Env = append(os.Environ(), "PGCONNECT_TIMEOUT=5")
+	out, err := cmd.CombinedOutput()
+	return err == nil && strings.Contains(string(out), "1")
 }
 
 func pgTool(name string) string {

@@ -94,12 +94,41 @@ func offerInstall(missing []*tool) bool {
 			// present" as well as for real failures, and the detection pass that follows is a
 			// better judge of whether the tool is now usable than this exit code is.
 			warn("winget reported a problem installing %s: %v", t.name, err)
+			// Decoded, because "exit status 0x8a150014" is what a real user saw and it told them
+			// nothing at all. The exit code is the only thing winget leaves behind when its own
+			// message has already scrolled past, so it is worth translating the handful that
+			// actually occur — and every one of them ends the same way: here is the vendor's page.
+			if hint := wingetExitHint(cmd.ProcessState.ExitCode()); hint != "" {
+				dim("%s", hint)
+			}
+			dim("install it by hand instead: %s", t.url)
 		} else {
 			ok("%s installed", t.name)
 		}
 		installed = true
 	}
 	return installed
+}
+
+// wingetExitHint turns winget's exit code into a sentence. Only the codes that come up in practice
+// are here; anything else falls through to the vendor link the caller prints anyway.
+//
+// Go reports the code as a signed int, so the 0x8a15xxxx values arrive negative — hence the
+// unsigned cast rather than a comparison against the literal you would read in winget's docs.
+func wingetExitHint(code int) string {
+	switch uint32(code) {
+	case 0x8a150014:
+		return "winget has no such package in its sources - the id is wrong, or `winget source update` is needed"
+	case 0x8a15002b:
+		return "no installer in that package applies to this machine's architecture"
+	case 0x8a150011:
+		return "winget needs to be run from a session that can elevate, and this one could not"
+	case 0x8a15010d:
+		return "the package is already installed at this version or newer"
+	case 0x8a150044:
+		return "the download failed - check the network and try again"
+	}
+	return ""
 }
 
 // refreshPath re-reads PATH the way a newly opened console would.
