@@ -1424,3 +1424,298 @@ export type ImagingProcedure = {
   minutes: number;
   contrast: boolean;
 };
+
+// ---- the immunisation register -------------------------------------------
+
+/**
+ * Where a dose came from, which is three values rather than a boolean.
+ *
+ * <p>"I am holding the card" and "his mother says he had it" are different grades of evidence, and
+ * a measure may legitimately count one and not the other. Only `ADMINISTERED_HERE` carries a lot
+ * number, and the database enforces that as a biconditional in both directions.
+ */
+export type ImmunisationSource =
+  | "ADMINISTERED_HERE"
+  | "HISTORICAL_DOCUMENTED"
+  | "HISTORICAL_PARENT_REPORTED";
+
+export type VaccineRoute = "INTRAMUSCULAR" | "SUBCUTANEOUS" | "ORAL" | "INTRADERMAL" | "INTRANASAL";
+
+export type AefiSeriousness = "NON_SERIOUS" | "SERIOUS";
+
+export type AefiOutcome =
+  | "RECOVERED"
+  | "RECOVERING"
+  | "NOT_RECOVERED"
+  | "RECOVERED_WITH_SEQUELAE"
+  | "DIED"
+  | "UNKNOWN";
+
+export type ExemptionKind = "MEDICAL" | "REFUSED";
+
+/**
+ * How a child stands against one antigen's next dose.
+ *
+ * <p>`NO_LONGER_GIVEN` is a real state and not an error: every row of a series can have its window
+ * shut, and a schedule that said COMPLETE for a child who received nothing would be a
+ * contradiction on one screen.
+ */
+export type DueStatus =
+  | "NOT_YET_DUE"
+  | "DUE"
+  | "OVERDUE"
+  | "COMPLETE"
+  | "EXEMPT"
+  | "NO_LONGER_GIVEN";
+
+export type Antigen = {
+  code: string;
+  name: string;
+  protectsAgainst: string | null;
+  active: boolean;
+};
+
+export type VaccineProduct = {
+  code: string;
+  name: string;
+  manufacturer: string | null;
+  route: VaccineRoute;
+  dosesPerVial: number;
+  active: boolean;
+  antigenCodes: string[];
+};
+
+/** `usable` folds expiry and withdrawal together: it is what the dispensing rule actually reads. */
+export type VaccineLot = {
+  id: string;
+  productCode: string;
+  productName: string;
+  lotNo: string;
+  expiresOn: string;
+  quantityOnHand: number;
+  receivedOn: string;
+  vvmStage: number | null;
+  withdrawnReason: string | null;
+  usable: boolean;
+};
+
+export type AdverseEvent = {
+  id: string;
+  immunisationId: string;
+  onsetOn: string;
+  description: string;
+  seriousness: AefiSeriousness;
+  outcome: AefiOutcome;
+  reportable: boolean;
+  reportedBy: string;
+  reportedAt: string;
+};
+
+export type ImmunisationDose = {
+  id: string;
+  patientId: string;
+  patientMrn: string;
+  encounterId: string | null;
+  productCode: string;
+  productName: string;
+  antigenCodes: string[];
+  lotNo: string | null;
+  source: ImmunisationSource;
+  givenOn: string;
+  givenOnEstimated: boolean;
+  route: VaccineRoute;
+  site: string | null;
+  givenBy: string | null;
+  evidence: string | null;
+  recordedAt: string;
+  recordedBy: string;
+  adverseEvents: AdverseEvent[];
+};
+
+/** `antigenCode` null means every antigen. `live` is derived on read, never stored. */
+export type ImmunisationExemption = {
+  id: string;
+  patientId: string;
+  antigenCode: string | null;
+  kind: ExemptionKind;
+  reason: string;
+  expiresOn: string | null;
+  live: boolean;
+  recordedBy: string;
+  recordedAt: string;
+};
+
+export type ImmunisationRegister = {
+  patientId: string;
+  patientMrn: string;
+  doses: ImmunisationDose[];
+  exemptions: ImmunisationExemption[];
+};
+
+export type ScheduleDose = {
+  antigenCode: string;
+  doseNumber: number;
+  label: string;
+  minAgeDays: number;
+  dueAgeDays: number;
+  minIntervalDays: number | null;
+  graceDays: number;
+  maxAgeDays: number | null;
+};
+
+export type ImmunisationSchedule = {
+  code: string;
+  name: string;
+  appliesFromAgeDays: number;
+  appliesToAgeDays: number;
+  source: string | null;
+  active: boolean;
+  doses: ScheduleDose[];
+};
+
+/** One antigen's next dose, and the sentence that explains the row. */
+export type DueDose = {
+  antigenCode: string;
+  doseNumber: number;
+  label: string;
+  status: DueStatus;
+  earliestOn: string | null;
+  dueOn: string | null;
+  overdueFrom: string | null;
+  windowClosesOn: string | null;
+  dosesCounted: number;
+  basedOnEstimatedDate: boolean;
+  refusalRecorded: boolean;
+  because: string;
+};
+
+/** A dose that does not advance a series, and the rule that says so. */
+export type UncountedDose = {
+  doseId: string;
+  antigenCode: string;
+  productCode: string;
+  givenOn: string;
+  doseNumberAttempted: number;
+  because: string;
+};
+
+export type PatientDue = {
+  patientId: string;
+  mrn: string;
+  fullName: string;
+  dateOfBirth: string;
+  ageDays: number;
+  inSchedule: boolean;
+  note: string | null;
+  due: DueDose[];
+  uncounted: UncountedDose[];
+};
+
+export type DueList = {
+  scheduleCode: string;
+  scheduleName: string;
+  asAt: string;
+  bornFrom: string;
+  bornTo: string;
+  cohortSize: number;
+  total: number;
+  truncated: boolean;
+  note: string | null;
+  children: PatientDue[];
+};
+
+// ---- quality measures and public health ----------------------------------
+
+export type MeasureAntigen = { antigenCode: string; dosesRequired: number };
+
+export type QualityMeasure = {
+  code: string;
+  name: string;
+  kind: string;
+  byAgeDays: number;
+  steward: string;
+  specificationVersion: string;
+  initialPopulation: string;
+  denominator: string;
+  denominatorExclusion: string;
+  numerator: string;
+  countsEstimatedDates: boolean;
+  active: boolean;
+  antigens: MeasureAntigen[];
+};
+
+/** One period's answer. `rate` is null when the denominator is zero, never zero. */
+export type MeasureRate = {
+  code: string;
+  name: string;
+  kind: string;
+  steward: string;
+  specificationVersion: string;
+  scheduleCode: string;
+  periodFrom: string;
+  periodTo: string;
+  bornFrom: string;
+  bornTo: string;
+  initialPopulation: number;
+  denominator: number;
+  numerator: number;
+  rate: number | null;
+  truncated: boolean;
+  note: string | null;
+  computedAt: string;
+};
+
+export type NotifiableCondition = {
+  icd10Code: string;
+  conditionName: string;
+  notifyWithinHours: number;
+  active: boolean;
+};
+
+/** `cases` is null when the count was withheld — a suppressed count is not no cases. */
+export type NotifiableCount = {
+  icd10Code: string;
+  conditionName: string;
+  cases: number | null;
+  notifyWithinHours: number;
+  suppressed: boolean;
+};
+
+export type NotifiableReport = {
+  from: string;
+  to: string;
+  zone: string;
+  conditions: NotifiableCount[];
+  totalCases: number;
+  smallCellThreshold: number;
+  suppressed: boolean;
+  computedAt: string;
+};
+
+export type NotifiableCase = {
+  patientId: string;
+  patientMrn: string;
+  icd10Code: string;
+  conditionName: string;
+  diagnosedOn: string;
+  notifyWithinHours: number;
+};
+
+/**
+ * The line list.
+ *
+ * <p>`registered` is false on this preview and true only on the download, which is the distinction
+ * the platform draws everywhere: reading a record inside the hospital is audited, and handing one
+ * to somebody outside is registered.
+ */
+export type NotifiableLineList = {
+  from: string;
+  to: string;
+  zone: string;
+  cases: NotifiableCase[];
+  patients: number;
+  recipient: string;
+  registered: boolean;
+  note: string;
+  computedAt: string;
+};

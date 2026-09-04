@@ -28,6 +28,8 @@ const EXPECTED_TOP_LEVEL: Record<RoleName, string[]> = {
     "Facility",
     "Pharmacy",
     "Billing",
+    "Immunisation",
+    "Public health",
     "Sharing",
     "Messaging",
     "Administration",
@@ -42,6 +44,8 @@ const EXPECTED_TOP_LEVEL: Record<RoleName, string[]> = {
     "Facility",
     "Pharmacy",
     "Billing",
+    "Immunisation",
+    "Public health",
     "Sharing",
     "Messaging",
   ],
@@ -55,6 +59,8 @@ const EXPECTED_TOP_LEVEL: Record<RoleName, string[]> = {
     "Facility",
     "Pharmacy",
     "Billing",
+    "Immunisation",
+    "Public health",
     "Sharing",
     "Messaging",
   ],
@@ -91,7 +97,7 @@ const EXPECTED_TOP_LEVEL: Record<RoleName, string[]> = {
   // pharmacist reads a prescription and an allergy list, and never a chart — so there is no
   // Patients menu, no Scheduling and no Clinical, and no Billing either: a dispense is charged
   // through an event rather than by anybody at the counter pressing a button.
-  PHARMACIST: ["Dashboard", "Pharmacy"],
+  PHARMACIST: ["Dashboard", "Pharmacy", "Immunisation"],
   // The billing desk sees the money and nothing else. The mirror image of the pharmacist: this
   // account can raise an invoice and take a payment and cannot open a chart, which is what makes
   // the separation demonstrable rather than asserted.
@@ -103,6 +109,13 @@ const EXPECTED_TOP_LEVEL: Record<RoleName, string[]> = {
   // care-relationship narrowing, which is a platform check rather than a menu.
   RADIOGRAPHER: ["Dashboard", "Radiology"],
   RADIOLOGIST: ["Dashboard", "Radiology"],
+  // Public health and nothing else, and this row is the menu half of the platform's narrowest
+  // safety argument. The care-relationship narrowing is expressed as "is a clinician and is not an
+  // administrator", so a role added later falls *outside* it by a check nobody edited — which is
+  // only safe while that role holds no per-patient screen. So: the counts and the coverage rates,
+  // and not the line list, which is ADMIN alone even though this is the account that files the
+  // return. The abuse suite asserts the same split against the API, where it is enforced.
+  EPIDEMIOLOGIST: ["Dashboard", "Public health"],
 };
 
 describe("menusFor", () => {

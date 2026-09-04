@@ -33,7 +33,8 @@ export type RoleName =
   | "PHARMACIST"
   | "CASHIER"
   | "RADIOGRAPHER"
-  | "RADIOLOGIST";
+  | "RADIOLOGIST"
+  | "EPIDEMIOLOGIST";
 
 export type MenuItem = {
   label: string;
@@ -72,6 +73,7 @@ const STAFF: RoleName[] = [
   "CASHIER",
   "RADIOGRAPHER",
   "RADIOLOGIST",
+  "EPIDEMIOLOGIST",
 ];
 
 const CLINICAL_READ: RoleName[] = [
@@ -133,6 +135,20 @@ const IMAGING_READ: RoleName[] = ["ADMIN", "DOCTOR", "NURSE", "RADIOLOGIST", "RA
 const IMAGING_ACQUIRE: RoleName[] = ["ADMIN", "RADIOGRAPHER"];
 const IMAGING_REPORT: RoleName[] = ["ADMIN", "RADIOLOGIST"];
 const INTERFACE: RoleName[] = ["ADMIN", "DOCTOR"];
+// The immunisation register. Reading it is the ward's and the front desk is out: a lifetime
+// vaccination timeline is a chart. Recording a dose is narrower still — the person holding the
+// vial — and the cohort due list rests on patient-service's own cohort permission, which is why
+// it lists the same three roles rather than a wider set that would be refused one call deeper.
+const IMMUNISATION_READ: RoleName[] = ["ADMIN", "DOCTOR", "NURSE", "PHARMACIST"];
+const IMMUNISATION_COHORT: RoleName[] = ["ADMIN", "DOCTOR", "NURSE"];
+const VACCINE_STOCK: RoleName[] = ["ADMIN", "PHARMACIST", "NURSE"];
+// Public health, and the one split in this file worth reading. The counts are an epidemiologist's
+// weekly work; the names behind them are an administrator's act with a disclosure row behind it.
+// Mirrors Roles.SURVEILLANCE_READ and Roles.PUBLIC_HEALTH_LINE_LIST, and the second is ADMIN alone
+// deliberately: the property that lets EPIDEMIOLOGIST hold this whole module without holding a
+// chart is that it reads only aggregates.
+const SURVEILLANCE_READ: RoleName[] = ["ADMIN", "EPIDEMIOLOGIST"];
+const QUALITY_MEASURE_READ: RoleName[] = ["ADMIN", "EPIDEMIOLOGIST", "DOCTOR", "NURSE"];
 const ADMIN_ONLY: RoleName[] = ["ADMIN"];
 
 /**
@@ -320,6 +336,62 @@ export const MENUS: Menu[] = [
         href: "/billing/tax-rates",
         roles: BILLING_READ,
         note: "Dated rows — an invoice keeps the rate it was raised under",
+      },
+    ],
+  },
+
+  {
+    label: "Immunisation",
+    roles: IMMUNISATION_READ,
+    items: [
+      {
+        label: "Calling list",
+        href: "/immunisations",
+        roles: IMMUNISATION_COHORT,
+        note: "Who is due or overdue, by birth cohort",
+      },
+      {
+        label: "Published schedule",
+        href: "/immunisations/schedules",
+        roles: IMMUNISATION_READ,
+        note: "Everything in days from birth, never in months",
+      },
+      {
+        label: "Vaccines",
+        href: "/immunisations/vaccines",
+        roles: IMMUNISATION_READ,
+        note: "Products and the antigens each one contains",
+      },
+      {
+        label: "Vaccine stock",
+        href: "/immunisations/lots",
+        roles: VACCINE_STOCK,
+        note: "Earliest expiry first — and an expired lot cannot be given",
+      },
+    ],
+  },
+
+  {
+    label: "Public health",
+    roles: QUALITY_MEASURE_READ,
+    items: [
+      {
+        label: "Notifiable return",
+        href: "/public-health",
+        roles: SURVEILLANCE_READ,
+        note: "Counts only — every configured condition, zeroes included",
+      },
+      {
+        label: "Line list",
+        href: "/public-health/line-list",
+        roles: ADMIN_ONLY,
+        note: "The names behind the counts. Downloading one records a disclosure",
+      },
+      {
+        label: "Quality measures",
+        href: "/public-health/measures",
+        roles: QUALITY_MEASURE_READ,
+        note: "Coverage rates, computed on read and never cached",
       },
     ],
   },

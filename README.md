@@ -10,9 +10,9 @@ haematology analyzer over its own wire protocol and released by a pathologist.
 
 > **Status:** the clinical core, the laboratory (including analyzer integration), the AI service
 > and the web UI are implemented and verified end to end against a real stack, and so are the
-> containerisation, TLS, security-testing and performance-testing layers. **1,503 tests pass** —
-> 909 Java unit and integration, 91 Python, 70 web unit, 290 black-box API and security abuse cases,
-> and 143 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
+> containerisation, TLS, security-testing and performance-testing layers. **1,516 tests pass** —
+> 909 Java unit and integration, 91 Python, 71 web unit, 290 black-box API and security abuse cases,
+> and 155 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
 > [Security](#security); what is left is in the [Roadmap](#roadmap).
 
 ---
@@ -1076,7 +1076,7 @@ patient has already seen rather than a list of everybody.
 The clinical interface. Server components call the gateway; **the browser never receives an access
 token** — the session lives in httpOnly cookies and every platform call is made server-side.
 
-Twelve top-level menus, defined once as data in `src/lib/menu.ts`. What a role sees is a subset: the
+Fourteen top-level menus, defined once as data in `src/lib/menu.ts`. What a role sees is a subset: the
 laboratory accounts get no Clinical menu at all, because every one of its items is gated away from
 them and an empty dropdown is worse than an absent one.
 
@@ -1089,6 +1089,8 @@ them and an empty dropdown is worse than an absent one.
 | Laboratory | worklist, an order's report with collection, result entry and release, specimen labels, scan a tube, test catalogue, reference ranges and interpretation rules — both retunable by a pathologist — analyzers, device messages |
 | Radiology | the modality worklist with a slot to book and a DICOM file to file, the reporting queue, the unmatched studies nobody could attribute, and the examination catalogue. Three lists rather than one, because the department is three jobs: the worklist and the unmatched list are the radiography room's, the reporting queue is a radiologist's, and an examination itself is readable by whoever is looking after the patient |
 | Facility | room directory, rooms, floors, room types, beds, departments — all editable by an administrator |
+| Immunisation | the calling list for a birth cohort — who is due or overdue, with the rule behind every row and the doses that did not count; one patient's register with two separate recording forms (a dose given here demands a lot number, a dose from a card demands a sentence and refuses one), exemptions and adverse events; the published schedule in days from birth; the vaccine catalogue joined to its antigens; and stock by lot, earliest expiry first |
+| Public health | the notifiable-disease return as counts with a CSV, the line list naming the patients behind them (administrator only, and downloading one registers a disclosure against each of them), and coverage measures with the specification's own population sentences beside the rate |
 | Sharing | the consent register with the four conditions on every row, recording a decision (front desk), sending a record under a consent (clinicians), and what has been released about a patient and under what |
 | Messaging | delivery log with the send form, patient questions (the portal's queue, oldest first, where a reply may say what an SMS may not), message wording — readable by anybody who may send, editable by an administrator |
 | Pharmacy | dispensing queue with the override reason on the row, formulary with its ingredient lists, the interaction table with what to do about each pairing, stock by batch with what is about to expire — gated to the roles that may read a medication order |
@@ -1106,7 +1108,7 @@ an authorisation. `menu.test.ts` asserts that a patient reaches nothing in the s
 no staff item points into `/portal`.
 
 Three rules hold in the navigation, and each is asserted in `web/e2e/navigation.spec.ts` against a
-real browser for all eight seeded roles:
+real browser for all eleven seeded roles:
 
 - **Roles filter, they do not disable.** Filtering happens on the server, so an item a user may not
   reach is never serialised into the page. A greyed-out item would disclose both what exists and
@@ -1696,8 +1698,8 @@ Or directly:
 mvn -q verify                                     # 909 Java unit and integration tests
 cd services/ai-service && uv run pytest -q        # 91 Python tests
 cd web && npm run lint && npm run typecheck       # web static checks
-cd web && npm test                                # 70 web unit tests
-cd web && npx playwright test                     # 143 browser tests, no skips
+cd web && npm test                                # 71 web unit tests
+cd web && npx playwright test                     # 155 browser tests, no skips
 mvn -Pautomation -pl tests/api verify             # 290 API and security abuse cases
 ```
 
@@ -1881,6 +1883,14 @@ set; when it is not, the job writes an explicit notice and a run-summary entry s
 
 Worth writing down, because it is the argument for having built them:
 
+- **A stock screen that could list every lot could not exist, and building it is what said so.**
+  The vaccine-stock page was written to show the whole fridge; `GET /vaccines/lots` requires a
+  `productCode` and there is no all-lots read. Two ways out — loop the catalogue client-side, which
+  is N requests to render one table, or ask the store one vaccine at a time. The second is what
+  shipped, and on reflection it is the better screen anyway: somebody standing at a fridge asks
+  "which BCG do I open", not "list everything we own". A whole-store view is now a named gap
+  instead of a page that pretends to be one. Found by a browser test failing on an absent form,
+  not by reading the controller.
 - **The due calculator counted a six-week dose as a birth dose, and three separate things had to be
   read to see it.** Found by writing the API test rather than the unit test: a hepatitis B birth
   dose has a minimum age of zero and a window that shuts at fourteen days, and the matcher checked
@@ -2238,10 +2248,29 @@ Worth writing down, because it is the argument for having built them:
 **Implemented and verified against a running stack:** clinical core, laboratory with analyzer
 integration, casualty and the in-patient census, the closed medication loop, the revenue cycle
 (GST invoicing, payments, payer claims and event-driven charge capture), consent-gated health-
-information exchange with FHIR R4 bundles and an EHI export, outbound messaging, AI service, web
+information exchange with FHIR R4 bundles and an EHI export, the immunisation register with
+its schedule engine and coverage measures, public-health reporting as both counts and an
+accounted-for line list, outbound messaging, AI service, web
 UI, containerisation, TLS, the full test pyramid,
 SAST/DAST tooling, and performance profiles. Dependency scanning covers Python (`pip-audit`) and the web app
 (`npm audit`) on every run, and Java through Trivy over the SBOM.
+
+**Named gaps the immunisation and public-health screens leave:**
+
+- **No whole-store stock view.** `GET /vaccines/lots` takes a `productCode` and there is no
+  all-lots read, so the stock screen asks one vaccine at a time. See the findings above for why
+  that turned out to be the better screen rather than merely the available one.
+- **No form for a schedule, a measure, a vaccine or a contents list.** Each is rows, added by a
+  migration or by hand. For the schedule that is a decision — a deployment able to edit the
+  intervals could publish a due list it calls UIP which is not UIP — and for the others it is
+  simply not built, which is what these lines say rather than the screens implying otherwise.
+- **Nothing transmits a notifiable return.** Both halves exist and filing one is a person
+  downloading a file; the leg to an authority's own interface is a jurisdiction-by-jurisdiction
+  piece of work.
+- **The vial monitor is recorded and enforced by nothing**, and both the screen and this list say
+  so: there is no cold-chain telemetry anywhere on the platform.
+- **An adverse event is recorded and reported to nobody.** The register holds it and flags whether
+  it is reportable; no outbound channel exists.
 
 **Shipped but not verified here:**
 
@@ -2286,11 +2315,13 @@ SAST/DAST tooling, and performance profiles. Dependency scanning covers Python (
   half-built. **Filing the return is a person downloading a file**, and both halves of it now exist:
   the counts under `SURVEILLANCE_READ`, and the line list naming the patients behind them under
   `PUBLIC_HEALTH_LINE_LIST` — ADMIN alone, and registering a disclosure per named patient before the
-  file is produced. What is still missing is the leg after the download. And **no screens**:
-  everything here is API-only.
+  file is produced. What is still missing is the leg after the download.
 - **One quality measure exists and three things about it are deliberately absent.** There is no
   write endpoint for measures either, so a second one is an INSERT by a migration or by hand rather
-  than a form — which is what `aSecondMeasureIsRows` asserts and also what makes it a gap. **A
+  than a form — which is what `aSecondMeasureIsRows` asserts and also what makes it a gap. The same
+  is true of a schedule and of a vaccine's contents list, and for the schedule it is deliberate
+  rather than unfinished: a deployment able to edit the intervals could publish a due list it calls
+  UIP which is not UIP, which is the NEWS2 argument one module along. **A
   measure result is never stored**, so there is no attested-and-submitted history: a rate is
   computed on every read and stamped with the specification version, and the record of "this is the
   number we filed on the 14th" would need a table of its own with an attestation on it. And the

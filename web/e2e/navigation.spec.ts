@@ -5,7 +5,7 @@ import { openMenu, signIn } from "./sign-in";
  * The navigation shell, exercised against a real browser.
  *
  * <p>Three things here are worth more than the rest. **Role filtering is asserted per role**, for
- * all six seeded users, against a hand-written list of what each should see — not against the menu
+ * all eleven seeded users, against a hand-written list of what each should see — not against the menu
  * constant, which would just be the implementation agreeing with itself. **Keyboard operation is
  * asserted**, because dropdowns were the chosen pattern and a dropdown that cannot be driven from a
  * keyboard is the failure mode this app cannot afford on a wall-mounted terminal. And **every link
@@ -35,6 +35,8 @@ const EXPECTED: Record<string, string[]> = {
     "Facility",
     "Pharmacy",
     "Billing",
+    "Immunisation",
+    "Public health",
     "Sharing",
     "Messaging",
     "Administration",
@@ -49,6 +51,8 @@ const EXPECTED: Record<string, string[]> = {
     "Facility",
     "Pharmacy",
     "Billing",
+    "Immunisation",
+    "Public health",
     "Sharing",
     "Messaging",
   ],
@@ -62,6 +66,8 @@ const EXPECTED: Record<string, string[]> = {
     "Facility",
     "Pharmacy",
     "Billing",
+    "Immunisation",
+    "Public health",
     "Sharing",
     "Messaging",
   ],
@@ -91,7 +97,7 @@ const EXPECTED: Record<string, string[]> = {
   ],
   // The pharmacy account. Its menu is the shape of the role: the module it works in, and nothing
   // clinical — a pharmacist reads a prescription and an allergy list and never a chart.
-  pharmacist: ["Dashboard", "Pharmacy"],
+  pharmacist: ["Dashboard", "Pharmacy", "Immunisation"],
   // The billing desk. The mirror image of the pharmacist: the module it works in and nothing
   // clinical, which is what makes the separation of duties demonstrable rather than asserted.
   cashier: ["Dashboard", "Billing"],
@@ -102,6 +108,12 @@ const EXPECTED: Record<string, string[]> = {
   // radiologist the reverse.
   radiographer: ["Dashboard", "Radiology"],
   "dr.mistry": ["Dashboard", "Radiology"],
+  // Public health and nothing else. The narrowest menu on the platform, and the one whose shape is
+  // an argument rather than a convenience: the care-relationship narrowing is "is a clinician and
+  // is not an administrator", so this role falls outside it by a check nobody edited — which is
+  // safe exactly as long as it is offered no per-patient screen. The Line list item is inside this
+  // menu for an administrator and absent here, which public-health.spec.ts asserts both ways.
+  epidemiologist: ["Dashboard", "Public health"],
 };
 
 test.describe("the menu is role-aware", () => {
