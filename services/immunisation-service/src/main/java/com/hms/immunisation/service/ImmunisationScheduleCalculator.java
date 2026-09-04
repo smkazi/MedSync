@@ -250,13 +250,21 @@ public final class ImmunisationScheduleCalculator {
         LocalDate previousCounted = null;
         boolean estimatedInSeries = false;
 
+        // Collected locally and stamped with the FINAL count below rather than appended straight to
+        // `due`, because dosesCounted is a fact about the antigen and not about the row. Appending
+        // as they were built meant a row emitted early -- a birth-dose window skipped before the
+        // doses that followed it were walked -- carried the count as it stood at that instant. A
+        // child with three hepatitis B doses then read as having none, because the only row their
+        // antigen produced was the skipped one. Found by a coverage measure scoring them uncovered.
+        List<Due> mine = new ArrayList<>();
+
         for (GivenDose dose : doses) {
             // A row whose window had already closed when this dose was given is not available to
             // it. Without this the birth-dose row would swallow the first pentavalent dose at six
             // weeks and record it as a dose given at birth -- the register would then say a child
             // had their birth dose, on a date that proves they did not.
             cursor = skipClosedRows(dateOfBirth, rows, cursor, dose.givenOn(), antigen, exemptions,
-                    asAt, countedDoses, estimatedInSeries, due);
+                    asAt, mine);
             if (cursor >= rows.size()) {
                 uncounted.add(new Uncounted(dose.doseId(), antigen, dose.productCode(),
                         dose.givenOn(), rows.size(),
@@ -299,8 +307,7 @@ public final class ImmunisationScheduleCalculator {
         // one inside the loop above, run once more against `asAt` rather than against a dose, which
         // is what turns a never-given birth dose into a stated NO_LONGER_GIVEN rather than a row
         // that reads overdue for the rest of the child's life.
-        cursor = skipClosedRows(dateOfBirth, rows, cursor, asAt, antigen, exemptions, asAt,
-                countedDoses, estimatedInSeries, due);
+        cursor = skipClosedRows(dateOfBirth, rows, cursor, asAt, antigen, exemptions, asAt, mine);
 
         if (cursor >= rows.size()) {
             // Complete means every dose was given, not merely that the schedule has run out of rows
@@ -309,20 +316,39 @@ public final class ImmunisationScheduleCalculator {
             // reading "0 of the 3 doses are recorded and counted", which is a contradiction on the
             // same screen. When the rows ran out because their windows shut, those rows have
             // already said so and there is nothing to add.
-            if (countedDoses < rows.size()) {
-                return;
+            if (countedDoses >= rows.size()) {
+                ScheduleRow last = rows.get(rows.size() - 1);
+                mine.add(new Due(antigen, last.doseNumber(), last.label(), DueStatus.COMPLETE,
+                        null, null, null, null, countedDoses, estimatedInSeries,
+                        refusalRecorded(exemptions, antigen, asAt),
+                        ("All %d dose(s) of %s in this schedule are recorded and counted; nothing "
+                                + "further is due.").formatted(rows.size(), antigen)));
             }
-            ScheduleRow last = rows.get(rows.size() - 1);
-            due.add(new Due(antigen, last.doseNumber(), last.label(), DueStatus.COMPLETE,
-                    null, null, null, null, countedDoses, estimatedInSeries,
-                    refusalRecorded(exemptions, antigen, asAt),
-                    ("All %d dose(s) of %s in this schedule are recorded and counted; nothing "
-                            + "further is due.").formatted(rows.size(), antigen)));
-            return;
+        } else {
+            mine.add(nextDue(dateOfBirth, rows.get(cursor), countedDoses, previousCounted,
+                    estimatedInSeries, antigen, exemptions, asAt));
         }
 
-        due.add(nextDue(dateOfBirth, rows.get(cursor), countedDoses, previousCounted,
-                estimatedInSeries, antigen, exemptions, asAt));
+        for (Due row : mine) {
+            due.add(stamped(row, countedDoses, estimatedInSeries));
+        }
+    }
+
+    /**
+     * The same row with the antigen's final dose count on it.
+     *
+     * <p>{@code dosesCounted} is a fact about the antigen rather than about the row, so it is
+     * stamped once at the end rather than captured as each row is built. The alternative was
+     * written first and was wrong in a way nothing caught for two commits: a row emitted while
+     * walking the doses carried the count as it stood at that instant, so a child whose hepatitis B
+     * birth-dose window had shut read as having <em>none</em> of the three doses they had in fact
+     * received -- the skipped row was the only row their antigen produced. A coverage measure
+     * scored them uncovered, which is how it was found.
+     */
+    private static Due stamped(Due row, int countedDoses, boolean estimatedInSeries) {
+        return new Due(row.antigenCode(), row.doseNumber(), row.label(), row.status(),
+                row.earliestOn(), row.dueOn(), row.overdueFrom(), row.windowClosesOn(),
+                countedDoses, estimatedInSeries, row.refusalRecorded(), row.because());
     }
 
     /**
@@ -340,8 +366,7 @@ public final class ImmunisationScheduleCalculator {
      */
     private static int skipClosedRows(LocalDate dateOfBirth, List<ScheduleRow> rows, int cursor,
                                       LocalDate by, String antigen, List<Exemption> exemptions,
-                                      LocalDate asAt, int countedDoses, boolean estimatedInSeries,
-                                      List<Due> due) {
+                                      LocalDate asAt, List<Due> due) {
         int at = cursor;
         while (at < rows.size()) {
             ScheduleRow row = rows.get(at);
@@ -354,7 +379,7 @@ public final class ImmunisationScheduleCalculator {
             }
             due.add(new Due(antigen, row.doseNumber(), row.label(), DueStatus.NO_LONGER_GIVEN,
                     dateOfBirth.plusDays(row.minAgeDays()), dateOfBirth.plusDays(row.dueAgeDays()),
-                    null, closesOn, countedDoses, estimatedInSeries,
+                    null, closesOn, 0, false,
                     refusalRecorded(exemptions, antigen, asAt),
                     ("Dose %d of %s (%s) is no longer given after %s and was not recorded before "
                             + "then. Nothing further is due for it.").formatted(row.doseNumber(),

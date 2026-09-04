@@ -10,8 +10,8 @@ haematology analyzer over its own wire protocol and released by a pathologist.
 
 > **Status:** the clinical core, the laboratory (including analyzer integration), the AI service
 > and the web UI are implemented and verified end to end against a real stack, and so are the
-> containerisation, TLS, security-testing and performance-testing layers. **1,432 tests pass** —
-> 845 Java unit and integration, 91 Python, 70 web unit, 283 black-box API and security abuse cases,
+> containerisation, TLS, security-testing and performance-testing layers. **1,461 tests pass** —
+> 873 Java unit and integration, 91 Python, 70 web unit, 284 black-box API and security abuse cases,
 > and 143 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
 > [Security](#security); what is left is in the [Roadmap](#roadmap).
 
@@ -795,6 +795,36 @@ are load-bearing. Without the forward half a remembered dose could carry an inve
 the reverse half a dose given here could be recorded with no lot at all and the recall query would
 miss it silently, which is the worse of the two.
 
+**One eCQM, built so the second is rows.** A quality measure's parameters are columns — the age it
+asks about, the antigens and dose counts it wants, its steward, its specification version, whether it
+counts recollected dates — and the *kind* of question it asks is code. That split is the NEWS2
+argument with the sign reversed, and the pair is worth reading together: there, a deployment able to
+edit the bands could publish a number it calls NEWS2 which is not NEWS2; here, a deployment able to
+add a `kind` with no calculator behind it could publish a percentage rendered from two zeroes. **The
+first is a wrong answer; the second is an answer with nothing behind it, which is worse, because the
+first can at least be checked.** So `kind` carries a CHECK naming exactly the calculators that
+exist, and a second coverage measure is an INSERT — asserted, not claimed, by a test that inserts
+one at runtime and computes a correct rate with no restart.
+
+Three decisions inside the rate itself. It is evaluated **as at each child's own Nth birthday**, not
+as at today, because that is what "by age two" means — evaluated today, a dose given at three would
+start counting toward a two-year-old figure and last quarter's published number would rise every
+time somebody caught up. A **medical contraindication excludes and a refusal does not**, because a
+clinic able to exclude refusals could report full coverage by recording refusals. And a denominator
+of zero is a **null rate, not zero per cent**: "no children reached their second birthday in this
+district last month" is not "none of them were vaccinated", and rendering it as 0% would put a false
+failure into a return somebody signs. The rate does not define what a dose is — it asks the schedule
+calculator, because two definitions of "a dose counts" is how a measure and the screen above it come
+to disagree in front of the clinician being measured.
+
+**A rate is read through a cohort with no names in it.** The measure needs a birthday to compute an
+age against and a key to join the register on; it does not need to know who anybody is. So
+patient-service has two cohort endpoints with two roles — the named one for a calling list, and a
+dates-only one for a rate — and that split is what lets `EPIDEMIOLOGIST` compute a district return
+while holding nothing that names a patient. It exists because the abuse suite refused the first
+version, which called the named cohort: the fix was to narrow the disclosure rather than widen the
+role.
+
 **A dose given somewhere else has its own endpoint, not a flag.** The two demand different fields —
 one a lot number, the other a sentence saying what was seen — and a flag on one endpoint is a flag
 somebody forgets, which is how a remembered dose ends up in the register with an invented lot. The
@@ -1183,6 +1213,7 @@ The dev profile seeds one account per role:
 | `cashier` | CASHIER — raises invoices, takes payments, works claims. The mirror image of the pharmacist: it can collect money and **cannot open a chart**, and `dr.rao` can read a bill and cannot take a payment. |
 | `radiographer` | RADIOGRAPHER — runs the modality worklist, books slots and files what comes off the machine. Reads the worklist and the study register and **cannot draft or sign a report**, and cannot raise the request either. |
 | `dr.mistry` | RADIOLOGIST — reports and signs. The other half of the same separation: it can release a finding and **cannot order the examination it is reporting on**, and cannot see the acquisition worklist. The same shape as `lab.tech` and `dr.pathan` one department along, and for the same reason: whoever produced the images must not be whoever signs off what they show. |
+| `epidemiologist` | EPIDEMIOLOGIST — coverage rates and, from the next slice, notifiable-disease counts. **Aggregates only, and this account exists so that stays true.** The care-relationship narrowing is expressed as "is a clinician and is not an administrator", so a role added later falls *outside* it by a check nobody edited — safe only while the role holds no per-patient endpoint. So it reads a rate and a specification and is refused one child's register, the cohort due list, the named birth cohort, a patient record, an encounter and the disclosure register. Every one of those is a row in the abuse suite, and one goes red the day somebody adds this role to a clinical constant because a screen needed a name. |
 
 **The portal seeds no account either, and cannot.** A portal account has to point at a patient
 record, and the seed runs before there is one — so there is no `patient` in the table above and
@@ -1559,12 +1590,12 @@ make help          # everything else
 Or directly:
 
 ```bash
-mvn -q verify                                     # 845 Java unit and integration tests
+mvn -q verify                                     # 873 Java unit and integration tests
 cd services/ai-service && uv run pytest -q        # 91 Python tests
 cd web && npm run lint && npm run typecheck       # web static checks
 cd web && npm test                                # 70 web unit tests
 cd web && npx playwright test                     # 143 browser tests, no skips
-mvn -Pautomation -pl tests/api verify             # 283 API and security abuse cases
+mvn -Pautomation -pl tests/api verify             # 284 API and security abuse cases
 ```
 
 | Layer | What runs | Where |
@@ -1767,6 +1798,21 @@ Worth writing down, because it is the argument for having built them:
   counted"* — a contradiction on one screen. Complete now means every dose was given, not that the
   schedule ran out of rows to offer. All three of these were in code that the unit suite passed:
   what caught them was running the thing and reading the output.
+- **A child with three hepatitis B doses read as having none, and a coverage measure is what found
+  it.** The due calculator reported `dosesCounted` per row, captured as each row was built — so a
+  row emitted early, when a birth-dose window was skipped before the later doses were walked,
+  carried the count as it stood at that instant. For hepatitis B that skipped row was the *only* row
+  the antigen produced, so the count was zero and the composite measure scored a fully vaccinated
+  child as uncovered. `dosesCounted` is a fact about the antigen and is now stamped once at the end.
+  Nothing in three suites caught it; what caught it was building a second thing that read the first
+  one's output and getting an answer that could not be true.
+- **The first version of the measure endpoint was refused by the abuse suite, and the fix narrowed
+  the disclosure rather than the assertion.** A coverage rate needs a birth cohort, and the endpoint
+  called the cohort read that answers names — so an epidemiologist was answered 403 by
+  patient-service, correctly, because that role must not be able to list children by name. The
+  tempting fix was to add the role to that permission. The right one was a second, narrower
+  endpoint: an id and a date of birth, which is everything a rate needs and nothing more. Worth
+  recording because the wrong fix would have passed the same test.
 - **The historical-dose endpoint answered 500 to a caller who named the wrong source**, and it was
   found by writing the first test the path had ever had. `Immunisation.historical(...)` guards the
   one value it must refuse — `ADMINISTERED_HERE`, because a dose given here needs a lot number that
@@ -2116,9 +2162,9 @@ SAST/DAST tooling, and performance profiles. Dependency scanning covers Python (
   verbatim on signed reports. There is no critical-value concept anywhere in the service — no
   column, field, flag or notification — so there is no critical-range editor to build yet.
 - **The immunisation register has no screens yet, and the schedule has no write endpoint.** The
-  register, the schedule, the cohort due list and the cold chain are all built and reachable through
-  the API; nothing in the web app leads to them, so there is no recording form, no patient register
-  view and no calling list. Two smaller gaps in the same module, each named rather than half-built:
+  register, the schedule, the cohort due list, the coverage measure and the cold chain are all built
+  and reachable through the API; nothing in the web app leads to them, so there is no recording form,
+  no patient register view, no calling list and no measure screen. Two smaller gaps in the same module, each named rather than half-built:
   a schedule is edited by migration — the ages, intervals and grace periods are rows, and the write
   endpoint an administrator would use to retune them is not there, so the screen would front a form
   that 405s — and there is no per-patient due endpoint, only the cohort one, which answers for a
@@ -2128,6 +2174,16 @@ SAST/DAST tooling, and performance profiles. Dependency scanning covers Python (
   every coverage question answer about something that is not immunity. And **cold-chain enforcement
   is not built**: `vvm_stage` records what the vial monitor read at receipt and nothing acts on it,
   because this platform has no fridge telemetry — see [immunisation-service](#immunisation-service--schema-immunisation).
+- **One quality measure exists and three things about it are deliberately absent.** There is no
+  write endpoint for measures either, so a second one is an INSERT by a migration or by hand rather
+  than a form — which is what `aSecondMeasureIsRows` asserts and also what makes it a gap. **A
+  measure result is never stored**, so there is no attested-and-submitted history: a rate is
+  computed on every read and stamped with the specification version, and the record of "this is the
+  number we filed on the 14th" would need a table of its own with an attestation on it. And the
+  denominator has **no "had an encounter here" clause**: every child in the birth range counts,
+  including one registered once and never seen again, which understates coverage for a clinic with a
+  transient population. Each of the three is a decision rather than an oversight, and each is
+  someone else's number until it is built.
 - **There is no PACS, no viewer, and no DICOM network layer.** Radiology itself is built — the
   request, the worklist, the study register, the report — and the line this stops at is the one the
   earlier version of this entry drew: DICOM is a storage protocol, a network protocol *and* a

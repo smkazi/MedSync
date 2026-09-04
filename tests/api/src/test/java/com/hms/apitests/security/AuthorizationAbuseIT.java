@@ -2,6 +2,7 @@ package com.hms.apitests.security;
 
 import static io.restassured.RestAssured.given;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.hasKey;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.notNullValue;
@@ -293,6 +294,67 @@ class AuthorizationAbuseIT extends RequiresRunningStack {
                 .when().get("/encounters/{id}/care-team", encounterId)
                 .then().statusCode(200)
                 .body("find { it.memberRole == 'BREAK_GLASS' }.reason", containsString("on call"));
+    }
+
+    @Test
+    @DisplayName("the epidemiologist reads rates and reaches no patient anywhere on the platform")
+    void theEpidemiologistIsAggregateOnly() {
+        // The most important block in this file, and the reason the account exists at all. The
+        // care-relationship narrowing is "is a clinician and is not an administrator", so a role
+        // added later falls OUTSIDE it by a check nobody edited -- which is the safer direction for
+        // a check whose failure mode is locking a new role out of every record, and is only safe
+        // while the new role holds no per-patient endpoint. These rows are what keeps that true.
+        String periodFrom = "2024-01-01";
+        String periodTo = "2024-12-31";
+
+        // What it may read: a rate, and the specifications behind it. Both aggregates.
+        given().spec(Api.as(Api.EPIDEMIOLOGIST))
+                .queryParam("periodFrom", periodFrom).queryParam("periodTo", periodTo)
+                .when().get("/measures/CIS-2/rate")
+                .then().statusCode(200)
+                // And the rate itself carries no identifier, which is why there is nothing to
+                // narrow: asserted on the response rather than on the role list, because a field
+                // added later has to pass this rather than merely avoid matching a substring.
+                .body("$", not(hasKey("mrn")))
+                .body("$", not(hasKey("patientId")))
+                .body("$", not(hasKey("children")));
+        given().spec(Api.as(Api.EPIDEMIOLOGIST))
+                .when().get("/measures")
+                .then().statusCode(200);
+
+        // And everything per-patient, refused. Each of these is a different service, and the day
+        // somebody adds this role to a clinical constant because a screen needed a name, one of
+        // them goes red.
+        given().spec(Api.as(Api.EPIDEMIOLOGIST))
+                .when().get("/immunisations/patients/{id}", patientId)
+                .then().statusCode(403);
+        given().spec(Api.as(Api.EPIDEMIOLOGIST))
+                .queryParam("bornFrom", "2024-01-01").queryParam("bornTo", "2024-01-31")
+                .when().get("/immunisations/due")
+                .then().statusCode(403);
+        given().spec(Api.as(Api.EPIDEMIOLOGIST))
+                .queryParam("bornFrom", "2024-01-01").queryParam("bornTo", "2024-01-31")
+                .when().get("/patients/cohort")
+                .then().statusCode(403);
+        given().spec(Api.as(Api.EPIDEMIOLOGIST))
+                .when().get("/patients/{id}", patientId)
+                .then().statusCode(403);
+        given().spec(Api.as(Api.EPIDEMIOLOGIST))
+                .when().get("/encounters/{id}", "00000000-0000-4000-8000-000000000000")
+                .then().statusCode(403);
+        // With a patientId, because this endpoint requires one and a missing parameter is answered
+        // 400 before @PreAuthorize is reached -- which would have passed whatever the role rules
+        // said. The audit-export test below records the same trap in its other form.
+        given().spec(Api.as(Api.EPIDEMIOLOGIST))
+                .queryParam("patientId", patientId)
+                .when().get("/interop/disclosures")
+                .then().statusCode(403);
+        // Not a clinician either: it writes nothing anywhere.
+        given().spec(Api.as(Api.EPIDEMIOLOGIST))
+                .body(Map.of())
+                .when().post("/immunisations")
+                .then().statusCode(org.hamcrest.Matchers.anyOf(
+                        org.hamcrest.Matchers.is(400), org.hamcrest.Matchers.is(403)));
     }
 
     @Test

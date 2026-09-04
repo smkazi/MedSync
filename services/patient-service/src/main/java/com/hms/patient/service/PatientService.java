@@ -139,6 +139,18 @@ public class PatientService {
      */
     @Transactional
     public PatientDtos.Cohort cohort(LocalDate bornFrom, LocalDate bornTo, Integer limit) {
+        return cohort(bornFrom, bornTo, limit, "PATIENT_COHORT");
+    }
+
+    /**
+     * The shared query behind both cohort endpoints.
+     *
+     * <p>{@code auditAction} is a parameter rather than a constant because the two disclosures are
+     * genuinely different acts — one hands over names and one does not — and telling them apart
+     * afterwards is the whole value of auditing either.
+     */
+    private PatientDtos.Cohort cohort(LocalDate bornFrom, LocalDate bornTo, Integer limit,
+                                      String auditAction) {
         if (bornFrom == null || bornTo == null) {
             throw new BadRequestException("A cohort needs both ends of a birth range: bornFrom and bornTo.");
         }
@@ -150,7 +162,7 @@ public class PatientService {
         List<Patient> found = patients.findBornBetween(bornFrom, bornTo, PageRequest.of(0, rows));
         long total = patients.countBornBetween(bornFrom, bornTo);
 
-        audit.record("PATIENT_COHORT", "Patient", null,
+        audit.record(auditAction, "Patient", null,
                 "%d of %d born %s..%s, for %s".formatted(found.size(), total, bornFrom, bornTo,
                         CurrentUser.usernameOrSystem()));
 
@@ -165,6 +177,27 @@ public class PatientService {
                         ? ("%d of %d children came back; narrow the birth range for the rest, or "
                                 + "raise hms.patient.cohort-max-rows.").formatted(found.size(), total)
                         : null);
+    }
+
+    /**
+     * The same cohort with the names left off: an id and a date of birth.
+     *
+     * <p>Its own method and its own endpoint rather than a flag, for the reason the register keeps
+     * a historical dose on its own path: a flag on one endpoint is a flag somebody forgets, and
+     * forgetting this one discloses a list of children's names to a caller computing a percentage.
+     *
+     * <p>Audited under its own action so the two disclosures can be told apart afterwards. "Who has
+     * been listing children by name" and "who has been computing rates" are different questions and
+     * a single audit action would answer neither.
+     */
+    @Transactional
+    public PatientDtos.CohortDates cohortDates(LocalDate bornFrom, LocalDate bornTo, Integer limit) {
+        PatientDtos.Cohort named = cohort(bornFrom, bornTo, limit, "PATIENT_COHORT_DATES");
+        return new PatientDtos.CohortDates(
+                named.members().stream()
+                        .map(member -> new PatientDtos.CohortDate(member.id(), member.dateOfBirth()))
+                        .toList(),
+                named.returned(), named.total(), named.truncated(), named.note());
     }
 
     /** Resolves the critical-allergy marker for a whole page in one query. */

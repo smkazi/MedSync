@@ -97,6 +97,28 @@ public class PatientController {
         return service.cohort(bornFrom, bornTo, limit);
     }
 
+    /**
+     * The same cohort with the names left off: an id and a date of birth.
+     *
+     * <p>Its own endpoint and its own role, because it is a materially narrower disclosure and the
+     * two callers want different things. A calling list needs a name — somebody telephones a family
+     * and has to ask for a child. A coverage rate does not: it needs a birthday to compute an age
+     * against and a key to join the register on, and a name on that answer would be disclosed for
+     * no purpose the caller can state.
+     *
+     * <p>This is what lets an epidemiologist compute a rate while holding nothing that names
+     * anybody — with that token the ids are opaque, because every endpoint that would resolve one
+     * refuses the role. See {@link Roles#PATIENT_COHORT_DATES}.
+     */
+    @GetMapping("/cohort/dates")
+    @PreAuthorize(Roles.PATIENT_COHORT_DATES)
+    public PatientDtos.CohortDates cohortDates(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate bornFrom,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate bornTo,
+            @RequestParam(required = false) Integer limit) {
+        return service.cohortDates(bornFrom, bornTo, limit);
+    }
+
     @GetMapping("/{id}")
     @PreAuthorize(Roles.CLINICAL_READ)
     public PatientDtos.PatientResponse get(@PathVariable UUID id) {

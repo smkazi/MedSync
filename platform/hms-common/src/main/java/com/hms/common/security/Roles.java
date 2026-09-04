@@ -260,6 +260,29 @@ public final class Roles {
     public static final String PATIENT_COHORT_READ = "hasAnyRole('ADMIN','DOCTOR','NURSE')";
 
     /**
+     * Who may list a birth cohort's <em>dates</em>: an id and a date of birth, and no name at all.
+     *
+     * <p>A second, narrower cohort endpoint rather than a wider role on the one above, and the
+     * distinction is the whole reason it exists. A calling list needs a name, because somebody
+     * telephones a family and has to ask for a child. **A coverage rate does not.** It needs a
+     * birthday to compute an age against and a key to join the register on, and a name on that
+     * answer would be a name disclosed for no purpose the caller can state.
+     *
+     * <p>This is what lets {@link #EPIDEMIOLOGIST} compute a rate while holding nothing that names
+     * anybody: with this token the ids are opaque, because every endpoint that would resolve one —
+     * the patient record, the register, an encounter — refuses this role. Found by the abuse suite
+     * rather than by design: the first version of the measure endpoint called the named cohort and
+     * was refused, and the fix was to narrow the disclosure rather than widen the role.
+     *
+     * <p>Stated rather than pretended: a birthday against a small cohort is re-identifying in
+     * principle, the way any near-identifier is. What this constant buys is that re-identification
+     * takes outside knowledge instead of being handed over, which is the same posture the
+     * surveillance aggregate takes on small cells.
+     */
+    public static final String PATIENT_COHORT_DATES =
+            "hasAnyRole('ADMIN','EPIDEMIOLOGIST','DOCTOR','NURSE')";
+
+    /**
      * Who may write a national health identifier onto a patient record.
      *
      * <p>The front desk and an administrator, and no clinician: linking an ABHA is a registration
@@ -398,6 +421,43 @@ public final class Roles {
      * the other's work — the blurring {@link #CASHIER} refused for billing.
      */
     public static final String RADIOLOGIST = "RADIOLOGIST";
+
+    /**
+     * Public health reporting: coverage rates and notifiable-disease counts.
+     *
+     * <p>A job and not a module, per the {@link #CASHIER} decision — compiling a district return is
+     * somebody's weekly work. Not folded into {@code ADMIN} although an administrator can do
+     * everything this role can: the administrator account is the one that repairs the platform, and
+     * handing it to whoever files a weekly return means the return is filed by an account nobody
+     * can constrain.
+     *
+     * <p><strong>This role holds no per-patient endpoint, and that is a safety property rather than
+     * a coincidence.</strong> {@code CareRelationshipClient.isNarrowed()} is expressed as "is a
+     * clinician and is not an administrator", so a role added later falls <em>outside</em> the
+     * narrowing until somebody decides otherwise — which is the safer direction for a check whose
+     * failure mode is locking a new role out of every record, and is only safe while the new role
+     * reads aggregates. So this constant appears in exactly two places, both of which return counts
+     * and rates. The abuse-case suite asserts the rest: 403 on a line list, on one patient's
+     * register, on an encounter, on a patient record and on the disclosure register. Those rows are
+     * what goes red the day somebody adds this role to a clinical constant because a screen needed
+     * a name.
+     */
+    public static final String EPIDEMIOLOGIST = "EPIDEMIOLOGIST";
+
+    /**
+     * Who may read a quality measure's rate.
+     *
+     * <p>The people who compile the return and the people whose work it measures. A clinic that
+     * cannot see its own coverage cannot improve it, so the ward is here; the billing desk, the
+     * bench and the front desk are not, because a coverage rate is not their work in either
+     * direction.
+     *
+     * <p>A rate carries no identifier — the aggregate never selects one — so the narrowing has
+     * nothing to narrow and does not apply. What decomposes a rate into the children behind it is a
+     * separate, administrator-only act, for the same reason a line list is.
+     */
+    public static final String QUALITY_MEASURE_READ =
+            "hasAnyRole('ADMIN','EPIDEMIOLOGIST','DOCTOR','NURSE')";
 
     /**
      * Acquisition: the modality worklist, and registering the studies that come back.

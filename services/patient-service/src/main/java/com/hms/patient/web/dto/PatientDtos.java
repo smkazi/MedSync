@@ -180,6 +180,29 @@ public final class PatientDtos {
         }
     }
 
+    /**
+     * One child in a birth cohort, without a name.
+     *
+     * <p>An id and a birthday, which is everything a coverage rate needs and nothing more: a
+     * birthday to compute an age against, and a key to join the register on. A calling list needs a
+     * name because somebody telephones a family; a rate does not, and a name on this answer would
+     * be a name disclosed for no purpose the caller can state.
+     *
+     * <p>A separate record rather than {@link CohortMember} with two nulls in it. A shape whose
+     * fields are conventionally empty is a shape somebody eventually fills in.
+     */
+    public record CohortDate(UUID id, LocalDate dateOfBirth) {
+    }
+
+    /** The same cohort, dates only, and the same truncation contract. */
+    public record CohortDates(List<CohortDate> members, int returned, long total, boolean truncated,
+                              String note) {
+
+        public CohortDates {
+            members = List.copyOf(members);
+        }
+    }
+
     /** The encrypted identifiers, released only to authorised roles and audited on every read. */
     public record PatientIdentifiers(UUID id, String mrn, String nationalId,
                                      String insurancePolicyNo, String abhaNumber,

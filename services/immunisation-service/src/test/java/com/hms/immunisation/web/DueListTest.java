@@ -252,7 +252,15 @@ class DueListTest {
         // date that proves they did not. The window closed at 14 days; the dose belongs to dose 2.
         JsonNode birthDose = dueFor(child, "HEPB", 1);
         assertThat(birthDose.get("status").asString()).isEqualTo("NO_LONGER_GIVEN");
-        assertThat(birthDose.get("dosesCounted").asInt()).isZero();
+        // Dose 3 is next, which is what proves the six-week dose landed on dose 2 rather than
+        // filling the birth-dose row.
+        assertThat(dueFor(child, "HEPB", 3).get("doseNumber").asInt()).isEqualTo(3);
+        // And dosesCounted is a fact about the ANTIGEN, not about the row, so every HEPB row
+        // reports the one dose this child has -- including the skipped one. This assertion read
+        // zero when the count was captured per row as it was built, and that was the defect: a
+        // child whose birth-dose window had shut read as having none of the doses they had, because
+        // the skipped row was the only row their antigen produced.
+        assertThat(birthDose.get("dosesCounted").asInt()).isEqualTo(1);
         assertThat(dueFor(child, "HEPB", 3).get("dosesCounted").asInt()).isEqualTo(1);
     }
 

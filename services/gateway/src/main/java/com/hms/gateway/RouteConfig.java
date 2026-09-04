@@ -134,6 +134,13 @@ public class RouteConfig {
                 .route("vaccines", r -> r
                         .path("/vaccines/**")
                         .uri(services.immunisation()))
+                // Clinical quality measures. A third prefix rather than a path under
+                // /immunisations, because a measure is not a fact about a patient: it is a
+                // published specification and a rate over a population, and the day a measure
+                // reads something other than the register this route will not have to move.
+                .route("measures", r -> r
+                        .path("/measures/**")
+                        .uri(services.immunisation()))
                 // Clinical decision support: summarisation, triage, no-show risk, coding.
                 .route("ai", r -> r
                         .path("/ai/**")

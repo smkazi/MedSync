@@ -47,9 +47,12 @@ import org.springframework.web.client.RestClient;
  * children are due anything — a wrong answer that looks like good news, which is the kind nobody
  * checks.
  *
- * <p>No {@code may…()} companion, unlike {@code CareRelationshipClient}'s two-method split: there is
- * one caller and one behaviour here, and a second method nobody calls is a second code path nobody
- * tests.
+ * <p><strong>Two reads, because there are two disclosures.</strong> A calling list needs a name —
+ * somebody telephones a family and has to ask for a child. A coverage rate does not, and asking for
+ * one would be asking for a name with no purpose behind it. So {@link #bornBetween} answers names
+ * and {@link #bornBetweenWithoutNames} does not, each gated by its own role in patient-service. The
+ * second one exists because the abuse suite refused the first version of the measure endpoint, and
+ * the fix was to narrow the disclosure rather than widen the role.
  */
 @Component
 public class PatientCohortClient {
@@ -106,6 +109,31 @@ public class PatientCohortClient {
      *                               has no birthday
      */
     public Cohort bornBetween(LocalDate bornFrom, LocalDate bornTo, Integer limit) {
+        return read("/patients/cohort", bornFrom, bornTo, limit);
+    }
+
+    /**
+     * The same cohort with the names left off: an id and a date of birth, and nothing else.
+     *
+     * <p>What a coverage rate reads. It needs a birthday to compute an age against and a key to
+     * join the register on; it does not need to know who anybody is, and a rate that fetched names
+     * would be fetching them for no purpose its caller could state.
+     *
+     * <p>This exists because the abuse suite refused the first version. The measure endpoint called
+     * {@link #bornBetween} and an epidemiologist was answered 403 by patient-service — correctly,
+     * since that role must not be able to list children by name. The fix was to narrow the
+     * disclosure rather than to widen the role, which is the direction that decision should always
+     * go. See {@code Roles.PATIENT_COHORT_DATES}.
+     *
+     * <p>Returns the same {@link Cohort} shape with {@code mrn} and {@code fullName} null, because
+     * the caller's arithmetic is identical either way and a second nearly-identical record would be
+     * two places to change the truncation contract.
+     */
+    public Cohort bornBetweenWithoutNames(LocalDate bornFrom, LocalDate bornTo, Integer limit) {
+        return read("/patients/cohort/dates", bornFrom, bornTo, limit);
+    }
+
+    private Cohort read(String path, LocalDate bornFrom, LocalDate bornTo, Integer limit) {
         String bearerToken = CurrentUser.token().orElse(null);
         if (bearerToken == null || bearerToken.isBlank()) {
             // Nothing to forward means the question cannot be asked as anybody, and this service
@@ -119,7 +147,7 @@ public class PatientCohortClient {
             @SuppressWarnings("unchecked")
             Map<String, Object> response = patients.get()
                     .uri(builder -> {
-                        builder.path("/patients/cohort")
+                        builder.path(path)
                                 .queryParam("bornFrom", bornFrom)
                                 .queryParam("bornTo", bornTo);
                         if (limit != null) {
@@ -139,8 +167,8 @@ public class PatientCohortClient {
             throw new BadRequestException("The patient directory refused that birth range: "
                     + ex.getResponseBodyAsString());
         } catch (RuntimeException ex) {
-            log.error("Patient directory unreachable while building a due list for {}..{}",
-                    bornFrom, bornTo, ex);
+            log.error("Patient directory unreachable reading {} for {}..{}", path, bornFrom,
+                    bornTo, ex);
             throw new IllegalStateException("The patient directory is unreachable, and a due list "
                     + "computed from a guessed age would call children at the wrong time. Nothing "
                     + "has been produced.", ex);

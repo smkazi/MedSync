@@ -40,6 +40,17 @@ public final class Api {
     public static final String RADIOLOGIST = "dr.mistry";
 
     /**
+     * Public health. The account that exists so the suite can prove a role is aggregate-only.
+     *
+     * <p>It holds EPIDEMIOLOGIST and nothing else, which matters more here than for any other
+     * identity in this file: the care-relationship narrowing is expressed as "is a clinician and is
+     * not an administrator", so a role added later falls <em>outside</em> it by a check nobody
+     * edited — and that is only safe while the role holds no per-patient endpoint. This account is
+     * how that stays true rather than being asserted in a comment.
+     */
+    public static final String EPIDEMIOLOGIST = "epidemiologist";
+
+    /**
      * The notification service's own account. Not a person.
      *
      * <p>Here so the abuse suite can prove the narrowest role on the platform really is narrow:

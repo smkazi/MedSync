@@ -380,6 +380,67 @@ class PatientApiIntegrationTest {
     }
 
     @Test
+    @DisplayName("the dates-only cohort answers an id and a birthday, and no name at all")
+    void theDatesCohortCarriesNoName() throws Exception {
+        LocalDate bornOn = aBirthdayOfItsOwn();
+        registerBornOn(uniqueSurname(), bornOn);
+
+        JsonNode answer = objectMapper.readTree(mockMvc.perform(get("/patients/cohort/dates")
+                        .param("bornFrom", bornOn.toString())
+                        .param("bornTo", bornOn.toString())
+                        .with(as("EPIDEMIOLOGIST")))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString());
+
+        assertThat(answer.get("members").size()).isEqualTo(1);
+        JsonNode member = answer.get("members").get(0);
+        assertThat(member.get("dateOfBirth").asString()).isEqualTo(bornOn.toString());
+        // Exactly two properties. A coverage rate needs a birthday to compute an age against and a
+        // key to join the register on; a name on this answer would be a name disclosed for no
+        // purpose the caller could state. Asserted on the property names rather than by grepping,
+        // so a field added later has to pass this test.
+        assertThat(member.propertyNames()).containsExactlyInAnyOrder("id", "dateOfBirth");
+        // The same truncation contract as the named cohort: it is the same query underneath.
+        assertThat(answer.get("truncated").asBoolean()).isFalse();
+    }
+
+    @Test
+    @DisplayName("an epidemiologist gets the dates and is refused the names")
+    void theTwoCohortsHaveTwoRoles() throws Exception {
+        LocalDate bornOn = aBirthdayOfItsOwn();
+
+        // The whole reason the narrow endpoint exists. This role computes rates and must not be
+        // able to list children by name, so the fix when it was refused the named cohort was to
+        // narrow the disclosure rather than widen the role.
+        //
+        // The two reads are also audited under separate actions -- PATIENT_COHORT and
+        // PATIENT_COHORT_DATES -- because "who has been listing children by name" and "who has been
+        // computing rates" are different questions that one action would answer neither of. Not
+        // asserted here, and the reason is worth writing down rather than discovering: an audit
+        // record leaves this service as an event and is written by identity-service, and neither
+        // this test context nor CI runs a broker. A query against a table this service does not
+        // have would pass on an empty result and prove nothing, which is worse than no assertion.
+        mockMvc.perform(get("/patients/cohort/dates").param("bornFrom", bornOn.toString())
+                        .param("bornTo", bornOn.toString()).with(as("EPIDEMIOLOGIST")))
+                .andExpect(status().isOk());
+        mockMvc.perform(cohortRequest(bornOn).with(as("EPIDEMIOLOGIST")))
+                .andExpect(status().isForbidden());
+
+        // And the ward holds both, because a nurse runs the calling list and may also want to know
+        // how their clinic is doing.
+        mockMvc.perform(get("/patients/cohort/dates").param("bornFrom", bornOn.toString())
+                        .param("bornTo", bornOn.toString()).with(as("NURSE")))
+                .andExpect(status().isOk());
+
+        // The billing desk and the bench hold neither.
+        for (String role : List.of("CASHIER", "LAB_TECH", "RECEPTIONIST")) {
+            mockMvc.perform(get("/patients/cohort/dates").param("bornFrom", bornOn.toString())
+                            .param("bornTo", bornOn.toString()).with(as(role)))
+                    .andExpect(status().isForbidden());
+        }
+    }
+
+    @Test
     @DisplayName("a birth range that runs backwards is refused, not answered empty")
     void aBackwardsRangeIsRefused() throws Exception {
         mockMvc.perform(get("/patients/cohort")

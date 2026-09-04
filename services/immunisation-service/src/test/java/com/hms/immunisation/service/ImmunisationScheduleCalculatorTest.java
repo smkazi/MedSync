@@ -326,7 +326,29 @@ class ImmunisationScheduleCalculatorTest {
             assertThat(rows.get(0).status()).isEqualTo(DueStatus.NO_LONGER_GIVEN);
             // One dose counted, and it is the second one in the series.
             assertThat(rows.get(1).doseNumber()).isEqualTo(3);
-            assertThat(rows.get(1).dosesCounted()).isEqualTo(1);
+            // Every row for the antigen reports that one dose, the skipped one included, because
+            // dosesCounted is a fact about the antigen rather than about the row. Getting that
+            // wrong made a child with three hepatitis B doses read as having none -- see
+            // theCountSurvivesASkippedRow below, which is the case that pins it.
+            assertThat(rows).allSatisfy(row -> assertThat(row.dosesCounted()).isEqualTo(1));
+        }
+
+        @Test
+        @DisplayName("the count survives a skipped row: three doses read as three, not none")
+        void theCountSurvivesASkippedRow() {
+            // The defect a coverage measure found, and the reason `dosesCounted` is stamped once at
+            // the end rather than captured as each row is built. Three pentavalent doses continue
+            // the hepatitis B series the birth dose never began; the birth-dose row is skipped, and
+            // with the count captured per row it was the ONLY row this antigen produced -- so a
+            // child with three doses scored zero and the measure called them uncovered.
+            Evaluation evaluation = evaluate(hepB, List.of(
+                    given("HEPB", BORN.plusDays(42)), given("HEPB", BORN.plusDays(70))),
+                    BORN.plusDays(300));
+
+            List<Due> rows = evaluation.due().stream()
+                    .filter(row -> row.antigenCode().equals("HEPB")).toList();
+            assertThat(rows).isNotEmpty();
+            assertThat(rows).allSatisfy(row -> assertThat(row.dosesCounted()).isEqualTo(2));
         }
 
         @Test

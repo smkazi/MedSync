@@ -233,6 +233,54 @@ public final class ImmunisationDtos {
                                         LocalDate givenOn, int doseNumberAttempted, String because) {
     }
 
+    // ---- quality measures ----------------------------------------------------
+
+    /**
+     * What a measure asks, in the specification's own words.
+     *
+     * <p>The three population sentences are transcribed rather than rendered from the parameters
+     * beside them, deliberately: a sentence generated from the columns would always agree with the
+     * code and would therefore never reveal a disagreement between the code and the specification.
+     */
+    public record MeasureResponse(String code, String name, String kind, int byAgeDays,
+                                  String steward, String specificationVersion,
+                                  String initialPopulation, String denominator,
+                                  String denominatorExclusion, String numerator,
+                                  boolean countsEstimatedDates, boolean active,
+                                  List<MeasureAntigenResponse> antigens) {
+
+        public MeasureResponse {
+            antigens = List.copyOf(antigens);
+        }
+    }
+
+    public record MeasureAntigenResponse(String antigenCode, int dosesRequired) {
+    }
+
+    /**
+     * One period's answer.
+     *
+     * <p>Carries no patient identifier of any kind, and the calculator behind it never selects one
+     * into this shape — which is a better guarantee than a mapper that leaves fields out.
+     *
+     * @param rate       percent to two places, or <strong>null</strong> when the denominator is
+     *                   zero. "No children reached their second birthday in this district last
+     *                   month" is not "zero per cent of them were vaccinated", and rendering it as
+     *                   0% would put a false failure into a return somebody signs
+     * @param bornFrom   the birth range the period implies, echoed so the arithmetic can be checked
+     * @param computedAt when this answer was produced. Present because it is <em>not</em> cached: a
+     *                   dose entered from a card this morning correctly changes last quarter's rate,
+     *                   so two reads a week apart can legitimately differ and the stamp is how a
+     *                   reader tells that from an error
+     */
+    public record MeasureRateResponse(String code, String name, String kind, String steward,
+                                      String specificationVersion, String scheduleCode,
+                                      LocalDate periodFrom, LocalDate periodTo, LocalDate bornFrom,
+                                      LocalDate bornTo, int initialPopulation, int denominator,
+                                      int numerator, java.math.BigDecimal rate, boolean truncated,
+                                      String note, Instant computedAt) {
+    }
+
     // ---- the patient's register ---------------------------------------------
 
     /** Everything this service knows about one patient, in one read. */

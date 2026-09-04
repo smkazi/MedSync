@@ -112,7 +112,14 @@ public class DevDataSeeder implements ApplicationRunner {
             new SeedUser("33333333-0000-4000-8000-00000000000b", "radiographer",
                     "radiography@hms.local", "Tejas Kulkarni", Set.of("RADIOGRAPHER")),
             new SeedUser("33333333-0000-4000-8000-00000000000c", "dr.mistry", "mistry@hms.local",
-                    "Dr Zenobia Mistry", Set.of("RADIOLOGIST")));
+                    "Dr Zenobia Mistry", Set.of("RADIOLOGIST")),
+            // Public health. Holds EPIDEMIOLOGIST and nothing else, which is the whole reason the
+            // account exists: this role sits outside the care-relationship narrowing by a check
+            // nobody edited, and that is only safe while it holds no per-patient endpoint. An
+            // account with exactly this one role is what lets the abuse-case suite prove it --
+            // 200 on the aggregates, 403 on a register, an encounter, a patient and a line list.
+            new SeedUser("33333333-0000-4000-8000-00000000000d", "epidemiologist",
+                    "publichealth@hms.local", "Dr Anjali Bhatt", Set.of("EPIDEMIOLOGIST")));
 
     private final UserRepository users;
     private final RoleRepository roles;

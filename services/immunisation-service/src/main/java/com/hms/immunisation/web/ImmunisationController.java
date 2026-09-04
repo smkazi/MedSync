@@ -5,6 +5,7 @@ import com.hms.immunisation.domain.ImmunisationEnums.ImmunisationSource;
 import com.hms.immunisation.service.CatalogueService;
 import com.hms.immunisation.service.DueListService;
 import com.hms.immunisation.service.ImmunisationService;
+import com.hms.immunisation.service.MeasureService;
 import com.hms.immunisation.service.VaccineStockService;
 import com.hms.immunisation.web.dto.ImmunisationDtos;
 import jakarta.validation.Valid;
@@ -42,13 +43,16 @@ public class ImmunisationController {
     private final CatalogueService catalogue;
     private final VaccineStockService stock;
     private final DueListService dueList;
+    private final MeasureService measures;
 
     public ImmunisationController(ImmunisationService register, CatalogueService catalogue,
-                                  VaccineStockService stock, DueListService dueList) {
+                                  VaccineStockService stock, DueListService dueList,
+                                  MeasureService measures) {
         this.register = register;
         this.catalogue = catalogue;
         this.stock = stock;
         this.dueList = dueList;
+        this.measures = measures;
     }
 
     // ---- the catalogue -------------------------------------------------------
@@ -139,6 +143,41 @@ public class ImmunisationController {
             @RequestParam(required = false)
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate asAt) {
         return dueList.due(bornFrom, bornTo, scheduleCode, limit, asAt);
+    }
+
+    // ---- quality measures ----------------------------------------------------
+
+    /**
+     * What is measured, and by whose specification.
+     *
+     * <p>Readable by anybody signed in, like the catalogue and the schedule: a measure definition
+     * is a published specification with no patient in it. The <em>rates</em> are gated below.
+     */
+    @GetMapping("/measures")
+    @PreAuthorize("isAuthenticated()")
+    public List<ImmunisationDtos.MeasureResponse> measures() {
+        return this.measures.published();
+    }
+
+    /**
+     * One period's rate.
+     *
+     * <p>An aggregate, and it is built so there is nothing to narrow: no identifier is selected
+     * into the response, so the care-relationship check has no row to check. That is what lets
+     * {@code EPIDEMIOLOGIST} hold this without holding anything per-patient — see
+     * {@link Roles#EPIDEMIOLOGIST} for why that is a safety property rather than a coincidence.
+     *
+     * <p>The period bounds birthdays rather than doses: a child is in the initial population when
+     * their Nth birthday falls inside it.
+     */
+    @GetMapping("/measures/{code}/rate")
+    @PreAuthorize(Roles.QUALITY_MEASURE_READ)
+    public ImmunisationDtos.MeasureRateResponse rate(
+            @PathVariable String code,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate periodFrom,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate periodTo,
+            @RequestParam(required = false) String scheduleCode) {
+        return measures.rate(code, periodFrom, periodTo, scheduleCode);
     }
 
     // ---- stock ---------------------------------------------------------------
