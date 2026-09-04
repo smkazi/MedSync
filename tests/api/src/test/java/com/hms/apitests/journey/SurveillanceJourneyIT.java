@@ -11,6 +11,7 @@ import static org.hamcrest.Matchers.nullValue;
 
 import com.hms.apitests.support.Api;
 import com.hms.apitests.support.Fixtures;
+import com.hms.apitests.support.Platform;
 import com.hms.apitests.support.RequiresRunningStack;
 import io.restassured.response.Response;
 import java.time.LocalDate;
@@ -43,7 +44,11 @@ class SurveillanceJourneyIT extends RequiresRunningStack {
     /** Measles: on the seeded notifiable list, and notifiable within twenty-four hours. */
     private static final String THE_CODE = "B05";
 
-    private static final String TODAY = LocalDate.now().toString();
+    /**
+     * The day the platform will stamp this diagnosis with, which is not necessarily the day the
+     * JVM running this test is having. A return asked for the wrong one of those two is empty.
+     */
+    private static final String TODAY = Platform.today().toString();
 
     private static Fixtures.PortalPatient patient;
     private static Fixtures.Clinician clinician;

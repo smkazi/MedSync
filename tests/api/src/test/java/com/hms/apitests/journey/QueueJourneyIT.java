@@ -6,6 +6,7 @@ import static org.hamcrest.Matchers.equalTo;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import com.hms.apitests.support.Api;
+import com.hms.apitests.support.Platform;
 import com.hms.apitests.support.Fixtures;
 import com.hms.apitests.support.RequiresRunningStack;
 import io.restassured.path.json.JsonPath;
@@ -59,7 +60,15 @@ class QueueJourneyIT extends RequiresRunningStack {
      */
     private static Instant anchor;
 
-    /** The service date every booking in this class lands on, in the clinic zone (UTC). */
+    /**
+     * The service date every booking in this class lands on, in the clinic's own zone.
+     *
+     * <p>Not UTC, and it used to say UTC because it used to be: S13b put scheduling on the shared
+     * HMS_ZONE chain, whose default is Asia/Kolkata. Everything below asks {@link Platform} rather
+     * than assuming, because the queue numbers a <em>day</em> and the day is the service's to
+     * decide - see the class comment on Platform for the five-and-a-half-hour window in which the
+     * two answers differ.
+     */
     private static LocalDate serviceDate;
 
     /** Every fixture is this long, and they step in twice that so nothing depends on order. */
@@ -77,13 +86,13 @@ class QueueJourneyIT extends RequiresRunningStack {
         // The queue numbers a day: a set split across midnight is two half-boards, and the staff
         // board below is read for whichever day the set is actually on.
         Instant soon = Instant.now().plus(10, ChronoUnit.MINUTES);
-        LocalDate today = soon.atZone(ZoneOffset.UTC).toLocalDate();
+        LocalDate today = soon.atZone(Platform.zone()).toLocalDate();
         boolean todayCanHold = soon.plus(LONGEST_SET_MINUTES, ChronoUnit.MINUTES)
-                .atZone(ZoneOffset.UTC).toLocalDate().equals(today);
+                .atZone(Platform.zone()).toLocalDate().equals(today);
         anchor = todayCanHold
                 ? soon
-                : today.plusDays(1).atStartOfDay(ZoneOffset.UTC).plusHours(9).toInstant();
-        serviceDate = anchor.atZone(ZoneOffset.UTC).toLocalDate();
+                : today.plusDays(1).atStartOfDay(Platform.zone()).plusHours(9).toInstant();
+        serviceDate = anchor.atZone(Platform.zone()).toLocalDate();
     }
 
     /**
@@ -96,7 +105,7 @@ class QueueJourneyIT extends RequiresRunningStack {
      * rather than reporting an empty board as a defect in the board.
      */
     private static boolean displayIsTestableToday() {
-        return serviceDate.equals(LocalDate.now(ZoneOffset.UTC));
+        return serviceDate.equals(Platform.today());
     }
 
     private static final String NO_ROOM_LEFT_TODAY =

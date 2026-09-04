@@ -105,14 +105,12 @@ func (s *state) canSignIn(port int) bool {
 	}
 	user := envOr("HMS_DB_USER", "hms")
 	pass := envOr("HMS_DB_PASSWORD", "hms")
-	cmd := exec.Command(psql,
-		fmt.Sprintf("postgresql://%s:%s@127.0.0.1:%d/postgres", user, pass, port),
-		"-tAc", "select 1")
-	// PGCONNECT_TIMEOUT so a server that accepts the socket and then stalls cannot hang the
-	// installer on its very first check.
-	cmd.Env = append(os.Environ(), "PGCONNECT_TIMEOUT=5")
-	out, err := cmd.CombinedOutput()
-	return err == nil && strings.Contains(string(out), "1")
+	// Through psqlRun for its argument order, which matters more here than anywhere: this probe
+	// fails closed, so getting it wrong does not produce an error - it silently declines a server
+	// that would have worked perfectly and stands up a second cluster beside it.
+	out, err := psqlRun(psql, fmt.Sprintf("postgresql://%s:%s@127.0.0.1:%d/postgres", user, pass, port),
+		"select 1")
+	return err == nil && !strings.Contains(strings.ToLower(string(out)), "error")
 }
 
 func pgTool(name string) string {
@@ -261,21 +259,59 @@ func (s *state) prepare() {
 
 	admin := fmt.Sprintf("postgresql://hms:hms@127.0.0.1:%d/postgres", s.DBPort)
 	target := fmt.Sprintf("postgresql://hms:hms@127.0.0.1:%d/hms", s.DBPort)
-	// Ignored on purpose: "already exists" is the expected answer on every run after the first, and
-	// a check-then-create would race with nothing useful gained.
-	_ = exec.Command(psql, admin, "-q", "-c", "create database hms").Run()
 
-	cmd := exec.Command(psql, target, "-q",
-		"-c", "create extension if not exists pg_trgm",
-		"-c", "create extension if not exists btree_gist")
-	if out, err := cmd.CombinedOutput(); err != nil {
+	// "already exists" is the expected answer on every run after the first, so a non-zero exit is
+	// not on its own a problem — but it is no longer discarded, because the one failure that
+	// matters here is silent and fatal: if the database is not created, every service that follows
+	// dies on a missing database twenty minutes later, and the message names Flyway rather than
+	// this step.
+	out, err := psqlRun(psql, admin, "create database hms")
+	created := err == nil
+	if !created && !strings.Contains(strings.ToLower(string(out)), "already exists") {
+		warn("could not create the database: %v", err)
+		dim("%s", strings.TrimSpace(string(out)))
+	}
+
+	if out, err := psqlRun(psql, target,
+		"create extension if not exists pg_trgm",
+		"create extension if not exists btree_gist"); err != nil {
 		warn("could not install pg_trgm/btree_gist: %v", err)
-		dim("%s", string(out))
+		dim("%s", strings.TrimSpace(string(out)))
+		// Fatal on a cluster this installer owns, and only a warning on somebody else's. Without
+		// these two extensions the very first migration fails, so continuing means a long build
+		// followed by twelve services that cannot start - which is exactly what happened on the
+		// machine that found this. Stopping here costs a minute; carrying on cost twenty.
+		if s.DBMode == "private" || s.DBMode == "docker" {
+			fail("the database this installer created cannot be prepared.\n\n"+
+				"Run this once, then start again:\n"+
+				"    psql -p %d -U hms -d hms -c \"create extension pg_trgm; create extension btree_gist;\"",
+				s.DBPort)
+		}
 		dim("run this once as a superuser, then start again:")
-		dim("  psql -p %d -d hms -c \"create extension pg_trgm; create extension btree_gist;\"", s.DBPort)
+		dim("  psql -p %d -U hms -d hms -c \"create extension pg_trgm; create extension btree_gist;\"", s.DBPort)
 		return
 	}
 	ok("database hms ready (extensions installed)")
+}
+
+// psqlRun runs one or more statements, with every flag before the connection string and the
+// connection string itself passed through -d.
+//
+// That shape is not stylistic. psql's option parsing stops at the first positional argument on at
+// least some builds - the one on the Windows machine that found this among them - so
+// `psql "<uri>" -c "..."` there took the URI as DBNAME, the next flag as USERNAME, and discarded
+// every -c with a warning. The database was never created, and the failure surfaced twenty minutes
+// later as twelve services that would not start. With -d there is no positional argument at all, so
+// there is nothing to stop parsing at.
+func psqlRun(psql, conn string, statements ...string) ([]byte, error) {
+	args := []string{"-q", "-v", "ON_ERROR_STOP=1"}
+	for _, statement := range statements {
+		args = append(args, "-c", statement)
+	}
+	args = append(args, "-d", conn)
+	cmd := exec.Command(psql, args...)
+	cmd.Env = append(os.Environ(), "PGCONNECT_TIMEOUT=10")
+	return cmd.CombinedOutput()
 }
 
 func (s *state) stopDatabase() {

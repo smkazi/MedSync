@@ -239,7 +239,12 @@ jobs:
           $env:PGPASSWORD = "hms"
           # The extensions are what `db` is really being asked about: without them the first
           # migration fails, and it fails minutes later inside a service log rather than here.
-          $out = & $psql "postgresql://hms@127.0.0.1:$($state.dbPort)/hms" -tAc "select string_agg(extname, ',' order by extname) from pg_extension where extname in ('pg_trgm','btree_gist')"
+          # Flags first and the connection string through -d, the same shape the installer uses and
+          # for the same reason: psql stops parsing options at the first positional argument on some
+          # builds, which is how a real machine had every -c silently discarded. This assertion read
+          # correctly on the runner it was written against, which is precisely why it should not be
+          # left in the shape that fails elsewhere.
+          $out = & $psql -tA -c "select string_agg(extname, ',' order by extname) from pg_extension where extname in ('pg_trgm','btree_gist')" -d "postgresql://hms@127.0.0.1:$($state.dbPort)/hms"
           "extensions: $out"
           if ($out -notmatch "btree_gist" -or $out -notmatch "pg_trgm") { throw "the extensions are missing" }
 

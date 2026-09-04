@@ -9,6 +9,7 @@ import static org.hamcrest.Matchers.nullValue;
 
 import com.hms.apitests.support.Api;
 import com.hms.apitests.support.Fixtures;
+import com.hms.apitests.support.Platform;
 import com.hms.apitests.support.RequiresRunningStack;
 import io.restassured.path.json.JsonPath;
 import java.time.LocalDate;
@@ -41,7 +42,12 @@ import org.junit.jupiter.api.TestMethodOrder;
 class ImmunisationJourneyIT extends RequiresRunningStack {
 
     /** Ten months old, so the six- and fourteen-week visits are behind them and measles is due. */
-    private static final LocalDate BORN_ON = LocalDate.now().minusDays(300);
+    /**
+     * In the platform's zone, because the service computes ageDays against its own today and the
+     * test then asserts that number exactly. Computed in the JVM's zone instead, this child was
+     * 301 days old for five and a half hours out of every day.
+     */
+    private static final LocalDate BORN_ON = Platform.today().minusDays(300);
 
     private static Fixtures.Patient child;
     private static Fixtures.Clinician clinician;

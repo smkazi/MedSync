@@ -316,6 +316,20 @@ jobs:
       # the same reason the other two are: the limit under test is the platform's, not CI's.
       HMS_RATE_LIMIT_PORTAL_RPM: "100000"
 
+      # Stated rather than left to default, and this job is the reason it has to be.
+      #
+      # Every service takes its day from HMS_ZONE and falls back to Asia/Kolkata; this runner is
+      # UTC. Between 18:30 and midnight UTC those are different dates, and seven tests failed on
+      # exactly that - a diagnosis recorded "now" landing on tomorrow's service date, a child born
+      # now-minus-300-days coming back 301 days old, an appointment checked in today getting a token
+      # on tomorrow's board. The suite reads this same variable now (see tests/api support/Platform),
+      # so both halves share one value instead of each assuming its own.
+      #
+      # UTC is deliberately NOT the value. Pinning the platform to the runner's own zone would make
+      # the two agree by construction and prove nothing; keeping the real default means every run
+      # exercises the offset that every deployment actually has.
+      HMS_ZONE: Asia/Kolkata
+
     steps:
       - uses: actions/checkout@v4
 

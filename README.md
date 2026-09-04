@@ -2032,6 +2032,36 @@ Worth writing down, because it is the argument for having built them:
   escape, so a Windows path doubled "to be safe" matches nothing; and Actions appends
   `exit $LASTEXITCODE` to a `run:` block, so a step whose last command was *meant* to fail fails
   itself, silently. The installer was right in all three.
+- **Seven API tests could only fail for five and a half hours out of twenty-four, and today they
+  did.** Found by refusing to fast-forward `main` onto a commit whose CI had not finished. Every
+  service decides what "today" means from `HMS_ZONE`, which defaults to `Asia/Kolkata`; the API
+  suite computed its dates from the JVM's zone, which on a runner is UTC. Between 18:30 and
+  midnight UTC those are different days — so a notifiable diagnosis recorded "now" landed on
+  tomorrow's service date and a return asked for "today" was empty, a child born `now - 300 days`
+  came back 301 days old, and an appointment checked in today got its token on tomorrow's board.
+  `QueueJourneyIT` even said so out loud: *"the service date every booking in this class lands on,
+  in the clinic zone (UTC)"* — true when written, and made false by **S13b**, which moved
+  scheduling onto the shared `HMS_ZONE` chain and changed that default. S13b's own commit message
+  said no test broke, and it was right about the unit tests, which pin `hms.scheduling.zone: UTC`
+  in `application-test.yml`. This suite runs against a live stack on the real default, which is the
+  whole point of it. There is now one `support/Platform` the suite asks, reading the same variable
+  the services read, and CI states `HMS_ZONE` explicitly rather than inheriting it — deliberately
+  *not* as UTC, because a platform pinned to the runner's own zone would agree with itself by
+  construction and prove nothing. Verified by re-running the whole suite inside the same window
+  that had just failed eight of it: 290 of 290.
+- **A one-click installer that created a cluster and then could not create a database in it.**
+  Found by the same person, on the next run of the .exe: `initdb` succeeded, and then
+  `create database hms` silently did nothing, and twenty minutes of building later all twelve
+  services failed to start against a database that was never there. The cause was argument order.
+  `psql "<uri>" -c "..."` relies on options being permuted past a positional argument, and their
+  psql build stops parsing at the first one — so the URI became `DBNAME`, the next flag became
+  `USERNAME`, and every `-c` was discarded with a warning. Every invocation now puts its flags
+  first and passes the connection string through `-d`, so there is no positional argument to stop
+  at. Two further things were wrong around it: the create was `_ =` discarded, so the one failure
+  that matters was silent; and a database this installer created and cannot prepare is now fatal
+  rather than a warning, because carrying on costs a twenty-minute build and ends in twelve dead
+  services. The same shape was in the Windows CI assertion, where it happened to work on that
+  runner — fixed there too, since an assertion that only holds on one machine is not one.
 - **The installer demanded a prerequisite the project does not have, and refused a machine that
   could have run it.** Found by somebody running the .exe on their own Windows laptop, not by any
   suite here. `winget install --id Apache.Maven` answered *"No package found matching input
