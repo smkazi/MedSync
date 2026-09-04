@@ -122,9 +122,34 @@ jobs:
       - name: help
         run: .\dist\MedSync-Setup.exe help
 
-      # doctor exits non-zero when a port is occupied, which on a fresh runner it is not — so a
-      # failure here is a real finding rather than noise. `-ErrorAction Stop` because PowerShell
-      # does not fail a step on a native non-zero exit unless it is told to.
+      # The version floor, asserted from the failing side first — and this is not a contrivance to
+      # fill a step. A windows-latest runner's default JDK is 17, and the first run of this workflow
+      # discovered that by failing here: doctor read "17.0.20" out of `java -version` on Windows,
+      # called it too old, found no Docker engine to fall back to, and refused. That is exactly
+      # right, and it is the half of the detection that a machine which already meets the
+      # prerequisites can never exercise. So it is checked before the JDK is upgraded rather than
+      # engineered away.
+      - name: doctor refuses a JDK that is too old
+        run: |
+          $out = .\dist\MedSync-Setup.exe doctor 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          $out
+          if ($code -eq 0) { throw "doctor passed on a JDK 17 runner; the version floor is not being applied" }
+          if ($out -notmatch "too old") { throw "doctor refused for some other reason than the JDK version" }
+          # The same output has to show the Windows-only lookups working, or a pass here could be
+          # hiding detection that finds nothing at all.
+          if ($out -notmatch "PostgreSQL server binaries at C:\\\\Program Files\\\\PostgreSQL") {
+            throw "the Program Files search did not find PostgreSQL"
+          }
+          if ($out -notmatch "engine is not running") { throw "the Docker engine check did not report" }
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      # And now from the passing side. doctor also exits non-zero when a port is occupied, which on
+      # a fresh runner it is not, so a failure here is a real finding rather than noise.
       - name: doctor
         run: |
           .\dist\MedSync-Setup.exe doctor
