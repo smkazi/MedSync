@@ -156,7 +156,14 @@ jobs:
           # Now the exit code, with the route pinned so the answer cannot depend on the machine.
           $env:MEDSYNC_MODE = "native"
           .\dist\MedSync-Setup.exe doctor | Out-Null
-          if ($LASTEXITCODE -eq 0) { throw "MEDSYNC_MODE=native on a JDK 17 should have been refused" }
+          $native = $LASTEXITCODE
+          if ($native -eq 0) { throw "MEDSYNC_MODE=native on a JDK 17 should have been refused" }
+          "MEDSYNC_MODE=native on a JDK 17 was refused with exit $native, which is correct"
+          # And now the step has to say so out loud, because a `run:` block is wrapped by Actions in
+          # a trailing `exit $LASTEXITCODE`. A step whose last native command failed on purpose
+          # therefore fails itself, with no error text and nothing to point at - which is exactly
+          # how this step failed once while every assertion in it had passed.
+          exit 0
 
       - uses: actions/setup-java@v4
         with:
