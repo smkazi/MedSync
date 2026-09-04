@@ -10,8 +10,8 @@ haematology analyzer over its own wire protocol and released by a pathologist.
 
 > **Status:** the clinical core, the laboratory (including analyzer integration), the AI service
 > and the web UI are implemented and verified end to end against a real stack, and so are the
-> containerisation, TLS, security-testing and performance-testing layers. **1,407 tests pass** —
-> 828 Java unit and integration, 91 Python, 70 web unit, 275 black-box API and security abuse cases,
+> containerisation, TLS, security-testing and performance-testing layers. **1,432 tests pass** —
+> 845 Java unit and integration, 91 Python, 70 web unit, 283 black-box API and security abuse cases,
 > and 143 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
 > [Security](#security); what is left is in the [Roadmap](#roadmap).
 
@@ -795,6 +795,14 @@ are load-bearing. Without the forward half a remembered dose could carry an inve
 the reverse half a dose given here could be recorded with no lot at all and the recall query would
 miss it silently, which is the worse of the two.
 
+**A dose given somewhere else has its own endpoint, not a flag.** The two demand different fields —
+one a lot number, the other a sentence saying what was seen — and a flag on one endpoint is a flag
+somebody forgets, which is how a remembered dose ends up in the register with an invented lot. The
+clearest illustration of why they are two methods: **a retired product still takes a card dose and
+takes no new one.** A vaccine withdrawn from this hospital's shelf is still a vaccine a child had
+somewhere else in 2019, and refusing to record it would mean losing the dose or recording it against
+a product they did not receive.
+
 **Due and overdue are computed on every read, never stored.** The decisive argument is that *the
 state transition that matters has no event behind it*: a dose becomes overdue because a day passed —
 nothing happens, nobody writes a row, no message is published. A materialised due table would
@@ -1551,12 +1559,12 @@ make help          # everything else
 Or directly:
 
 ```bash
-mvn -q verify                                     # 828 Java unit and integration tests
+mvn -q verify                                     # 845 Java unit and integration tests
 cd services/ai-service && uv run pytest -q        # 91 Python tests
 cd web && npm run lint && npm run typecheck       # web static checks
 cd web && npm test                                # 70 web unit tests
 cd web && npx playwright test                     # 143 browser tests, no skips
-mvn -Pautomation -pl tests/api verify             # 275 API and security abuse cases
+mvn -Pautomation -pl tests/api verify             # 283 API and security abuse cases
 ```
 
 | Layer | What runs | Where |
@@ -1759,6 +1767,18 @@ Worth writing down, because it is the argument for having built them:
   counted"* — a contradiction on one screen. Complete now means every dose was given, not that the
   schedule ran out of rows to offer. All three of these were in code that the unit suite passed:
   what caught them was running the thing and reading the output.
+- **The historical-dose endpoint answered 500 to a caller who named the wrong source**, and it was
+  found by writing the first test the path had ever had. `Immunisation.historical(...)` guards the
+  one value it must refuse — `ADMINISTERED_HERE`, because a dose given here needs a lot number that
+  request body has no field for — and it guarded it with `IllegalArgumentException`, which the
+  handler renders as "we are broken". The endpoint, the factory and four CHECK constraints had all
+  existed for two commits with nothing exercising them, which is the more interesting half of the
+  finding: **the register's own class comment claimed the database was the arbiter, and no test had
+  ever asked it.** Half of `HistoricalDoseTest` now goes round the application with `JdbcTemplate`
+  and asserts PostgreSQL refuses each wrong shape by constraint name, because a test that only
+  posts JSON is testing the DTO and the factory rather than the guarantee. It also asserts the two
+  well-formed shapes are accepted — without that, a schema that refused everything would satisfy
+  every other assertion in the file.
 - **Every error on an SVG endpoint was a 500 with an empty body — if the caller asked properly.**
   Found by hand against the live stack while adding the wristband, and not by any suite: an
   endpoint declaring `produces = "image/svg+xml"` has no acceptable representation for a

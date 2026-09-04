@@ -2,6 +2,7 @@ package com.hms.immunisation.service;
 
 import com.hms.common.audit.AuditService;
 import com.hms.common.careteam.CareRelationshipClient;
+import com.hms.common.error.BadRequestException;
 import com.hms.common.error.ConflictException;
 import com.hms.common.error.NotFoundException;
 import com.hms.common.events.DomainEvent;
@@ -103,12 +104,28 @@ public class ImmunisationService {
      * <p>Its own method and its own endpoint rather than a flag on the one above, because it is a
      * different act with a different set of required fields — and a flag on one endpoint is a flag
      * somebody forgets.
+     *
+     * <p><strong>A retired product is accepted here and refused on the way in above</strong>, which
+     * is deliberate and is the clearest illustration of why these are two methods. A vaccine
+     * withdrawn from this hospital's shelf is still a vaccine a child had somewhere else in 2019,
+     * and refusing to record it would mean either losing the dose or recording it against a product
+     * they did not receive.
      */
     @Transactional
     public ImmunisationDtos.DoseResponse recordHistorical(
             UUID patientId, String patientMrn, String productCode, LocalDate givenOn,
             boolean dateEstimated, ImmunisationSource source, String evidence) {
         careTeam.requirePatientAccess(patientId);
+        if (source == ImmunisationSource.ADMINISTERED_HERE) {
+            // Refused here rather than at the entity, which guards the same rule and answers a 500:
+            // the factory's throw is a programming-error backstop, and a caller naming the wrong
+            // source on this endpoint has made a request error. They also cannot get what they are
+            // asking for by trying harder -- a dose given here needs a lot number this body has no
+            // field for -- so the message names the endpoint that does.
+            throw new BadRequestException("A dose given here is recorded through POST "
+                    + "/immunisations, which takes the lot number it came out of. This endpoint is "
+                    + "for a dose given somewhere else, and it takes the evidence for it instead.");
+        }
         VaccineProduct product = catalogue.requireProduct(productCode);
         if (givenOn.isAfter(clock.today())) {
             throw new ConflictException(

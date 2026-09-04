@@ -91,6 +91,16 @@ jobs:
       - url: "${ZAP_TARGET}/immunisations/schedules"
         method: GET
         responseCode: 200
+      #
+      # POST /immunisations/historical has no row, and the reason is the one the imaging order
+      # taught: a row here would be either harmful or useless. Its `evidence` field is 500
+      # characters of free text that reaches a register and a screen, so it looks like an ideal
+      # active-scan sink -- but the register narrows its WRITE path as well as its reads, which no
+      # other module does, so this requestor (a doctor with no care relationship to a made-up
+      # patient) is refused before the free text reaches anything. Relating the doctor to a patient
+      # to get past that would make every scheduled scan write real doses into a real register, and
+      # a register is a lifetime record. The injection surface is covered by tests/api instead,
+      # which records against a patient it registered and an encounter it opened.
       - url: "${ZAP_TARGET}/lab/orders?status=ORDERED&mrn=MRN-000001&page=0&size=20"
         method: GET
       - url: "${ZAP_TARGET}/lab/catalog"
