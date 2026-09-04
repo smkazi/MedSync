@@ -122,35 +122,47 @@ jobs:
       - name: help
         run: .\dist\MedSync-Setup.exe help
 
-      # The version floor, asserted from the failing side first — and this is not a contrivance to
-      # fill a step. A windows-latest runner's default JDK is 17, and the first run of this workflow
-      # discovered that by failing here: doctor read "17.0.20" out of `java -version` on Windows,
-      # called it too old, found no Docker engine to fall back to, and refused. That is exactly
-      # right, and it is the half of the detection that a machine which already meets the
-      # prerequisites can never exercise. So it is checked before the JDK is upgraded rather than
-      # engineered away.
+      # The version floor is checked from the failing side first, and the JDK is pinned rather than
+      # inherited. Two runs of this workflow taught both halves of that sentence: the first found
+      # windows-latest defaulting to JDK 17 and doctor correctly calling it too old, and the second
+      # got a runner whose Docker engine happened to be running — where a too-old JDK is genuinely
+      # not fatal, because that route needs no JDK at all. So the image's defaults decide nothing
+      # here: setup-java installs 17 on purpose, and the route is forced with MEDSYNC_MODE.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
       - name: doctor refuses a JDK that is too old
         run: |
           $out = .\dist\MedSync-Setup.exe doctor 2>&1 | Out-String
-          $code = $LASTEXITCODE
           $out
-          if ($code -eq 0) { throw "doctor passed on a JDK 17 runner; the version floor is not being applied" }
-          if ($out -notmatch "too old") { throw "doctor refused for some other reason than the JDK version" }
-          # The same output has to show the Windows-only lookups working, or a pass here could be
+          # The Java row itself, which is the version floor. Asserted on the output rather than on
+          # the exit code, because whether a too-old JDK is fatal depends on whether there is a
+          # container route to fall back to — and on a hosted runner that varies between machines.
+          if ($out -notmatch "Java \(JDK 21\+\)\s+17") { throw "doctor did not report the JDK as 17" }
+          if ($out -notmatch "too old") { throw "doctor did not apply the version floor to a JDK 17" }
+          # And the Windows-only lookups, from the same output: a pass above could otherwise be
           # hiding detection that finds nothing at all.
           if ($out -notmatch "PostgreSQL server binaries at C:\\\\Program Files\\\\PostgreSQL") {
             throw "the Program Files search did not find PostgreSQL"
           }
-          if ($out -notmatch "engine is not running") { throw "the Docker engine check did not report" }
+          # Now the exit code, with the route pinned so the answer cannot depend on the machine.
+          $env:MEDSYNC_MODE = "native"
+          .\dist\MedSync-Setup.exe doctor | Out-Null
+          if ($LASTEXITCODE -eq 0) { throw "MEDSYNC_MODE=native on a JDK 17 should have been refused" }
 
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "21"
 
-      # And now from the passing side. doctor also exits non-zero when a port is occupied, which on
-      # a fresh runner it is not, so a failure here is a real finding rather than noise.
+      # And now from the passing side, with the route still pinned to native so this asserts the
+      # JDK and not the runner's Docker. doctor also exits non-zero when a port is occupied, which
+      # on a fresh runner it is not, so a failure here is a real finding rather than noise.
       - name: doctor
+        env:
+          MEDSYNC_MODE: native
         run: |
           .\dist\MedSync-Setup.exe doctor
           if ($LASTEXITCODE -ne 0) { throw "doctor exited $LASTEXITCODE" }

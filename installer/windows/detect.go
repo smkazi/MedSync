@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // What is on this machine, and what to tell somebody who is missing it.
@@ -171,7 +173,15 @@ func inspect() *environment {
 	// `docker version` check would send the installer down the container path and then fail on
 	// "cannot connect to the Docker daemon" with everything already committed to that route.
 	if e.docker.found {
-		e.dockerRunning = exec.Command(e.docker.path, "info").Run() == nil
+		// Bounded, because this is the one probe here that can hang rather than fail. `docker info`
+		// on a machine where Docker Desktop is installed but its engine is starting, stopped, or
+		// wedged blocks on the named pipe — it took 44 seconds on a CI runner where the engine was
+		// healthy — and an installer whose very first screen sits silent for a minute reads as
+		// broken. Ten seconds is far longer than a running engine ever needs, and a timeout means
+		// exactly what a failure means: not usable, take the other route.
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		e.dockerRunning = exec.CommandContext(ctx, e.docker.path, "info").Run() == nil
 	}
 	return e
 }
