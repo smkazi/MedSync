@@ -142,9 +142,15 @@ jobs:
           # container route to fall back to — and on a hosted runner that varies between machines.
           if ($out -notmatch "Java \(JDK 21\+\)\s+17") { throw "doctor did not report the JDK as 17" }
           if ($out -notmatch "too old") { throw "doctor did not apply the version floor to a JDK 17" }
-          # And the Windows-only lookups, from the same output: a pass above could otherwise be
+          # And the Windows-only lookup, from the same output: a pass above could otherwise be
           # hiding detection that finds nothing at all.
-          if ($out -notmatch "PostgreSQL server binaries at C:\\\\Program Files\\\\PostgreSQL") {
+          #
+          # .Contains(), not -match. PowerShell's escape character is the backtick, so a backslash
+          # in a double-quoted string survives verbatim - which means every backslash then reaches
+          # the regex engine as an escape and a Windows path has to be doubled to match itself.
+          # This assertion is about a literal path, so it is written as a literal comparison and
+          # there is nothing left to get wrong.
+          if (-not $out.Contains("PostgreSQL server binaries at C:\Program Files\PostgreSQL")) {
             throw "the Program Files search did not find PostgreSQL"
           }
           # Now the exit code, with the route pinned so the answer cannot depend on the machine.
