@@ -177,7 +177,13 @@ jobs:
   windows-full:
     name: Windows (the whole install)
     # Not on the push path. Dispatched with the box ticked, or nightly.
-    if: (github.event_name == 'workflow_dispatch' && inputs.full) || github.event_name == 'schedule'
+    #
+    # `github.event.inputs.full` rather than `inputs.full`: the `inputs` context exists only for
+    # workflow_dispatch and workflow_call, so naming it in a job-level `if` that a push also
+    # evaluates fails the whole workflow before any job starts — "Unrecognized named-value:
+    # 'inputs'", with no job to attribute it to. The event payload is readable on every event and
+    # is simply null here. It arrives as a string, hence the comparison rather than a truth test.
+    if: (github.event_name == 'workflow_dispatch' && github.event.inputs.full == 'true') || github.event_name == 'schedule'
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
