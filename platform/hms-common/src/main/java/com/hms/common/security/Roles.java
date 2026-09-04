@@ -445,6 +445,23 @@ public final class Roles {
     public static final String EPIDEMIOLOGIST = "EPIDEMIOLOGIST";
 
     /**
+     * Who may read the notifiable-disease return.
+     *
+     * <p>The second and last of {@link #EPIDEMIOLOGIST}'s two constants, and both return counts.
+     * That is the condition under which a role outside the care-relationship narrowing is harmless,
+     * so it is worth stating where somebody adding a third would see it: <em>a role outside the
+     * narrowing is safe exactly as long as it holds no per-patient endpoint — so a new role either
+     * enters constants that return aggregates, or it enters the narrowing.</em>
+     *
+     * <p>Administrator and epidemiologist only, and deliberately not the ward. A coverage rate is
+     * about a clinic's own work and a clinic should see it; a notifiable-disease return is a
+     * statutory filing about a district, and in a small one the <em>list of conditions being watched
+     * for</em> is itself a statement about what has been seen. The clinician who diagnosed a case
+     * already knows about it, and does not need the district's count to treat the patient.
+     */
+    public static final String SURVEILLANCE_READ = "hasAnyRole('ADMIN','EPIDEMIOLOGIST')";
+
+    /**
      * Who may read a quality measure's rate.
      *
      * <p>The people who compile the return and the people whose work it measures. A clinic that

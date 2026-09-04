@@ -141,6 +141,13 @@ public class RouteConfig {
                 .route("measures", r -> r
                         .path("/measures/**")
                         .uri(services.immunisation()))
+                // The notifiable-disease return. Routed to scheduling because scheduling owns
+                // `diagnoses`, which is forced rather than chosen: an aggregate defined by carrying
+                // no patient identifiers cannot be computed by a service that would have to ship
+                // every identifier over the wire to count them.
+                .route("surveillance", r -> r
+                        .path("/surveillance/**")
+                        .uri(services.scheduling()))
                 // Clinical decision support: summarisation, triage, no-show risk, coding.
                 .route("ai", r -> r
                         .path("/ai/**")

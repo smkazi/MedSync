@@ -10,8 +10,8 @@ haematology analyzer over its own wire protocol and released by a pathologist.
 
 > **Status:** the clinical core, the laboratory (including analyzer integration), the AI service
 > and the web UI are implemented and verified end to end against a real stack, and so are the
-> containerisation, TLS, security-testing and performance-testing layers. **1,461 tests pass** —
-> 873 Java unit and integration, 91 Python, 70 web unit, 284 black-box API and security abuse cases,
+> containerisation, TLS, security-testing and performance-testing layers. **1,476 tests pass** —
+> 888 Java unit and integration, 91 Python, 70 web unit, 284 black-box API and security abuse cases,
 > and 143 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
 > [Security](#security); what is left is in the [Roadmap](#roadmap).
 
@@ -897,6 +897,56 @@ judgement is a person's, at the fridge, with the vial in their hand. Publishes
 `hms.immunisation.events` carrying the product code **and** the antigens it contains — a count
 cannot be priced, and only this service can expand a product into what it protects against.
 
+### Public-health reporting — split across two services, and forced
+The notifiable-disease return lives in **scheduling-service**, not in the immunisation module that
+prompted it, and that is forced rather than chosen. To compute an aggregate whose whole definition
+is that it carries no patient identifiers, a service anywhere else would have to ship every patient
+identifier over the wire to count them: the aggregate endpoint would internally *be* the line list,
+and the `group by` would happen in a JVM instead of on an index. scheduling owns `diagnoses`, so it
+owns the answer — the rule `CareRelationshipClient` already states as *"scheduling-service owns the
+care team, so it owns the answer; everyone else asks."* The cost is that public-health reporting is
+split across two services, and it is accepted and named rather than engineered around.
+
+**The reportable conditions are rows, one per ICD-10 code and never a prefix.** A prefix widens
+invisibly — `A0` sweeps cholera through typhoid into amoebiasis and one line of a statutory return,
+and it changes on its own the day somebody adds a code beneath it — and it could not be an equality
+join, which would put the query back on a sequential scan of every diagnosis ever recorded.
+
+**The index `diagnoses` never had.** That table has carried exactly one index since it was created,
+on `encounter_id`, which serves the chart's question — "what was this visit diagnosed as" — and
+cannot serve surveillance's opposite one: "one code, every patient, over a period". Measured rather
+than asserted: at the 137 diagnoses a dev database holds, PostgreSQL correctly prefers a sequential
+scan and the index sits unused; loaded to 50,000 rows it switches to a bitmap index scan on
+`idx_diagnoses_code`. That is the planner being right at both sizes, and it is why the index is
+there. Deliberately **not** a partial index naming the notifiable codes: it would be faster and it
+would hard-code into DDL the very list the migration just made configurable, so adding a condition
+through the API would leave the query unable to use its own index and nobody would notice until the
+report got slow.
+
+**A case is a patient, not a visit.** The query counts distinct patients: one person diagnosed twice
+with the same condition in a fortnight is one case, and an incidence figure that counted the
+follow-up would report an outbreak made of second appointments. It returns through an interface
+projection, which does a second job beyond type safety — *there is nowhere in it to put a patient
+id*, so adding one is a compile error rather than a disclosure. That is a better guarantee than a
+mapper that leaves fields out.
+
+**And no condition-by-department cross-tab**, however obviously useful one would be on a screen. A
+rare condition against a small department re-identifies by arithmetic: one case of rabies in a
+four-bed unit names a patient to anybody who works there. Small-cell suppression exists
+(`hms.surveillance.small-cell-threshold`) and ships **off**, because a statutory return needs exact
+counts — a district filing "fewer than five" cannot be aggregated upward by whoever receives it, and
+a threshold applied silently would understate an outbreak. When it is turned on, a withheld count is
+null rather than zero and the report says it was withheld: a suppressed count and no cases are
+different facts.
+
+**Every configured condition appears, including the zeroes**, because a report that omitted them
+would render "no cholera this fortnight" and "cholera is not on our list" identically.
+
+**`notify_within_hours` is recorded and enforced by nothing**, and the README rather than a comment
+is where that belongs: this platform has no outbound channel to a public health authority, so a
+countdown it could not act on would be a promise nothing keeps. The screens show the number and the
+Roadmap names the transmission as not built.
+
 ### The patient portal — a prefix, not a service
 `/portal/**` is the patient's own door onto their record: their appointments and self-booking,
 released laboratory reports, the visits a clinician has signed, their prescriptions, their bills,
@@ -1302,6 +1352,7 @@ Every service is environment-driven. The ones you are most likely to set:
 | `HMS_RATE_LIMIT_ENABLED` | `true` | Turn off if something in front already limits |
 | `HMS_DB_POOL_MAX` / `HMS_DB_POOL_MIN` | `5` / `1` | Connections per service. Eleven services against one database is a budget rather than a per-service default — see the finding below on how that was learned |
 | `HMS_IMAGING_STORAGE_DIR` | **unset** | Where DICOM instances are written. Unset means the platform keeps the record of an examination and not the images, and the screens say so — see [imaging-service](#imaging-service--schema-imaging) |
+| `HMS_SURVEILLANCE_SMALL_CELL` | `0` — **off** | How small a notifiable count may be before it is withheld. Off because a statutory return needs exact counts: a district filing "fewer than five" cannot be aggregated upward by whoever receives it. The mechanism is present because a rare condition in a small population is re-identifying by arithmetic; a deployment publishing more widely than to its own authority turns it on |
 | `HMS_IMMUNISATION_SCHEDULE` | `UIP-2024` | Which published schedule a due list is computed against when the caller does not name one. A deployment running a different national schedule inserts its rows and points this at them |
 | `HMS_PATIENT_COHORT_MAX` | `2000` | The most children one birth-cohort read returns — roughly a fortnight of births in a large district. A cap rather than a page size, and it says so on the response when it bites: the answer is a narrower birth range |
 | `NEXT_PUBLIC_HMS_ZONE` | `Asia/Kolkata` | The zone the web app renders instants in *and* reads a typed wall-clock time in. `NEXT_PUBLIC_` because both directions run in the browser as well as on the server; set it to match `HMS_ZONE` |
@@ -1590,7 +1641,7 @@ make help          # everything else
 Or directly:
 
 ```bash
-mvn -q verify                                     # 873 Java unit and integration tests
+mvn -q verify                                     # 888 Java unit and integration tests
 cd services/ai-service && uv run pytest -q        # 91 Python tests
 cd web && npm run lint && npm run typecheck       # web static checks
 cd web && npm test                                # 70 web unit tests
@@ -2174,6 +2225,15 @@ SAST/DAST tooling, and performance profiles. Dependency scanning covers Python (
   every coverage question answer about something that is not immunity. And **cold-chain enforcement
   is not built**: `vvm_stage` records what the vial monitor read at receipt and nothing acts on it,
   because this platform has no fridge telemetry — see [immunisation-service](#immunisation-service--schema-immunisation).
+- **A notifiable-disease return is computed and nothing transmits it.** The counts, the configured
+  condition list, the period, the CSV and the small-cell mechanism are all built; there is no
+  outbound channel to a public health authority, so `notify_within_hours` is a number on a screen
+  rather than a countdown anything acts on, and filing the return is somebody printing the CSV. A
+  real submission needs a jurisdiction's own interface — most are a portal, a spreadsheet template
+  or an HL7 feed, and each is a different piece of work — so it is named here rather than
+  half-built. There is also **no line list yet**: the counts exist and the names behind them do not,
+  which is the next slice and is deliberately a separate act with a separate gate and a disclosure
+  record behind it. And **no screens**: everything here is API-only.
 - **One quality measure exists and three things about it are deliberately absent.** There is no
   write endpoint for measures either, so a second one is an INSERT by a migration or by hand rather
   than a form — which is what `aSecondMeasureIsRows` asserts and also what makes it a gap. **A

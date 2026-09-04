@@ -91,6 +91,24 @@ jobs:
       - url: "${ZAP_TARGET}/immunisations/schedules"
         method: GET
         responseCode: 200
+      # The measure list is open to anybody signed in -- a specification with no patient in it --
+      # and the RATE is not: this requestor is a doctor, who holds it because a clinic should be
+      # able to see its own coverage. The notifiable return is neither, and its 403 here is the row
+      # that would catch SURVEILLANCE_READ being widened to the ward: a statutory filing about a
+      # district is not a clinician's work, and in a small district the list of conditions being
+      # watched for is itself a statement about what has been seen.
+      - url: "${ZAP_TARGET}/measures"
+        method: GET
+        responseCode: 200
+      - url: "${ZAP_TARGET}/measures/CIS-2/rate?periodFrom=2024-01-01&periodTo=2024-12-31"
+        method: GET
+        responseCode: 200
+      - url: "${ZAP_TARGET}/surveillance/notifiable?from=2024-01-01&to=2024-12-31"
+        method: GET
+        responseCode: 403
+      - url: "${ZAP_TARGET}/surveillance/notifiable-conditions"
+        method: GET
+        responseCode: 403
       #
       # POST /immunisations/historical has no row, and the reason is the one the imaging order
       # taught: a row here would be either harmful or useless. Its `evidence` field is 500

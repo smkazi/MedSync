@@ -321,6 +321,18 @@ class AuthorizationAbuseIT extends RequiresRunningStack {
         given().spec(Api.as(Api.EPIDEMIOLOGIST))
                 .when().get("/measures")
                 .then().statusCode(200);
+        // The notifiable return, the second of this role's two constants -- and, like the rate, an
+        // aggregate with no identifier in it and no condition-by-department cross-tab, because a
+        // rare condition against a small department re-identifies by arithmetic.
+        given().spec(Api.as(Api.EPIDEMIOLOGIST))
+                .queryParam("from", periodFrom).queryParam("to", periodTo)
+                .when().get("/surveillance/notifiable")
+                .then().statusCode(200)
+                .body("$", not(hasKey("patientId")))
+                .body("$", not(hasKey("byDepartment")));
+        given().spec(Api.as(Api.EPIDEMIOLOGIST))
+                .when().get("/surveillance/notifiable-conditions")
+                .then().statusCode(200);
 
         // And everything per-patient, refused. Each of these is a different service, and the day
         // somebody adds this role to a clinical constant because a screen needed a name, one of
@@ -349,6 +361,18 @@ class AuthorizationAbuseIT extends RequiresRunningStack {
                 .queryParam("patientId", patientId)
                 .when().get("/interop/disclosures")
                 .then().statusCode(403);
+        // And the other direction on the return: it is the administrator's and the
+        // epidemiologist's, and not the ward's. A coverage rate is about a clinic's own work; a
+        // statutory filing about a district is not, and in a small one the list of conditions being
+        // watched for is itself a statement about what has been seen.
+        for (String username : List.of(Api.DOCTOR, Api.NURSE, Api.RECEPTIONIST, Api.LAB_TECH,
+                Api.CASHIER)) {
+            given().spec(Api.as(username))
+                    .queryParam("from", periodFrom).queryParam("to", periodTo)
+                    .when().get("/surveillance/notifiable")
+                    .then().statusCode(403);
+        }
+
         // Not a clinician either: it writes nothing anywhere.
         given().spec(Api.as(Api.EPIDEMIOLOGIST))
                 .body(Map.of())
