@@ -180,19 +180,45 @@ jobs:
           .\dist\MedSync-Setup.exe doctor
           if ($LASTEXITCODE -ne 0) { throw "doctor exited $LASTEXITCODE" }
 
-      # The download and unpack path: HTTPS, gzip, tar, the path-traversal guard and the strip of
-      # GitHub's wrapper directory, all on Windows path separators.
+      # A checkout beside the executable is used rather than downloaded over, and that is the more
+      # important half of the two: somebody who has already cloned this and drops the .exe in must
+      # get their own tree built, not a second copy fetched into AppData behind their back. The
+      # first version of this step asserted a download here and failed - correctly, because dist\
+      # is inside the repository and nothing needed downloading.
+      - name: fetch prefers a checkout it is standing in
+        run: |
+          $out = .\dist\MedSync-Setup.exe fetch 2>&1 | Out-String
+          $out
+          if ($LASTEXITCODE -ne 0) { throw "fetch exited $LASTEXITCODE" }
+          if (-not $out.Contains("Source: $env:GITHUB_WORKSPACE")) {
+            throw "fetch did not resolve to this checkout"
+          }
+          if (Test-Path "$env:MEDSYNC_HOME\src") { throw "fetch downloaded a second copy anyway" }
+
+      # And now the download itself: HTTPS, gzip, tar, the path-traversal guard and the strip of
+      # GitHub's own wrapper directory, all against Windows path separators. It has to run from
+      # outside the repository for the same reason the step above passes - both the executable's
+      # directory and the working directory are searched for a checkout first, so a copy of the
+      # .exe in the runner's temp, run from there, is the only way to reach this path.
+      #
       # Skipped on pull requests: the ref there is a synthetic merge ref that codeload cannot
       # serve, so the step would fail for a reason that has nothing to do with the installer.
-      - name: fetch
+      - name: fetch downloads when there is no checkout
         if: github.event_name != 'pull_request'
+        working-directory: ${{ runner.temp }}
         env:
           MEDSYNC_REF: ${{ github.ref_name }}
         run: |
-          .\dist\MedSync-Setup.exe fetch
+          New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\bin" | Out-Null
+          Copy-Item "$env:GITHUB_WORKSPACE\dist\MedSync-Setup.exe" "$env:RUNNER_TEMP\bin\MedSync-Setup.exe"
+          & "$env:RUNNER_TEMP\bin\MedSync-Setup.exe" fetch
           if ($LASTEXITCODE -ne 0) { throw "fetch exited $LASTEXITCODE" }
           if (-not (Test-Path "$env:MEDSYNC_HOME\src\pom.xml")) { throw "no pom.xml in the fetched tree" }
           if (-not (Test-Path "$env:MEDSYNC_HOME\src\services\identity-service")) { throw "incomplete tree" }
+          if (-not (Test-Path "$env:MEDSYNC_HOME\src\medsync.sh")) { throw "the tree is missing files" }
+          $count = (Get-ChildItem "$env:MEDSYNC_HOME\src" -Recurse -File).Count
+          "unpacked $count files"
+          if ($count -lt 500) { throw "only $count files unpacked; the archive did not come through whole" }
 
       # The database ladder against the PostgreSQL that windows-latest ships stopped: initdb into
       # LocalAppData, pg_ctl start on a port of its own, then the two extensions. This is the rung
