@@ -11,6 +11,13 @@ help: ## Show this help
 
 # ---- build and run -----------------------------------------------------------
 
+# One file that does everything below, in order, for somebody who has just cloned this and wants to
+# see it rather than learn the build first. It is a wrapper over the same tools these targets call,
+# so nothing is hidden: `./medsync.sh doctor` prints exactly what it will need and touch.
+.PHONY: install
+install: ## Install, start, smoke-test and open the whole platform (one file, no arguments)
+	./medsync.sh up
+
 .PHONY: build
 build: ## Build every Java module
 	mvn -q package -DskipTests

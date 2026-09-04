@@ -102,6 +102,7 @@ order) are plain columns, not foreign keys, so a service survives another's outa
 
 ```
 .
+├── medsync.sh                   the whole installation in one file. `./medsync.sh up`
 ├── pom.xml                      Maven aggregator; -Pquality / -Psecurity / -Pmutation / -Pautomation
 ├── Makefile                     every task, one place. `make help`
 ├── docker-compose.yml           postgres, kafka (KRaft), twelve services, ai-service, web
@@ -1222,7 +1223,57 @@ produced it.
 
 ## Running it
 
-### The short way: containers
+### The shortest way: one file
+
+```bash
+./medsync.sh up
+```
+
+`medsync.sh` is the whole installation in a single script: it checks the prerequisites, finds or
+provisions a PostgreSQL, generates the one secret that has to be machine-local, builds all fourteen
+Java modules and the web app, starts the twelve services, the AI service and the browser app, signs
+in as a real user and reads one screen from every service, and then opens
+[http://localhost:3000](http://localhost:3000). It is also the only file you need to hand somebody
+— run it from outside a checkout and it clones one first.
+
+```bash
+./medsync.sh doctor        # prerequisites, database and ports; exits non-zero if anything is short
+./medsync.sh up            # install, start, smoke-test, open a browser
+./medsync.sh status        # what is up, and on which port
+./medsync.sh smoke         # sign in and read one screen from every service
+./medsync.sh test browser  # or: java | web | api | all
+./medsync.sh logs gateway
+./medsync.sh down          # --all stops the database too
+./medsync.sh uninstall     # and removes everything it created
+```
+
+Four decisions in it are worth knowing about, because they are the ones that would otherwise
+surprise you:
+
+- **It installs nothing system-wide and never asks for sudo.** `doctor` names what is missing and
+  the exact command for the detected platform, and stops. Everything it creates lives under
+  `~/.medsync` (`MEDSYNC_HOME`) and `uninstall` deletes it; a checkout you are working in is never
+  touched.
+- **The database is a four-rung ladder, and it says which rung it used**: an `HMS_DB_URL` you set,
+  then a PostgreSQL already listening on 5432, then a private cluster it creates on port 55432 and
+  owns, then a Docker container. Running as root — a container, a CI job — it creates that private
+  cluster as the `postgres` user, because PostgreSQL refuses to run as root and that is where the
+  first real run of this script fell over.
+- **`up` finishes with a smoke test, not with a health check.** Every service can answer
+  `/actuator/health` while being unable to serve a request: a wrong database URL, one schema whose
+  migration failed, a token the other services will not accept. So it signs in as `admin` and reads
+  one real endpoint per service through the gateway, plus the unauthenticated corridor display,
+  which is the smallest test that tells "up" apart from "working".
+- **`HMS_PHI_KEY` is generated once and kept.** It decrypts the encrypted patient identifier
+  columns, so a fresh key on the second run would make every row already written permanently
+  unreadable. It goes in `~/.medsync/medsync.env`, mode 600, and nowhere near the repository.
+
+Verified end to end from an empty machine state: a private cluster created from nothing on a spare
+port, all eleven service schemas migrated by Flyway, the thirteen demo accounts seeded, twelve services
+plus the AI service plus the web app up, all seventeen smoke checks green, and the sign-in page and
+dashboard rendered in a real browser. `down` then `up --skip-build` round-trips cleanly.
+
+### The other short way: containers
 
 ```bash
 cp .env.example .env        # then edit it
@@ -1235,7 +1286,8 @@ app. Open http://localhost:3000. `make up` and `make down` are the same thing wi
 
 One honest caveat: the compose stack is **shipped but not verified here** — the container this was
 developed in has no Docker daemon, so that path is validated by review only. Everything below,
-running natively, is what has actually been exercised.
+running natively, is what has actually been exercised — and `medsync.sh` is that native path
+automated, which is why it is the one recommended above.
 
 ### What you need to run it natively
 

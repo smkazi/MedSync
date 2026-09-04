@@ -47,8 +47,10 @@ start_one() {
   # HMS_DB_USER. Resolved per service rather than inherited from the shell, so a native run gets the
   # same isolation the compose file does -- otherwise `scripts/db-roles.sql` would have created nine
   # roles that only a container ever connects as.
+  # `tr` rather than ${key^^}: that expansion is bash 4, and macOS still ships bash 3.2 as
+  # /bin/bash, so a Mac developer following the README got a syntax error instead of a stack.
   local key="${name%-service}"
-  key="${key^^}"
+  key="$(printf '%s' "$key" | tr '[:lower:]' '[:upper:]')"
   local user_var="HMS_DB_${key}_USER" pass_var="HMS_DB_${key}_PASSWORD"
   local db_user="${!user_var:-${HMS_DB_USER:-hms}}"
   local db_pass="${!pass_var:-${HMS_DB_PASSWORD:-hms}}"
