@@ -234,6 +234,54 @@ public class ExchangeService {
     }
 
     /**
+     * Records that a notifiable-disease line list named these patients.
+     *
+     * <p>The only disclosure another service may register, and the one kind that cannot carry a
+     * consent — the database enforces that as the mirror of {@code chk_share_names_a_consent}.
+     * Notification is compelled by law and needs no permission; a row naming a consent would make
+     * this register read as though the patient had agreed to it.
+     *
+     * <p><strong>One row per patient, not one per run.</strong> {@code disclosures.patient_id} is
+     * NOT NULL and {@code idx_disclosure_patient} is what answers a patient asking who has seen
+     * their record: a single run-level row would need a fabricated patient id and would be invisible
+     * to every patient on the list. So a return naming forty people writes forty rows, and each of
+     * those forty can see theirs.
+     *
+     * <p>{@code releasedBy} comes from the caller's own forwarded token and never from the body.
+     * The caller is scheduling-service acting for an administrator, and the whole value of this
+     * register is that the name in it is the person who actually did it.
+     *
+     * <p>No bundle is built and nothing is transmitted here. This endpoint records a disclosure the
+     * <em>caller</em> is about to make — it is the register half of a two-step the caller sequences
+     * deliberately, and the caller does not produce its file unless this returns.
+     */
+    @Transactional
+    public InteropDtos.PublicHealthDisclosureResponse recordPublicHealthDisclosure(
+            InteropDtos.RecordPublicHealthDisclosureRequest request) {
+        List<UUID> written = new ArrayList<>();
+        for (InteropDtos.DisclosedSubject subject : request.subjects()) {
+            Disclosure disclosure = disclosures.save(new Disclosure(
+                    // Null, and the database insists on it for this kind.
+                    null,
+                    subject.patientId(), subject.patientMrn(),
+                    // The closest honest HI type: a line list carries diagnoses recorded at a
+                    // consultation. Inventing a new one would mean inventing a value in a
+                    // vocabulary this platform does not own -- HiType is ABDM's list, not ours.
+                    HiType.OP_CONSULTATION, DisclosureKind.PUBLIC_HEALTH_REPORT,
+                    request.recipient(), subject.rowCount(), 0,
+                    CurrentUser.usernameOrSystem()));
+            written.add(disclosure.getId());
+        }
+
+        // The count and the recipient, and no code and no patient. Which conditions a district is
+        // reporting is itself sensitive in a small one, and an audit detail is not the place for it.
+        audit.record("PUBLIC_HEALTH_DISCLOSURE_RECORDED", "Disclosure", null,
+                "%d patient(s) to %s".formatted(written.size(), request.recipient()));
+        return new InteropDtos.PublicHealthDisclosureResponse(written, request.recipient(),
+                written.size());
+    }
+
+    /**
      * The staff view of the register: everything released about one patient, optionally bounded to
      * a period. Both bounds are optional, so the callers that predate them keep working unchanged.
      */

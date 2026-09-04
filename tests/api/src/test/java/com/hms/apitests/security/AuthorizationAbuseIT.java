@@ -361,6 +361,29 @@ class AuthorizationAbuseIT extends RequiresRunningStack {
                 .queryParam("patientId", patientId)
                 .when().get("/interop/disclosures")
                 .then().statusCode(403);
+        // The names behind the counts this role is allowed to read. The one refusal in this block
+        // that somebody will genuinely want to reverse -- an epidemiologist compiling a return
+        // plainly has a use for the line list -- and reversing it would end the property that lets
+        // the role hold this whole module without holding a chart. Compiling the names is the
+        // administrator's act, and it leaves a disclosure row behind.
+        given().spec(Api.as(Api.EPIDEMIOLOGIST))
+                .queryParam("from", periodFrom).queryParam("to", periodTo)
+                .when().get("/surveillance/notifiable/line-list")
+                .then().statusCode(403);
+        given().spec(Api.as(Api.EPIDEMIOLOGIST))
+                .queryParam("from", periodFrom).queryParam("to", periodTo)
+                .header("Accept", "text/csv, application/json")
+                .when().get("/surveillance/notifiable/line-list.csv")
+                .then().statusCode(403);
+        // And the register write behind it, refused at the far end too -- so a role that somehow
+        // reached the list still could not account for it, and the platform still would not produce
+        // one it could not account for.
+        given().spec(Api.as(Api.EPIDEMIOLOGIST))
+                .body(Map.of("recipient", "An authority", "subjects",
+                        List.of(Map.of("patientId", patientId, "patientMrn", "MRN-ABUSE-1",
+                                "rowCount", 1))))
+                .when().post("/interop/disclosures")
+                .then().statusCode(403);
         // And the other direction on the return: it is the administrator's and the
         // epidemiologist's, and not the ward's. A coverage rate is about a clinic's own work; a
         // statutory filing about a district is not, and in a small one the list of conditions being
@@ -370,6 +393,10 @@ class AuthorizationAbuseIT extends RequiresRunningStack {
             given().spec(Api.as(username))
                     .queryParam("from", periodFrom).queryParam("to", periodTo)
                     .when().get("/surveillance/notifiable")
+                    .then().statusCode(403);
+            given().spec(Api.as(username))
+                    .queryParam("from", periodFrom).queryParam("to", periodTo)
+                    .when().get("/surveillance/notifiable/line-list")
                     .then().statusCode(403);
         }
 

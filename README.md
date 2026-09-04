@@ -10,8 +10,8 @@ haematology analyzer over its own wire protocol and released by a pathologist.
 
 > **Status:** the clinical core, the laboratory (including analyzer integration), the AI service
 > and the web UI are implemented and verified end to end against a real stack, and so are the
-> containerisation, TLS, security-testing and performance-testing layers. **1,476 tests pass** —
-> 888 Java unit and integration, 91 Python, 70 web unit, 284 black-box API and security abuse cases,
+> containerisation, TLS, security-testing and performance-testing layers. **1,503 tests pass** —
+> 909 Java unit and integration, 91 Python, 70 web unit, 290 black-box API and security abuse cases,
 > and 143 browser end-to-end, plus four k6 profiles. See [Testing](#testing) and
 > [Security](#security); what is left is in the [Roadmap](#roadmap).
 
@@ -947,6 +947,57 @@ is where that belongs: this platform has no outbound channel to a public health 
 countdown it could not act on would be a promise nothing keeps. The screens show the number and the
 Roadmap names the transmission as not built.
 
+#### The line list, and the disclosure that has to account for it
+The counts are one endpoint and the names are another, under two different gates in two different
+places. `SURVEILLANCE_READ` is ADMIN and EPIDEMIOLOGIST and holds the aggregate;
+`PUBLIC_HEALTH_LINE_LIST` is **ADMIN alone** and holds the names — and the epidemiologist is
+excluded on purpose, however plainly somebody compiling a return has a use for them. The property
+that lets one role hold the whole surveillance module without holding a chart is that it reads only
+aggregates, and a role given the names once no longer has it. The abuse suite asserts both
+directions rather than documenting them.
+
+**The register is written before the file exists.** Downloading the line list registers a
+disclosure in interop-service — one row per named patient, `PUBLIC_HEALTH_REPORT`, released by
+whoever asked — and only then is a byte of CSV produced. If interop-service cannot be reached the
+request answers **503 with no file**: *"the line list names patients, and the disclosure register
+could not record that it did."* The order is the whole design, and the residual is worth stating
+because it is the right way round: these are two writes and not one transaction, so a crash between
+them leaves a disclosure row for a file nobody received. An over-recorded disclosure is a question
+somebody can answer; an unrecorded one is a notification that happened and cannot be found, which is
+the failure a register exists to prevent. There is deliberately no property that turns this off.
+
+**HTTP and synchronous rather than an event, and one fact settles it.** `hms.events.transport`
+defaults to `log`, so on the shipped compose deployment and in CI an event-based disclosure write is
+a log line and the register stays empty — a platform claiming an accounting of disclosures and
+having none, which is worse than making no claim. The client forwards the administrator's own token,
+so the gate is enforced twice and this service mints no credential of its own: one able to write
+disclosures unattended could fabricate the register that is supposed to hold the hospital to
+account.
+
+**One row per patient, not one per run**, because `idx_disclosure_patient` is what answers a patient
+asking who has seen their record. A run-level row would need a fabricated patient id and would be
+invisible to every patient on the list — and the journey test ends by having the patient the list
+named open their own portal accounting and find it there.
+
+**Viewing is audited; downloading is registered.** The JSON preview names the same patients and
+writes no disclosure, and says so in the response rather than leaving a screen to encode the rule
+twice: an administrator looking at who is on this fortnight's return has notified nobody. The file
+is the notification.
+
+**And a statutory notification cannot be made to claim consent.** `disclosures` gains
+`chk_public_health_has_no_consent`, the mirror of the `chk_share_names_a_consent` it has always had:
+a consented share cannot exist *without* a consent, and a public-health report cannot exist *with*
+one. Notification is compelled by law and needs no permission, and a row naming a consent would tell
+the patient — through their own portal — that they agreed to something they were never asked about.
+That is worse than an incomplete record, because it is a false one.
+
+**`ServiceUnavailableException` is new in `hms-common` and has exactly one caller**, which is the
+point: 503 says the request was refused whole and retrying unchanged is the remedy, where 500 says
+the platform is broken and there is nothing to try. The clients that fail *closed* without it —
+refusing a due list because the patient directory is unreachable, refusing a chart because the care
+team cannot be read — are answering "you may not", not "come back later", and were deliberately left
+alone.
+
 ### The patient portal — a prefix, not a service
 `/portal/**` is the patient's own door onto their record: their appointments and self-booking,
 released laboratory reports, the visits a clinician has signed, their prescriptions, their bills,
@@ -1263,7 +1314,7 @@ The dev profile seeds one account per role:
 | `cashier` | CASHIER — raises invoices, takes payments, works claims. The mirror image of the pharmacist: it can collect money and **cannot open a chart**, and `dr.rao` can read a bill and cannot take a payment. |
 | `radiographer` | RADIOGRAPHER — runs the modality worklist, books slots and files what comes off the machine. Reads the worklist and the study register and **cannot draft or sign a report**, and cannot raise the request either. |
 | `dr.mistry` | RADIOLOGIST — reports and signs. The other half of the same separation: it can release a finding and **cannot order the examination it is reporting on**, and cannot see the acquisition worklist. The same shape as `lab.tech` and `dr.pathan` one department along, and for the same reason: whoever produced the images must not be whoever signs off what they show. |
-| `epidemiologist` | EPIDEMIOLOGIST — coverage rates and, from the next slice, notifiable-disease counts. **Aggregates only, and this account exists so that stays true.** The care-relationship narrowing is expressed as "is a clinician and is not an administrator", so a role added later falls *outside* it by a check nobody edited — safe only while the role holds no per-patient endpoint. So it reads a rate and a specification and is refused one child's register, the cohort due list, the named birth cohort, a patient record, an encounter and the disclosure register. Every one of those is a row in the abuse suite, and one goes red the day somebody adds this role to a clinical constant because a screen needed a name. |
+| `epidemiologist` | EPIDEMIOLOGIST — coverage rates and notifiable-disease counts. **Aggregates only, and this account exists so that stays true.** The care-relationship narrowing is expressed as "is a clinician and is not an administrator", so a role added later falls *outside* it by a check nobody edited — safe only while the role holds no per-patient endpoint. So it reads a rate, a specification and a notifiable count, and is refused one child's register, the cohort due list, the named birth cohort, a patient record, an encounter, the disclosure register and — the refusal somebody will genuinely want to reverse — the notifiable line list, which names the patients behind the counts it is allowed to read. Every one of those is a row in the abuse suite, and one goes red the day somebody adds this role to a clinical constant because a screen needed a name. |
 
 **The portal seeds no account either, and cannot.** A portal account has to point at a patient
 record, and the seed runs before there is one — so there is no `patient` in the table above and
@@ -1353,6 +1404,7 @@ Every service is environment-driven. The ones you are most likely to set:
 | `HMS_DB_POOL_MAX` / `HMS_DB_POOL_MIN` | `5` / `1` | Connections per service. Eleven services against one database is a budget rather than a per-service default — see the finding below on how that was learned |
 | `HMS_IMAGING_STORAGE_DIR` | **unset** | Where DICOM instances are written. Unset means the platform keeps the record of an examination and not the images, and the screens say so — see [imaging-service](#imaging-service--schema-imaging) |
 | `HMS_SURVEILLANCE_SMALL_CELL` | `0` — **off** | How small a notifiable count may be before it is withheld. Off because a statutory return needs exact counts: a district filing "fewer than five" cannot be aggregated upward by whoever receives it. The mechanism is present because a rare condition in a small population is re-identifying by arithmetic; a deployment publishing more widely than to its own authority turns it on |
+| `HMS_SURVEILLANCE_AUTHORITY` | `District public health authority` | Who a notifiable-disease line list is notified to, recorded on every disclosure row it writes. Configuration rather than a request parameter on purpose: `recipient` is the column a patient reads when they ask who has seen their record, and one typed per request could make an unlawful disclosure read as a statutory one |
 | `HMS_IMMUNISATION_SCHEDULE` | `UIP-2024` | Which published schedule a due list is computed against when the caller does not name one. A deployment running a different national schedule inserts its rows and points this at them |
 | `HMS_PATIENT_COHORT_MAX` | `2000` | The most children one birth-cohort read returns — roughly a fortnight of births in a large district. A cap rather than a page size, and it says so on the response when it bites: the answer is a narrower birth range |
 | `NEXT_PUBLIC_HMS_ZONE` | `Asia/Kolkata` | The zone the web app renders instants in *and* reads a typed wall-clock time in. `NEXT_PUBLIC_` because both directions run in the browser as well as on the server; set it to match `HMS_ZONE` |
@@ -1641,12 +1693,12 @@ make help          # everything else
 Or directly:
 
 ```bash
-mvn -q verify                                     # 888 Java unit and integration tests
+mvn -q verify                                     # 909 Java unit and integration tests
 cd services/ai-service && uv run pytest -q        # 91 Python tests
 cd web && npm run lint && npm run typecheck       # web static checks
 cd web && npm test                                # 70 web unit tests
 cd web && npx playwright test                     # 143 browser tests, no skips
-mvn -Pautomation -pl tests/api verify             # 284 API and security abuse cases
+mvn -Pautomation -pl tests/api verify             # 290 API and security abuse cases
 ```
 
 | Layer | What runs | Where |
@@ -2231,9 +2283,11 @@ SAST/DAST tooling, and performance profiles. Dependency scanning covers Python (
   rather than a countdown anything acts on, and filing the return is somebody printing the CSV. A
   real submission needs a jurisdiction's own interface — most are a portal, a spreadsheet template
   or an HL7 feed, and each is a different piece of work — so it is named here rather than
-  half-built. There is also **no line list yet**: the counts exist and the names behind them do not,
-  which is the next slice and is deliberately a separate act with a separate gate and a disclosure
-  record behind it. And **no screens**: everything here is API-only.
+  half-built. **Filing the return is a person downloading a file**, and both halves of it now exist:
+  the counts under `SURVEILLANCE_READ`, and the line list naming the patients behind them under
+  `PUBLIC_HEALTH_LINE_LIST` — ADMIN alone, and registering a disclosure per named patient before the
+  file is produced. What is still missing is the leg after the download. And **no screens**:
+  everything here is API-only.
 - **One quality measure exists and three things about it are deliberately absent.** There is no
   write endpoint for measures either, so a second one is an INSERT by a migration or by hand rather
   than a form — which is what `aSecondMeasureIsRows` asserts and also what makes it a gap. **A

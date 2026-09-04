@@ -37,7 +37,11 @@ public final class InteropEnums {
         PRESCRIPTION,
         /** An in-patient stay's summary. Not built yet, and named in the README's gaps. */
         DISCHARGE_SUMMARY,
-        /** Immunisations. Not built yet — the platform records none. */
+        /**
+         * Immunisations. The register exists now; the FHIR {@code Immunization} resource builder
+         * does not, so a consent covering this is still refused with a message saying so. Named in
+         * the README's gaps as the smaller thing it has become.
+         */
         IMMUNIZATION_RECORD,
         /** A scanned or attached document. Not built yet — there is no document store. */
         HEALTH_DOCUMENT_RECORD,
@@ -63,8 +67,15 @@ public final class InteropEnums {
      * hands a person their own record and has no consent behind it, because asking somebody to
      * consent to receiving their own data is a formality that would teach everybody to click
      * through consent screens. A CARE_SUMMARY travels with a referral the patient is present for.
+     *
+     * <p>{@code PUBLIC_HEALTH_REPORT} is the one that cannot have a consent, and the database
+     * enforces that as the mirror of the rule above. Notification of a notifiable disease is
+     * compelled by law and needs no permission; a row naming a consent would make the register read
+     * as though the patient had agreed to it, and a patient reading their own accounting later
+     * would be told they consented to something nobody asked them about. A false record is worse
+     * than an incomplete one.
      */
     public enum DisclosureKind {
-        CONSENTED_SHARE, PATIENT_EXPORT, CARE_SUMMARY
+        CONSENTED_SHARE, PATIENT_EXPORT, CARE_SUMMARY, PUBLIC_HEALTH_REPORT
     }
 }

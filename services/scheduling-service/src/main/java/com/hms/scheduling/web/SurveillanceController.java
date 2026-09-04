@@ -79,4 +79,61 @@ public class SurveillanceController {
                         "attachment; filename=\"" + report.csvFilename(filters) + "\"")
                 .body(report.toCsv(filters));
     }
+
+    // ---- the line list -------------------------------------------------------
+    //
+    // Everything above this line is counts, under SURVEILLANCE_READ, which an epidemiologist
+    // holds. Everything below it names patients, under PUBLIC_HEALTH_LINE_LIST, which is ADMIN
+    // alone -- and that constant's javadoc argues why the epidemiologist is deliberately outside
+    // it: the safety property that lets a role hold this whole module without holding a chart is
+    // that it reads only aggregates, and a role given the names once no longer has it.
+
+    /**
+     * The names behind the counts, as a preview.
+     *
+     * <p>Audited and <strong>not</strong> registered, which is the distinction the response says
+     * out loud in its {@code note}: looking at who is on this fortnight's return has notified
+     * nobody. {@link #lineListCsv} is the act that notifies.
+     */
+    @GetMapping("/surveillance/notifiable/line-list")
+    @PreAuthorize(Roles.PUBLIC_HEALTH_LINE_LIST)
+    public SurveillanceDtos.NotifiableLineListResponse lineList(
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return report.lineList(new SurveillanceReportService.Filters(from, to));
+    }
+
+    /**
+     * The line list as the file that goes to the authority.
+     *
+     * <p><strong>The disclosure register is written before this method has a body to return.</strong>
+     * If the register cannot be reached the service throws and this endpoint answers <strong>503
+     * with no file</strong> — which is the one behaviour worth reading the whole module for: a list
+     * of named patients that went out with no record of having gone out is what the register exists
+     * to prevent.
+     *
+     * <p>{@code no-store} for the reason the aggregate export has it, and more so: a cached copy of
+     * a file naming patients sitting in a shared browser's disk cache is a disclosure nobody
+     * registered. The count of registered patients is echoed in a header rather than in the body,
+     * because the body is a CSV somebody opens in a spreadsheet and a nineteenth row saying
+     * "18 patients registered" would be read as a nineteenth case.
+     */
+    @GetMapping(value = "/surveillance/notifiable/line-list.csv", produces = "text/csv")
+    @PreAuthorize(Roles.PUBLIC_HEALTH_LINE_LIST)
+    public ResponseEntity<String> lineListCsv(
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        SurveillanceReportService.Notification notification =
+                report.lineListCsv(new SurveillanceReportService.Filters(from, to));
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CACHE_CONTROL, "no-store")
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        "attachment; filename=\"" + notification.filename() + "\"")
+                .header("X-Disclosures-Registered", String.valueOf(notification.patients()))
+                .body(notification.csv());
+    }
 }

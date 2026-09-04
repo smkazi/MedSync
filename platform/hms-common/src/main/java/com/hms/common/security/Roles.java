@@ -462,6 +462,35 @@ public final class Roles {
     public static final String SURVEILLANCE_READ = "hasAnyRole('ADMIN','EPIDEMIOLOGIST')";
 
     /**
+     * Who may produce a notifiable-disease <em>line list</em>: the names behind the counts.
+     *
+     * <p><strong>Administrator alone, and deliberately not {@link #EPIDEMIOLOGIST}.</strong> That
+     * looks backwards — the epidemiologist is the person who compiles the return — and it is the
+     * point: this role's whole safety property is that it reads aggregates and reaches no patient,
+     * and a line list is the one artefact in public health that is not an aggregate. Somebody has
+     * to be able to produce it, because notification is compelled by law, and the platform's answer
+     * is that it takes the account which is already accountable for exports and whole-chart
+     * releases. One person compiles the counts; one person, with a different account, produces the
+     * names.
+     *
+     * <p>The same shape as the whole-record export: an administrator's act, audited, and with a row
+     * in the disclosure register for every patient it named — so the patient can see it through
+     * their own portal accounting.
+     */
+    public static final String PUBLIC_HEALTH_LINE_LIST = "hasRole('ADMIN')";
+
+    /**
+     * Who may record that a line list was disclosed.
+     *
+     * <p>The same gate as producing one, enforced a second time in a second service against the
+     * same forwarded token. Not because one check is unreliable, but because the two acts are
+     * separately reachable: the register endpoint exists on interop-service's public surface, and an
+     * endpoint that trusted its caller to have been checked already would be an endpoint any
+     * service could write disclosures through.
+     */
+    public static final String PUBLIC_HEALTH_DISCLOSE = "hasRole('ADMIN')";
+
+    /**
      * Who may read a quality measure's rate.
      *
      * <p>The people who compile the return and the people whose work it measures. A clinic that

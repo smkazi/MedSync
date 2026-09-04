@@ -56,4 +56,38 @@ public final class SurveillanceDtos {
             conditions = List.copyOf(conditions);
         }
     }
+
+    // ---- the line list -------------------------------------------------------
+    //
+    // Everything BELOW this line names patients, and everything above it does not. That is the one
+    // division in this file worth reading, and it is why the two halves have separate gates: the
+    // counts are an epidemiologist's weekly work and the names are an administrator's act with a
+    // disclosure row behind it.
+
+    /** One notification: who, what, and when. */
+    public record NotifiableCaseResponse(java.util.UUID patientId, String patientMrn,
+                                         String icd10Code, String conditionName,
+                                         java.time.LocalDate diagnosedOn, int notifyWithinHours) {
+    }
+
+    /**
+     * The line list.
+     *
+     * @param registered whether producing this recorded a disclosure. False on the JSON preview and
+     *                   true on the download, which is the distinction the platform draws
+     *                   everywhere: reading a record inside the hospital is <em>audited</em>, and
+     *                   handing one to somebody outside is <em>registered</em>. The preview is a
+     *                   look, the file is the notification
+     * @param note       what the caller should know about that, in words, so a screen does not have
+     *                   to encode the rule twice
+     */
+    public record NotifiableLineListResponse(LocalDate from, LocalDate to, String zone,
+                                             List<NotifiableCaseResponse> cases, int patients,
+                                             String recipient, boolean registered, String note,
+                                             Instant computedAt) {
+
+        public NotifiableLineListResponse {
+            cases = List.copyOf(cases);
+        }
+    }
 }

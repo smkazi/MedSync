@@ -65,7 +65,22 @@ hms:
     # And the medicines here. The prescription is raised first, because it is the step that can be
     # refused on clinical grounds — see OrderingClient for why the order of the two matters.
     base-url: ${HMS_PHARMACY_URI:http://localhost:8087}
+  interop:
+    # The disclosure register, written before a line list naming patients is produced.
+    #
+    # The one outbound call on this platform whose failure cancels the work rather than degrading
+    # it: if this is unreachable the request answers 503 and no file exists. See
+    # DisclosureRegisterClient for why the two writes are in that order and what the residual is.
+    base-url: ${HMS_INTEROP_URI:http://localhost:8089}
   surveillance:
+    # Who the line list is for, recorded on every disclosure row it writes.
+    #
+    # Configuration and not a request parameter, deliberately. `recipient` is the column a patient
+    # reads when they ask who has seen their record, and a recipient typed into a form is a column
+    # somebody can fill with anything -- including a name that makes an unlawful disclosure read as
+    # a statutory one. A deployment notifies the authority it is licensed under, that authority is a
+    # property of the deployment, and it changes about as often as the licence does.
+    authority: ${HMS_SURVEILLANCE_AUTHORITY:District public health authority}
     # How small a count may be before the notifiable return withholds it.
     #
     # ZERO -- off -- and that is the shipped default rather than a placeholder. A statutory return

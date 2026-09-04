@@ -110,6 +110,50 @@ public final class InteropDtos {
     }
 
     /**
+     * Recording that a notifiable-disease line list named these patients.
+     *
+     * <p>The only disclosure kind another service may register, and the request has no {@code kind}
+     * field at all: an endpoint that took one would be an endpoint through which any service could
+     * write any disclosure it liked, including a consented share with no consent behind it. What
+     * kind of release this is, is a property of the endpoint.
+     *
+     * <p>No {@code releasedBy} either. It comes from the caller's own forwarded token, because a
+     * body field naming who released a record is a body field somebody eventually fills in with a
+     * name that is not theirs — and this register is the thing an investigation reads.
+     *
+     * <p>{@code subjects} is one entry per patient the list named. One row per person rather than a
+     * single run-level row, because {@code disclosures.patient_id} is NOT NULL and
+     * {@code idx_disclosure_patient} is what answers a patient asking who has seen their record: a
+     * run-level row would need a fabricated patient id and would be invisible to every patient on
+     * the list.
+     */
+    public record RecordPublicHealthDisclosureRequest(
+            @NotBlank @Size(max = 160) String recipient,
+            @NotEmpty List<@Valid DisclosedSubject> subjects) {
+    }
+
+    /**
+     * What was written.
+     *
+     * <p>Ids rather than the rows themselves: the caller is scheduling-service, which is about to
+     * produce the file and has no reason to read back the register it just wrote into.
+     */
+    public record PublicHealthDisclosureResponse(List<UUID> disclosureIds, String recipient,
+                                                 int patients) {
+
+        public PublicHealthDisclosureResponse {
+            disclosureIds = List.copyOf(disclosureIds);
+        }
+    }
+
+    /** One patient a line list named, and how many of their rows it carried. */
+    public record DisclosedSubject(
+            @NotNull UUID patientId,
+            @NotBlank @Size(max = 24) String patientMrn,
+            @Min(1) int rowCount) {
+    }
+
+    /**
      * The patient's own accounting of disclosures: what left, to whom, when, and how much.
      *
      * <p>Deliberately without {@code releasedBy}, and that is a decision rather than an omission.

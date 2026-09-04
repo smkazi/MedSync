@@ -63,6 +63,20 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.FORBIDDEN, "Forbidden", "You do not have permission to perform this action", req);
     }
 
+    /**
+     * A dependency was unreachable and the request was refused whole. See
+     * {@link ServiceUnavailableException} for why this is not the 500 it would otherwise be.
+     *
+     * <p>{@code Retry-After} is deliberately absent: the platform has no idea when the dependency
+     * comes back, and a number invented to fill a header is worse than no header, because a client
+     * will obey it.
+     */
+    @ExceptionHandler(ServiceUnavailableException.class)
+    public ResponseEntity<ApiError> unavailable(ServiceUnavailableException ex, HttpServletRequest req) {
+        log.warn("Dependency unavailable on {}: {}", req.getRequestURI(), ex.getMessage());
+        return build(HttpStatus.SERVICE_UNAVAILABLE, "Service Unavailable", ex.getMessage(), req);
+    }
+
     @ExceptionHandler(BadCredentialsException.class)
     public ResponseEntity<ApiError> badCredentials(BadCredentialsException ex, HttpServletRequest req) {
         // Deliberately vague: the caller must not learn whether the username exists.

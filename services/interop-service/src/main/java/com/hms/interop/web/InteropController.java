@@ -152,6 +152,28 @@ public class InteropController {
     }
 
     /**
+     * Records that a notifiable-disease line list named these patients.
+     *
+     * <p>The one disclosure another service may register, and the request carries no {@code kind}:
+     * an endpoint that took one would be an endpoint through which any service could write any
+     * disclosure, including a consented share with no consent behind it. What kind of release this
+     * is, is a property of the endpoint — and the database refuses this kind with a consent
+     * attached, which is the mirror of the rule that refuses a share without one.
+     *
+     * <p>Gated the same way producing the list is, enforced a second time here against the same
+     * forwarded token. Not because one check is unreliable, but because this endpoint is separately
+     * reachable: one that trusted its caller to have been checked already would be one any service
+     * could write through.
+     */
+    @PostMapping("/interop/disclosures")
+    @ResponseStatus(HttpStatus.CREATED)
+    @PreAuthorize(Roles.PUBLIC_HEALTH_DISCLOSE)
+    public InteropDtos.PublicHealthDisclosureResponse recordPublicHealthDisclosure(
+            @Valid @RequestBody InteropDtos.RecordPublicHealthDisclosureRequest request) {
+        return exchange.recordPublicHealthDisclosure(request);
+    }
+
+    /**
      * What has been released about a patient, and under what.
      *
      * <p>The accounting of disclosures. Readable by the same people who may read a consent,

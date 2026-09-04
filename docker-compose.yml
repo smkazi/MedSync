@@ -161,6 +161,9 @@ services:
       # The facility directory for room validation, and /portal/me for a self-booking patient's
       # own MRN. Both forward the caller's token.
       HMS_PATIENT_URI: http://patient-service:8082
+      # The disclosure register. A public-health line list is registered here before the file
+      # exists, so this is the one dependency whose absence cancels a request outright.
+      HMS_INTEROP_URI: http://interop-service:8089
     expose:
       - "8083"
 

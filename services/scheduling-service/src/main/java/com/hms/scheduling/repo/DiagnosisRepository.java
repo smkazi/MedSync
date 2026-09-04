@@ -54,6 +54,43 @@ public interface DiagnosisRepository extends JpaRepository<Diagnosis, UUID> {
                                            @Param("from") Instant from, @Param("to") Instant to);
 
     /**
+     * The line list: who, what, and when.
+     *
+     * <p>The deliberate opposite of {@link #notifiableCounts}, and the contrast is the point of
+     * having both. That one cannot leak an identifier because it never selects one; this one selects
+     * nothing but identifiers, because a notifiable-disease notification that did not say who would
+     * be useless to the authority receiving it. Two queries, two shapes, two gates — rather than one
+     * query with a flag deciding which columns come back, which is how a count ends up carrying
+     * names on the day somebody inverts a boolean.
+     *
+     * <p>One row per diagnosis rather than per patient: a person diagnosed with two notifiable
+     * conditions is two notifications, and collapsing them would hide one from the authority.
+     */
+    @Query("""
+            select d.encounter.patientId as patientId, d.encounter.patientMrn as patientMrn,
+                   d.icd10Code as icd10Code, d.encounter.startedAt as diagnosedAt
+              from Diagnosis d
+             where d.icd10Code in :codes
+               and d.encounter.startedAt >= :from
+               and d.encounter.startedAt < :to
+             order by d.encounter.startedAt asc, d.icd10Code asc
+            """)
+    List<NotifiableCase> notifiableCases(@Param("codes") Collection<String> codes,
+                                         @Param("from") Instant from, @Param("to") Instant to);
+
+    /** One line of the line list. */
+    interface NotifiableCase {
+
+        java.util.UUID getPatientId();
+
+        String getPatientMrn();
+
+        String getIcd10Code();
+
+        Instant getDiagnosedAt();
+    }
+
+    /**
      * The two values {@link #notifiableCounts} answers.
      *
      * <p>An interface rather than an {@code Object[]}, for the reason {@code InvoiceRepository}

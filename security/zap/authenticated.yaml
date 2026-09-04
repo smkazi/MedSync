@@ -109,6 +109,16 @@ jobs:
       - url: "${ZAP_TARGET}/surveillance/notifiable-conditions"
         method: GET
         responseCode: 403
+      # And the line list, which is narrower still: not the ward's, not the epidemiologist's, and
+      # ADMIN alone. Both halves of it, because they are two endpoints and a gate added to one is a
+      # gate somebody forgets on the other -- and because the .csv half is the one that would
+      # register a disclosure and hand out a file naming patients if it ever answered 200 here.
+      - url: "${ZAP_TARGET}/surveillance/notifiable/line-list?from=2024-01-01&to=2024-12-31"
+        method: GET
+        responseCode: 403
+      - url: "${ZAP_TARGET}/surveillance/notifiable/line-list.csv?from=2024-01-01&to=2024-12-31"
+        method: GET
+        responseCode: 403
       #
       # POST /immunisations/historical has no row, and the reason is the one the imaging order
       # taught: a row here would be either harmful or useless. Its `evidence` field is 500
@@ -362,6 +372,15 @@ jobs:
         responseCode: 403
       - url: "${ZAP_TARGET}/interop/export/00000000-0000-4000-8000-000000000000"
         method: POST
+        responseCode: 403
+      # Registering a public-health disclosure. A write with a row, unlike the historical dose --
+      # safe here precisely because the gate is ADMIN-only and refuses this requestor before the
+      # body is looked at, so a scheduled scan cannot write a disclosure into the accounting a
+      # patient reads. A 200 or a 201 on this row would mean any signed-in clinician could file a
+      # notification against any patient id they typed.
+      - url: "${ZAP_TARGET}/interop/disclosures"
+        method: POST
+        data: '{"recipient":"Zap","subjects":[{"patientId":"00000000-0000-4000-8000-000000000000","patientMrn":"ZAP","rowCount":1}]}'
         responseCode: 403
       # The share path, aimed at a consent that does not exist: the refusal must come from the
       # consent lookup rather than from the body, and it must be a 404 rather than a 500 -- an
