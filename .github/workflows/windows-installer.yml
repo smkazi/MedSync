@@ -87,13 +87,23 @@ jobs:
     name: Windows (the paths Linux cannot run)
     runs-on: windows-latest
     timeout-minutes: 20
-    # One home for the whole job, and not the real %LOCALAPPDATA%: a CI job that writes where a
-    # developer's install would live is a job whose cleanup step matters, and runner.temp is thrown
-    # away regardless of how this ends.
-    env:
-      MEDSYNC_HOME: ${{ runner.temp }}\medsync
     steps:
       - uses: actions/checkout@v4
+
+      # One home for the whole job, and not the real %LOCALAPPDATA%: a CI job that writes where a
+      # developer's install would live is a job whose cleanup step matters, and the runner's temp
+      # directory is thrown away regardless of how this ends.
+      #
+      # Exported through GITHUB_ENV from a step rather than declared in the job's `env:` block,
+      # because the `runner` context is not available there — it is a step-level context, and a
+      # job-level `env` that names it fails the whole workflow at validation with no job to
+      # attribute the error to. RUNNER_TEMP is the same value as a plain environment variable,
+      # which every shell can read.
+      # A block scalar, not a quoted one: a `run:` value that starts with a double quote is a YAML
+      # string, and the pipe after it would be trailing garbage rather than PowerShell.
+      - name: Choose a home for this job
+        run: |
+          "MEDSYNC_HOME=$env:RUNNER_TEMP\medsync" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - uses: actions/setup-go@v5
         with:
