@@ -79,7 +79,14 @@ hms:
     transport: ${HMS_EVENTS_TRANSPORT:log}
   scheduling:
     # Clinic hours are local; slots are generated in this zone and stored as instants.
-    zone: ${HMS_TIMEZONE:UTC}
+    #
+    # Defaults from HMS_ZONE, like the billing day book, the audit report and the disclosure
+    # register. It used to read ${HMS_TIMEZONE:UTC} -- a different variable and a different
+    # default from every other date-bounding thing on the platform -- which meant a compose
+    # deployment ran scheduling in UTC while the other three fell back to Asia/Kolkata. Two zones
+    # in one deployment, and the surveillance report was about to bound a statutory week with
+    # this one.
+    zone: ${HMS_SCHEDULING_ZONE:${HMS_ZONE:Asia/Kolkata}}
   care-team:
     # How long break-glass cover lasts. One shift: covering somebody else's patient for an evening
     # should not become standing access to their record for ever, and an expired membership is

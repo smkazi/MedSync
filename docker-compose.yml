@@ -39,7 +39,11 @@ x-service-defaults: &service-defaults
     # beside it does not stop it reaching a box that holds real records. Better to refuse
     # to start.
     HMS_PHI_KEY: "${HMS_PHI_KEY:?set HMS_PHI_KEY in .env, see .env.example}"
-    HMS_TIMEZONE: ${HMS_TIMEZONE:-UTC}
+    # The one zone variable. Every service that bounds a day defaults from it -- the billing
+    # day book, the audit report, the disclosure register, the immunisation register and now
+    # scheduling. This used to be HMS_TIMEZONE, which only scheduling read, so a compose
+    # deployment ran one service in UTC and the rest in Asia/Kolkata.
+    HMS_ZONE: ${HMS_ZONE:-Asia/Kolkata}
     SPRING_PROFILES_ACTIVE: docker
 
 services:

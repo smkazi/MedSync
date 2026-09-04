@@ -67,7 +67,7 @@ public class AppointmentService {
                              ScheduleBlackoutRepository blackouts, EncounterRepository encounters,
                              NoShowRiskClient riskClient, RoomDirectoryClient roomDirectory,
                              EventPublisher events, AuditService audit, QueueService queue,
-                             @Value("${hms.scheduling.zone:UTC}") String zone) {
+                             @Value("${hms.scheduling.zone:Asia/Kolkata}") String zone) {
         this.appointments = appointments;
         this.schedules = schedules;
         this.blackouts = blackouts;

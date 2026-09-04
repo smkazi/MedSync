@@ -1165,7 +1165,7 @@ Every service is environment-driven. The ones you are most likely to set:
 | `HMS_PHI_KEY` | **dev key, warns loudly** | Base64 AES-256 key for encrypted patient identifiers |
 | `HMS_SEED_ENABLED` | `false` (`true` in `dev`) | Seeds the demo accounts |
 | `HMS_AI_ANTHROPIC_API_KEY` | unset | Enables model-backed note summarisation |
-| `HMS_TIMEZONE` | `UTC` | Clinic-local zone for slot generation |
+| `HMS_ZONE` | `Asia/Kolkata` | **The one zone variable.** Everything that bounds a day defaults from it — the billing day book, the audit report, the disclosure register, the immunisation register and clinic slot generation. Per-service overrides exist (`HMS_SCHEDULING_ZONE`, `HMS_BILLING_ZONE`, `HMS_AUDIT_ZONE`, `HMS_INTEROP_ZONE`, `HMS_IMMUNISATION_ZONE`) and a deployment normally sets none of them. **`HMS_TIMEZONE` is gone** — it was read only by scheduling and defaulted to UTC, so a compose deployment ran one service on a different day from the other three; see the finding below |
 | `HMS_RATE_LIMIT_RPM` | `600` | Per-client requests a minute at the gateway |
 | `HMS_RATE_LIMIT_AUTH_RPM` | `20` | The same, for `/auth/**` |
 | `HMS_RATE_LIMIT_ENABLED` | `true` | Turn off if something in front already limits |
@@ -1919,6 +1919,17 @@ Worth writing down, because it is the argument for having built them:
   conversion *back* — a typed wall-clock time to an instant — is pinned to the same zone rather
   than to the container's `TZ` or the operator's laptop, which is what a radiographer booking a
   scanner slot depends on.
+- **One deployment was running two different days at once.** Every service that windows a
+  business day defaults its zone from `HMS_ZONE` — except scheduling-service, which read
+  `HMS_TIMEZONE` and defaulted to `UTC`. Nothing passed `HMS_ZONE` in `docker-compose.yml` at all,
+  so a compose deployment ran slot generation and the OPD token board in UTC while the day book,
+  the audit report and the disclosure register fell back to `Asia/Kolkata`. Found while planning a
+  notifiable-disease report, which would have bounded a statutory week with the odd one out and
+  put five and a half hours of every Sunday into the next week's return. Scheduling is on the chain
+  now and `HMS_TIMEZONE` is gone; the visible consequence is that a deployment which never set it
+  sees its clinic grid move from 09:00 UTC to 09:00 local, which is where it was always meant to
+  be. No booking moves — appointments are stored as instants and occupancy is interval arithmetic,
+  not equality.
 - **The connection budget was implicit, and the eleventh service found the ceiling.** Adding
   immunisation-service made the platform eleven Java services against one PostgreSQL, and it
   refused to start: `FATAL: sorry, too many clients already`. Hikari defaults to ten connections

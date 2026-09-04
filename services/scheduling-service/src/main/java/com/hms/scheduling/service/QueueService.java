@@ -41,7 +41,7 @@ public class QueueService {
     private final ZoneId clinicZone;
 
     public QueueService(QueueTokenRepository tokens, AuditService audit,
-                        @Value("${hms.scheduling.zone:UTC}") String timezone) {
+                        @Value("${hms.scheduling.zone:Asia/Kolkata}") String timezone) {
         this.tokens = tokens;
         this.audit = audit;
         // The clinic's own zone, not the server's, and the same property SlotCalculator reads.
