@@ -5,6 +5,7 @@ package main
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"syscall"
 )
 
@@ -18,6 +19,13 @@ import (
 // read, and the CI job on a real windows-latest runner covers even that.
 
 func spawn(logPath, dir string, env []string, name string, args ...string) (int, error) {
+	// The directory, before the file in it. Found by testing: on the HMS_DB_URL path nothing else
+	// had created it — the private-cluster path happened to, which is why every run that made its
+	// own database worked and a run against somebody else's failed on the very first service with
+	// "no such file or directory", naming a log rather than a cause.
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		return 0, err
+	}
 	f, err := os.Create(logPath)
 	if err != nil {
 		return 0, err

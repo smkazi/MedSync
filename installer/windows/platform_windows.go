@@ -5,6 +5,7 @@ package main
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"syscall"
 	"unsafe"
@@ -21,6 +22,11 @@ import (
 // does not take twelve JVMs down with it, and HideWindow stops each service opening a console
 // window of its own — without it, one click produces fourteen black rectangles on the taskbar.
 func spawn(logPath, dir string, env []string, name string, args ...string) (int, error) {
+	// The directory, before the file in it - see the note on the Unix twin. A run against an
+	// HMS_DB_URL somebody else supplied never creates a cluster, so nothing else had made this.
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		return 0, err
+	}
 	f, err := os.Create(logPath)
 	if err != nil {
 		return 0, err

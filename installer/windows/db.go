@@ -291,7 +291,26 @@ func (s *state) prepare() {
 		dim("  psql -p %d -U hms -d hms -c \"create extension pg_trgm; create extension btree_gist;\"", s.DBPort)
 		return
 	}
-	ok("database hms ready (extensions installed)")
+	// And then prove it, rather than inferring it from three commands that did not complain.
+	//
+	// This is the check whose absence cost a real install twenty minutes: the database steps all
+	// reported success, the build ran, and only then did twelve services fail one after another
+	// against a database that could not serve them. What a service needs is a connection to `hms`
+	// with both extensions present, so that is exactly what is asked for here — one query, before
+	// anything expensive happens.
+	if out, err := psqlRun(psql, target,
+		"select 1 from pg_extension where extname = 'pg_trgm'",
+		"select 1 from pg_extension where extname = 'btree_gist'"); err != nil {
+		warn("the database does not answer the way a service will need it to: %v", err)
+		dim("%s", strings.TrimSpace(string(out)))
+		if s.DBMode == "private" || s.DBMode == "docker" {
+			fail("refusing to build against a database that is not ready.\n\n"+
+				"    psql -p %d -U hms -d hms -c \"create extension pg_trgm; create extension btree_gist;\"\n\n"+
+				"Or start clean: MedSync-Setup.exe uninstall", s.DBPort)
+		}
+		return
+	}
+	ok("database hms ready (extensions installed, and checked)")
 }
 
 // psqlRun runs one or more statements, with every flag before the connection string and the

@@ -183,8 +183,9 @@ func (s *state) startServices(src string) {
 
 		if !waitHTTP(fmt.Sprintf("http://127.0.0.1:%d/actuator/health", svc.Port), 120*time.Second) {
 			bad("%-22s did not come up", svc.Name)
-			fail("%s never answered on %d.\n\nIts log is %s", svc.Name, svc.Port,
-				filepath.Join(logDir(), svc.Name+".log"))
+			// The reason, not the path to the reason. See diagnose.go.
+			explainLog(filepath.Join(logDir(), svc.Name+".log"))
+			fail("%s never answered on %d.", svc.Name, svc.Port)
 		}
 		ok("%-22s pid %-7d port %d", svc.Name, pid, svc.Port)
 	}
@@ -208,7 +209,8 @@ func (s *state) startWeb(src string) {
 	s.Ports["web"] = webPort
 	s.save()
 	if !waitHTTP(fmt.Sprintf("http://127.0.0.1:%d/login", webPort), 120*time.Second) {
-		fail("the web app never answered on %d.\n\nIts log is %s", webPort, filepath.Join(logDir(), "web.log"))
+		explainLog(filepath.Join(logDir(), "web.log"))
+		fail("the web app never answered on %d.", webPort)
 	}
 	ok("web on %d", webPort)
 }
