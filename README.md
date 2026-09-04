@@ -2293,14 +2293,15 @@ SAST/DAST tooling, and performance profiles. Dependency scanning covers Python (
   created nor deleted; a morphology cut-off's **note** is likewise read-only, since it appears
   verbatim on signed reports. There is no critical-value concept anywhere in the service — no
   column, field, flag or notification — so there is no critical-range editor to build yet.
-- **The immunisation register has no screens yet, and the schedule has no write endpoint.** The
-  register, the schedule, the cohort due list, the coverage measure and the cold chain are all built
-  and reachable through the API; nothing in the web app leads to them, so there is no recording form,
-  no patient register view, no calling list and no measure screen. Two smaller gaps in the same module, each named rather than half-built:
-  a schedule is edited by migration — the ages, intervals and grace periods are rows, and the write
-  endpoint an administrator would use to retune them is not there, so the screen would front a form
-  that 405s — and there is no per-patient due endpoint, only the cohort one, which answers for a
-  single child when both ends of the range are their birthday. **Vitamin A is deliberately absent
+- **The immunisation schedule has no write endpoint.** The register, the schedule, the cohort due
+  list, the coverage measure and the cold chain are all built, and since the screens landed all of
+  them are reachable from a browser. What is not there is the write an administrator would use to
+  retune a schedule: the ages, intervals and grace periods are rows edited by migration, which is
+  deliberate — a deployment able to edit the intervals could publish a due list it calls UIP and
+  which is not UIP, the NEWS2 argument one module along — and it is why the schedule screen is
+  read-only rather than fronting a form that would 405. There is also **no per-patient due
+  endpoint**, only the cohort one, which answers for a single child when both ends of the range are
+  their birthday. **Vitamin A is deliberately absent
   from the seeded schedule**: it is in the same national programme and it is not a vaccine, so nine
   six-monthly doses of a supplement have no antigen to be covered for, and including it would make
   every coverage question answer about something that is not immunity. And **cold-chain enforcement
