@@ -104,6 +104,7 @@ order) are plain columns, not foreign keys, so a service survives another's outa
 .
 ├── medsync.sh                   the whole installation in one file. `./medsync.sh up`
 ├── installer/windows/           MedSync-Setup.exe, in Go: one-click install on Windows
+├── installer/payload/           assembles the runtime the .exe carries inside itself
 ├── pom.xml                      Maven aggregator; -Pquality / -Psecurity / -Pmutation / -Pautomation
 ├── Makefile                     every task, one place. `make help`
 ├── docker-compose.yml           postgres, kafka (KRaft), twelve services, ai-service, web
@@ -1226,40 +1227,70 @@ produced it.
 
 ### One click, on Windows: `MedSync-Setup.exe`
 
-Download it from the [**Windows installer**](../../actions/workflows/windows-installer.yml) workflow
-— open the newest run and take `MedSync-Setup` from its artifacts — then double-click it.
+Download it from the [**Windows installer**](../../actions/workflows/windows-installer.yml)
+workflow — open the newest `Self-contained installer` run and take
+`MedSync-Setup-selfcontained` from its artifacts, or take it from a
+[release](../../releases) — then double-click it.
 
-It is a single 6 MB executable with no runtime behind it: no .NET, no Visual C++ redistributable,
-no installer framework, nothing to unpack. What it does, in order:
+**Everything MedSync needs is inside that one file.** It installs nothing on the machine, downloads
+nothing, and builds nothing. There is no JDK to install, no Node, no Maven, no PostgreSQL, no
+Python, no Docker, and no network connection required after the download. The file carries:
 
-1. **Looks at the machine** and prints what is there — JDK 21, Maven, Node 22, PostgreSQL, Docker
-   Desktop — and whether the engine behind Docker is actually running, which is a different
-   question from whether Docker is installed.
-2. **Offers to install what is missing**, by name, with the exact `winget` command for each, and
-   **only after you say yes.** Every package is the vendor's own from Microsoft's repository and
-   every one of them comes back out with `winget uninstall`. An installer that puts a JDK and a
-   database server on your machine because you double-clicked a file to look at a demo has done
-   something you did not agree to.
-3. **Picks a route.** Docker Desktop if its engine is running — that path needs no JDK, no Maven,
-   no Node and no PostgreSQL at all. Otherwise it builds and runs natively. `set MEDSYNC_MODE=native`
-   or `=docker` overrides the guess in either direction.
-4. **Downloads the source over HTTPS** and unpacks it with no `git` involved, which removes the one
-   prerequisite a Windows user is least likely to have. Drop the .exe into a checkout instead and
-   it builds that tree rather than downloading a second copy.
-5. **Provisions a database**, up a four-rung ladder that names the rung it used: an `HMS_DB_URL` you
-   set, a PostgreSQL already listening on 5432, a private cluster it creates on port 55432 in
-   `%LOCALAPPDATA%\MedSync` and owns, or a container.
-6. **Builds, starts and then checks** — signing in as a real seeded user and reading one real
-   endpoint from every service through the gateway, plus the unauthenticated corridor display. A
-   health check would have passed on a platform that cannot serve a request; this is the smallest
+| Inside the .exe | |
+| --- | --- |
+| A Java runtime | Temurin 21, `jlink`ed to the modules the services actually load |
+| A Node runtime | Node 22, the binary alone — no npm, because nothing installs a package |
+| A PostgreSQL server | 16, pruned to `bin`, `lib` and `share` |
+| An embeddable Python | 3.11 with the AI service's wheels already installed into it |
+| The twelve services | packaged thin, launched against their own exact classpaths |
+| Every Java library | one copy of each, pooled and hard-linked back into place |
+| The web app | Next.js standalone output, started as `node server.js` |
+| The AI service | with its trained no-show model |
+| Every licence | each component's own text, plus `THIRD-PARTY-NOTICES.txt` |
+
+**The measurement that makes that possible.** The twelve Spring Boot fat jars weigh **1,000 MB**
+between them, and they are the same libraries twelve times over: each is roughly 84 MB of
+dependencies wrapped around 0.3 MB of MedSync. Packaged thin — the root pom's `thin` profile: ZIP
+layout, so `PropertiesLauncher`, and no `BOOT-INF/lib` at all — and launched with `-Dloader.path`,
+the same twelve weigh **4.6 MB**, and the **1,404 classpath entries** they need between them turn
+out to be only **185 distinct jars, 117 MB**. A gigabyte becomes 122 MB, and an absurd installer
+becomes an ordinary one.
+
+**And each service still gets its own exact classpath, which is not a detail.** The first version
+pointed all twelve at the pooled directory, which is the obvious thing and is wrong: the gateway is
+reactive and the other eleven are servlet, so identity-service found Spring Cloud Gateway on its
+classpath and refused to start — *"Spring MVC found on classpath, which is incompatible with Spring
+Cloud Gateway"*. That was the lucky failure, because it was loud. The quiet one is a service
+acquiring an auto-configuration from a dependency it never declared, and on a clinical platform a
+silent behaviour change is the worse outcome by a distance. So the payload carries the pool plus one
+classpath list per service, and the installer rebuilds the per-service directories at unpack time by
+**hard link** — exact classpaths, at no cost in bytes. A hard link rather than a symbolic one
+because creating a symlink on Windows needs developer mode or elevation and a hard link on NTFS
+needs neither.
+
+What it does, in order:
+
+1. **Opens itself.** A zip is appended to the executable; a zip's central directory lives at the
+   end of the file, so an archive with a program in front of it is still a valid archive. It is
+   unpacked once into `%LOCALAPPDATA%\MedSync\runtime\<payload hash>` and every run after that
+   finds it already there. The directory is named for the payload's own hash, so a newer installer
+   unpacks beside an older one rather than overwriting jars out from under running JVMs.
+2. **Provisions a database** — an `HMS_DB_URL` you set, or the bundled PostgreSQL as a private
+   cluster on port 55432 that it owns and `uninstall` removes. The old rung that took over a server
+   already listening on 5432 is gone from this path: it existed only because no database was
+   bundled, and guessing at somebody else's credentials is pure risk once one is.
+3. **Starts everything** — twelve services out of the bundled JRE, the web app out of the bundled
+   Node, and the AI service out of the bundled Python.
+4. **Checks it**, signing in as a real seeded user and reading one real endpoint from every service
+   through the gateway, plus the unauthenticated corridor display and the AI service's own health.
+   A health check would have passed on a platform that cannot serve a request; this is the smallest
    thing that tells "up" apart from "working".
-7. **Opens your browser**, and prints the twelve demo accounts with what each one is for and what
-   each one is refused.
+5. **Opens your browser**, and prints the demo accounts with what each one is for and what each one
+   is refused.
 
 ```
-MedSync-Setup.exe              double-click: install, start, check, open a browser
-MedSync-Setup.exe doctor       prerequisites, the database and the ports
-MedSync-Setup.exe fetch        download the source only
+MedSync-Setup.exe              double-click: unpack, start, check, open a browser
+MedSync-Setup.exe doctor       what is inside this file, the database and the ports
 MedSync-Setup.exe db           provision a PostgreSQL and print its URL, nothing else
 MedSync-Setup.exe smoke        sign in and read one screen from every service
 MedSync-Setup.exe status       what is running, and on which port
@@ -1267,48 +1298,86 @@ MedSync-Setup.exe down         stop everything
 MedSync-Setup.exe uninstall    stop everything and delete what it created
 ```
 
-Everything it creates lives in `%LOCALAPPDATA%\MedSync` — the database cluster, the source, the
-logs and the generated PHI key — and `uninstall` removes all of it. Anything installed through
-winget stays installed, because it belongs to the machine and not to this.
+Everything it creates lives in `%LOCALAPPDATA%\MedSync` — the unpacked runtime, the database
+cluster, the logs and the generated PHI key — and `uninstall` removes all of it. Nothing is left
+anywhere else on the machine, because nothing was put anywhere else.
 
-**How it is verified, and what is not.** The installer is Go, cross-compiled, and the seven
-platform-independent files of it — detection, download, the database ladder, build, start order,
-smoke — are exercised on Linux through a second build of the same source: a full install against a
-fresh database migrated the eleven service schemas, seeded the accounts, started every service and
-passed all seventeen checks.
+**A fix that came with the bundle, and it was a real defect.** `hms.ai.enabled` defaults to *true*
+and no installer ever set it or started anything on port 8000 — `ai-service` was in no service
+table anywhere. So every appointment booked on a Windows install opened a connection to a closed
+port and waited out the circuit breaker before falling open: a booking that took a few seconds,
+with no error anywhere. The AI service is now started, the flag is now stated rather than
+inherited, and the smoke test checks it.
 
-That leaves the Windows half, which cannot be executed where it was written: the console-window
-detection, the detached process flags, `taskkill /T`, the Program Files search paths, `initdb` and
-`pg_ctl` under Windows, the registry `PATH` re-read. The `windows-installer` workflow runs those on
-a real `windows-latest` runner on every push, and **it is green**. What it establishes, quoted from
-the run rather than described:
+**Three things running it taught, all now fixed in the build.** The classpath one is above. The
+second is the quietest and the worst: `dependency:copy-dependencies -pl services/<x>` resolves that
+service's dependencies **from the local Maven repository, not from the reactor**. `hms-common` is a
+dependency of eleven services *and* a module of the same build, so a payload assembled after
+`mvn package` pooled whatever copy of `hms-common` happened to be in `~/.m2` — on the machine this
+was written on, one three days old that predated `ServiceUnavailableException`. scheduling-service
+unpacked, started, and died on `NoClassDefFoundError` for a class that was in the source tree and
+in the jar built ten minutes earlier. Nothing before the service tried to load that class could
+have noticed. The payload build now runs `mvn -Pthin install`, so the pool can only contain what
+this build produced.
 
-- `java -version` parsed on Windows, and the version floor applied to it — a JDK pinned to 17 is
-  read as 17, reported "too old", and refused outright once the route is pinned with
-  `MEDSYNC_MODE=native`; then JDK 21 goes on and the same command passes.
-- The Program Files search finding what PATH does not:
-  `PostgreSQL server binaries at C:\Program Files\PostgreSQL\17\bin`.
-- Installed and running told apart — `Docker Desktop 29.1.5, engine running` on one runner and
-  "installed, but the engine is not running" on another, each choosing the correct route.
-- A checkout beside the executable winning over a download, *and* the download itself unpacking a
-  whole tree when there is no checkout.
-- A private cluster created from nothing and answering:
-  `mode=private port=55432 dir=D:\a\_temp\medsync\pgdata`, then `extensions: btree_gist,pg_trgm`
-  read back out of `pg_extension` by `psql`.
-- `uninstall` stopping the cluster, freeing every port, and leaving nothing behind.
+The third was the AI service reading `data/icd10_subset.json` — a *relative* path, resolved against
+its working directory — while the build staged only `app/` and `models/`. It died on startup with
+`FileNotFoundError` and the platform carried on without it, exactly as `hms.ai.enabled` is designed
+to allow, which is why nothing else noticed. The build now stages all three content directories
+rather than guessing which are load-bearing.
 
-A second job does the whole install — fourteen Maven modules, the web app, twelve services, the
-smoke test — nightly and on demand rather than on every push, because it takes twenty to forty
-minutes and CI that people stop waiting for is CI that stops being read. It also asserts that the
-cashier account is still refused a chart, because the account list this installer prints is a claim
-and a claim should have a test. **That job has not run yet**, so the full Windows install is
-reviewed rather than exercised; the fast job above is what is proven.
+The fourth: the AI service's scientific stack — scikit-learn, scipy, numpy — is more than half the
+uncompressed payload, so the build prunes it, and the first pruning rule deleted every directory
+called `tests`, `test` or `testing`. `numpy.testing` is a *public API module* that scipy imports on
+the way up, so a service that had started fine five minutes earlier died with
+`ModuleNotFoundError: No module named 'numpy.testing'` — after the payload had been sealed,
+shipped and unpacked. The rule now removes `tests` only, and the payload build ends by importing
+everything the AI service imports and loading the trained model, so a pruning rule that guesses
+cannot ship again. Pruned correctly the Python runtime is 209 MB rather than 379 MB.
+
+**The one thing that is deliberately not inside.** Four things MedSync can talk to are other
+people's servers rather than libraries, and nothing can bundle a server: SMTP, the generic HTTP
+SMS/WhatsApp gateway, the ABDM gateway and the Anthropic API. Every one is already optional behind
+a no-op adapter, which is why the platform runs with no keys and no outbound network at all. Test
+and security tooling — Playwright's Chromium, k6, ZAP — is also excluded on purpose: it verifies
+the platform, it is not part of running it.
+
+**How it is verified.** The proof that matters is not "it started" but "it started using nothing
+from this machine", and those are different claims — anything starts on a runner that already has
+a JDK.
+
+On Linux, where the same script builds the same payload for a binary that can actually be run here,
+that proof has been taken: one 377 MB file unpacked 14,388 files, created a PostgreSQL cluster with
+its own `initdb`, started twelve services, the web app and the AI service, and passed all seventeen
+smoke checks. Then every running process was matched against the runtime directory —
+**12 `java`, 18 `postgres`, 1 `node`, 1 `python`, and not one image from anywhere else on the
+machine.** So the `bundled` job in the `windows-installer` workflow strips Java, Node, Maven,
+PostgreSQL and Python out of `PATH`, asserts none of them resolves any more, runs a full `up`, and
+then asserts that **every running `java.exe`, `node.exe` and `postgres.exe` has its image under
+`%LOCALAPPDATA%\MedSync\runtime`**. A single process from `Program Files` fails the job. Then
+`down`, `uninstall`, and an assertion that nothing survives.
+
+The payload build itself runs on `windows-latest` and not as a convenience: the Next.js standalone
+output pulls `@next/swc-win32-x64-msvc` and the Python wheels are `win_amd64`, so assembling either
+anywhere else is a guess. It is one bash script, `installer/payload/build-payload.sh`, run on both
+Linux and Windows — a payload build whose two halves are separate programs is one where only half
+is ever exercised.
+
+**A developer build of the same source carries no payload**, and falls back to the old behaviour:
+detect what is on the machine, offer the winget installs, download the source, build it. That is
+how the installer's logic is exercised on Linux, where a Windows binary cannot run at all, and it
+is what the `windows-fast` job checks on every push.
 
 ### One command, on Linux and macOS: `medsync.sh`
 
 ```bash
 ./medsync.sh up
 ```
+
+Unlike the Windows installer, this one **builds from source** — deliberately. It is a script rather
+than a 300 MB binary, it runs on two operating systems and several architectures, and a developer
+on Linux or macOS already has a toolchain. The two are not the same program with different
+extensions: one ships a runtime, the other uses yours.
 
 `medsync.sh` is the whole installation in a single script: it checks the prerequisites, finds or
 provisions a PostgreSQL, generates the one secret that has to be machine-local, builds all fourteen

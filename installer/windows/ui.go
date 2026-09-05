@@ -48,6 +48,13 @@ func pause() {
 }
 
 func confirm(question string) bool {
+	// An unattended yes, for CI. Not a general "assume yes for everything" flag: the only question
+	// this program asks is the one before `uninstall` deletes its own directory, and a verification
+	// job that cannot answer it cannot check that uninstall leaves nothing behind.
+	if os.Getenv("MEDSYNC_ASSUME_YES") == "1" {
+		fmt.Printf("\n%s [y/N] y   (MEDSYNC_ASSUME_YES)\n", question)
+		return true
+	}
 	fmt.Printf("\n%s [y/N] ", question)
 	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
 	if err != nil {

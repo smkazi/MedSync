@@ -27,7 +27,7 @@ import (
 
 const privateDBPort = 55432
 
-func (s *state) database() {
+func (s *state) database(rt runtimeTree) {
 	if v := os.Getenv("HMS_DB_URL"); v != "" {
 		s.DBMode, s.DBPort = "external", 0
 		ok("Database: HMS_DB_URL from the environment (%s)", v)
@@ -40,7 +40,7 @@ func (s *state) database() {
 			ok("Database: the private cluster already running on %d", s.DBPort)
 			return
 		}
-		if s.startCluster() {
+		if s.startCluster(rt) {
 			return
 		}
 		warn("the private cluster at %s would not start", s.DBDir)
@@ -61,8 +61,14 @@ func (s *state) database() {
 	// Failing the probe is also the more polite outcome. Writing eleven schemas into a developer's
 	// own PostgreSQL without being asked is not something an installer should do by accident; if it
 	// cannot authenticate, it stands up its own cluster instead and says so.
-	if portBusy(5432) {
-		if s.canSignIn(5432) {
+	//
+	// The whole rung is skipped on a bundled install, and that is the point of bundling: a payload
+	// that carries its own PostgreSQL has no reason to go looking for somebody else's, and every
+	// reason not to. Guessing at another server's credentials was only ever worth the risk because
+	// there was no database in the box. An existing server is still usable there — deliberately,
+	// by setting HMS_DB_URL, which is the rung above this one.
+	if !rt.present() && portBusy(5432) {
+		if s.canSignIn(5432, rt) {
 			s.DBMode, s.DBPort = "existing", 5432
 			ok("Database: the PostgreSQL already running on 5432")
 			s.save()
@@ -80,11 +86,22 @@ func (s *state) database() {
 	if s.DBPort == 0 {
 		s.DBPort = privateDBPort
 	}
-	if s.initCluster() && s.startCluster() {
+	if s.initCluster(rt) && s.startCluster(rt) {
 		return
 	}
 	if s.startDockerDB() {
 		return
+	}
+	if rt.present() {
+		// Unreachable on a complete payload — the server is in the file that is running — so if it
+		// is reached, the useful thing to say is that the bundled one would not start, not that a
+		// PostgreSQL should be installed. Suggesting an install here would send somebody to fix a
+		// machine that is not the problem.
+		fail("the bundled PostgreSQL would not start.\n\n"+
+			"Its log is %s\n\n"+
+			"To use a server you already have instead:\n\n"+
+			"    set HMS_DB_URL=jdbc:postgresql://host:5432/hms",
+			filepath.Join(logDir(), "postgres.log"))
 	}
 	fail("no way to get a PostgreSQL.\n\n" +
 		"Install PostgreSQL 16 (winget install PostgreSQL.PostgreSQL.16), or start Docker\n" +
@@ -98,8 +115,8 @@ func (s *state) database() {
 // Without psql there is no way to find out, and the honest answer to "I cannot check" is no: the
 // alternative is committing to a server on a guess and failing several steps later, where the error
 // names a database rather than a decision.
-func (s *state) canSignIn(port int) bool {
-	psql := pgTool("psql")
+func (s *state) canSignIn(port int, rt runtimeTree) bool {
+	psql := rt.pgTool("psql")
 	if psql == "" {
 		return false
 	}
@@ -113,7 +130,19 @@ func (s *state) canSignIn(port int) bool {
 	return err == nil && !strings.Contains(strings.ToLower(string(out)), "error")
 }
 
-func pgTool(name string) string {
+// pgTool resolves one of PostgreSQL's programs, preferring the one inside this installer.
+//
+// The bundled copy first, and not merely for convenience: initdb, pg_ctl, postgres and psql are a
+// matched set, and a psql found on PATH from some other installation is exactly how a version
+// mismatch reaches a cluster this installer created. On a payload build there is no second
+// candidate at all — the machine is not required to have PostgreSQL — so the PATH search below is
+// the developer path's fallback rather than the normal case.
+func (r runtimeTree) pgTool(name string) string {
+	if r.present() {
+		if path := r.pgBin(name); fileExists(path) {
+			return path
+		}
+	}
 	t := &tool{command: name}
 	t.look()
 	if t.found {
@@ -127,8 +156,8 @@ func pgTool(name string) string {
 // Unlike on Linux there is no root problem here — Windows has no equivalent refusal — but there is
 // a different one, and it took a Windows runner to find it: initdb must be the thing that creates
 // the data directory. See the comment on the RemoveAll below.
-func (s *state) initCluster() bool {
-	initdb := pgTool("initdb")
+func (s *state) initCluster(rt runtimeTree) bool {
+	initdb := rt.pgTool("initdb")
 	if initdb == "" {
 		return false
 	}
@@ -154,6 +183,16 @@ func (s *state) initCluster() bool {
 	// file this installer also ships.
 	cmd := exec.Command(initdb, "-D", s.DBDir, "-U", "hms", "-E", "UTF8", "--auth-host=trust", "--auth-local=trust")
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	// On Unix as root this becomes an unprivileged command, because initdb refuses to run as root
+	// and is right to. A no-op on Windows and a no-op for an ordinary user anywhere. The parent
+	// directory has to change hands too, or initdb cannot create the data directory inside it.
+	if uid, gid, dropped := dropPrivileges(cmd); dropped {
+		dim("running initdb as an unprivileged user, which is the only way it will run at all")
+		if err := ownedBy(filepath.Dir(s.DBDir), uid, gid); err != nil {
+			warn("could not hand %s over: %v", filepath.Dir(s.DBDir), err)
+			return false
+		}
+	}
 	if err := cmd.Run(); err != nil {
 		warn("initdb failed: %v", err)
 		return false
@@ -162,8 +201,8 @@ func (s *state) initCluster() bool {
 	return true
 }
 
-func (s *state) startCluster() bool {
-	pgCtl := pgTool("pg_ctl")
+func (s *state) startCluster(rt runtimeTree) bool {
+	pgCtl := rt.pgTool("pg_ctl")
 	if pgCtl == "" {
 		return false
 	}
@@ -172,6 +211,19 @@ func (s *state) startCluster() bool {
 	cmd := exec.Command(pgCtl, "-D", s.DBDir, "-l", logFile,
 		"-o", fmt.Sprintf("-p %d -c listen_addresses=127.0.0.1", s.DBPort), "start")
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	// The same drop as initdb, and for the same refusal: the server behind pg_ctl will not run as
+	// root either. The log file is created here rather than left to pg_ctl, because the dropped
+	// user has to be able to write to it and cannot create it in a directory root owns.
+	if uid, gid, dropped := dropPrivileges(cmd); dropped {
+		if f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
+			f.Close()
+		}
+		_ = os.Chown(logFile, uid, gid)
+		if err := ownedBy(s.DBDir, uid, gid); err != nil {
+			warn("could not hand %s over: %v", s.DBDir, err)
+			return false
+		}
+	}
 	if err := cmd.Run(); err != nil {
 		warn("pg_ctl start failed: %v (log: %s)", err, logFile)
 		return false
@@ -237,12 +289,12 @@ func (s *state) startDockerDB() bool {
 // prepare creates the database and the two extensions. Everything else — all eleven service
 // schemas and every table in them — is Flyway's job on first start, which is why there is no schema
 // step here and nothing to copy anywhere.
-func (s *state) prepare() {
+func (s *state) prepare(rt runtimeTree) {
 	if s.DBMode == "external" {
 		dim("HMS_DB_URL is yours; the database, role and extensions are assumed to exist")
 		return
 	}
-	psql := pgTool("psql")
+	psql := rt.pgTool("psql")
 	if psql == "" {
 		if s.DBMode == "docker" {
 			docker, _ := exec.LookPath("docker")
@@ -333,11 +385,15 @@ func psqlRun(psql, conn string, statements ...string) ([]byte, error) {
 	return cmd.CombinedOutput()
 }
 
-func (s *state) stopDatabase() {
+func (s *state) stopDatabase(rt runtimeTree) {
 	switch s.DBMode {
 	case "private":
-		if pgCtl := pgTool("pg_ctl"); pgCtl != "" && s.DBDir != "" {
-			if exec.Command(pgCtl, "-D", s.DBDir, "-m", "fast", "stop").Run() == nil {
+		if pgCtl := rt.pgTool("pg_ctl"); pgCtl != "" && s.DBDir != "" {
+			stop := exec.Command(pgCtl, "-D", s.DBDir, "-m", "fast", "stop")
+			// The same drop as the start: pg_ctl refuses as root, so a cluster started by an
+			// unprivileged user could otherwise be started and never stopped.
+			dropPrivileges(stop)
+			if stop.Run() == nil {
 				ok("stopped the private cluster")
 				return
 			}

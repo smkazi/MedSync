@@ -306,6 +306,51 @@
         <module>tests/api</module>
       </modules>
     </profile>
+
+    <!-- The layout the self-contained Windows installer is packaged from, and deliberately not the
+         default. `mvn package` unchanged still produces the twelve ordinary fat jars that
+         Dockerfile.java, scripts/local.sh, scripts/gen-certs.sh and medsync.sh all launch with a
+         plain `java -jar` - nothing about the everyday build, CI or the container images moves.
+
+         `mvn -Pthin package` instead produces twelve ~0.3 MB jars with no BOOT-INF/lib at all,
+         launched as `java -Dloader.path=lib -jar <service>.jar` against one shared directory.
+         The measurement that makes this worth a profile: the twelve fat jars carry 1,246
+         dependency entries weighing 995 MB, and among them are only 172 distinct jars weighing
+         123 MB. Each fat jar is roughly 84 MB of libraries wrapped around 0.3 MB of MedSync. An
+         installer that ships the fat jars ships those libraries twelve times.
+
+         ZIP layout means PropertiesLauncher, which is the launcher that reads `loader.path`; the
+         empty <includes> filter is what empties BOOT-INF/lib, since ZIP layout on its own still
+         embeds every dependency. The two go together and neither is useful alone. -->
+    <profile>
+      <id>thin</id>
+      <build>
+        <pluginManagement>
+          <plugins>
+            <plugin>
+              <groupId>org.springframework.boot</groupId>
+              <artifactId>spring-boot-maven-plugin</artifactId>
+              <configuration>
+                <layout>ZIP</layout>
+                <!-- The jarmode tools jar is a 55 KB diagnostic helper the plugin adds by default.
+                     Twelve copies of it is most of a megabyte in aid of a command nobody runs from
+                     inside this installer. -->
+                <includeTools>false</includeTools>
+                <!-- A filter that matches no dependency, which is how this plugin is asked to
+                     package none of them. The groupId is not a typo and not a placeholder to fill
+                     in later: it exists precisely so that it matches nothing. -->
+                <includes>
+                  <include>
+                    <groupId>com.hms.none</groupId>
+                    <artifactId>packaged-separately</artifactId>
+                  </include>
+                </includes>
+              </configuration>
+            </plugin>
+          </plugins>
+        </pluginManagement>
+      </build>
+    </profile>
   </profiles>
 
   <build>

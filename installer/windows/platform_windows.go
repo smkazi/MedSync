@@ -100,3 +100,10 @@ func startedFromExplorer() bool {
 	n, _, _ := proc.Call(uintptr(unsafe.Pointer(&pids[0])), uintptr(len(pids)))
 	return n == 1
 }
+
+// The Unix twin's dropPrivileges has no Windows equivalent and needs none: initdb and the postgres
+// server refuse to run as root on Unix, and Windows has no root. A local install runs as the person
+// who double-clicked the file, which is exactly the account PostgreSQL wants.
+func dropPrivileges(_ *exec.Cmd) (uid, gid int, dropped bool) { return 0, 0, false }
+
+func ownedBy(_ string, _, _ int) error { return nil }

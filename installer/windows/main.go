@@ -61,8 +61,13 @@ func main() {
 		// twenty-minute build in front of it, which is what lets CI check it on every push.
 		s := loadState()
 		s.ensureKey()
-		s.database()
-		s.prepare()
+		root, err := ensureRuntime()
+		if err != nil {
+			fail("could not unpack the runtime: %v", err)
+		}
+		rt := runtimeTree{root: root}
+		s.database(rt)
+		s.prepare(rt)
 		ok("HMS_DB_URL=%s", s.dbURL())
 		pause()
 	case "status":
@@ -117,9 +122,39 @@ func banner() {
 
 func cmdDoctor() {
 	banner()
-	step("Prerequisites")
-	env := inspect()
-	missing := env.report()
+
+	// What is in the file, before what is on the machine. On a released build the second question
+	// has no bearing on whether MedSync will run, and leading with a list of things to install
+	// would tell somebody to go and fix a machine that is not the problem.
+	step("What is inside this installer")
+	id, files, megabytes, err := payloadSummary()
+	bundled := err == nil
+	if bundled {
+		ok("payload %s — %d files, %d MB", id[:min(len(id), 12)], files, megabytes)
+		if root, unpacked := existingRuntime(); unpacked {
+			runtimeTree{root: root}.describe()
+		} else {
+			dim("not unpacked yet; the first `up` unpacks it once into %s", runtimeRoot())
+		}
+	} else {
+		runtimeTree{}.describe()
+	}
+
+	var env *environment
+	var missing []*tool
+	if !bundled {
+		step("Prerequisites")
+		env = inspect()
+		missing = env.report()
+	}
+
+	if bundled {
+		step("Route")
+		ok("Bundled — everything runs out of this file, nothing is installed or downloaded")
+		cmdDoctorPorts()
+		pause()
+		return
+	}
 
 	step("Route")
 	switch chooseMode(env) {
@@ -137,8 +172,8 @@ func cmdDoctor() {
 		ok("HMS_DB_URL is set: %s", os.Getenv("HMS_DB_URL"))
 	case portBusy(5432):
 		ok("something is already listening on 5432 — it will be used")
-	case pgTool("initdb") != "" && pgTool("pg_ctl") != "":
-		ok("PostgreSQL server binaries at %s", filepath.Dir(pgTool("initdb")))
+	case runtimeTree{}.pgTool("initdb") != "" && runtimeTree{}.pgTool("pg_ctl") != "":
+		ok("PostgreSQL server binaries at %s", filepath.Dir(runtimeTree{}.pgTool("initdb")))
 		dim("a private cluster will be created on port %d and removed by `uninstall`", privateDBPort)
 	case env.dockerRunning:
 		ok("a PostgreSQL container will be used")
@@ -151,28 +186,7 @@ func cmdDoctor() {
 		warn("no PostgreSQL and no Docker — one of them is needed")
 	}
 
-	step("Ports")
-	// Ownership matters, not just occupancy. A port held by this installer's own previous run is
-	// fine and a port held by something else is a problem, and reporting them the same way sends
-	// somebody hunting for a conflict that is their own MedSync still running.
-	s := loadState()
-	ours := map[int]bool{}
-	for _, p := range s.Ports {
-		ours[p] = true
-	}
-	busy, mine := 0, 0
-	for _, p := range append([]int{webPort}, portsOfServices()...) {
-		switch {
-		case !portBusy(p):
-			ok("%d free", p)
-		case ours[p]:
-			ok("%d this MedSync", p)
-			mine++
-		default:
-			warn("%d in use by something this installer did not start", p)
-			busy++
-		}
-	}
+	busy, mine := cmdDoctorPorts()
 
 	say("")
 	if len(missing) > 0 && chooseMode(env) == "" {
@@ -233,30 +247,63 @@ func cmdUp() {
 	s := loadState()
 	s.ensureKey()
 
-	step("Prerequisites")
-	env := inspect()
-	missing := env.report()
-
-	mode := chooseMode(env)
-	if mode == "" {
-		// Nothing usable yet. Offer the install, then look again — refreshPath is what makes the
-		// second look able to see what the first one could not.
-		if offerInstall(missing) {
-			refreshPath()
-			step("Checking again")
-			env = inspect()
-			env.report()
-			mode = chooseMode(env)
+	// The runtime first, before anything is inspected on this machine, because what it contains
+	// decides whether anything on this machine matters at all. A released MedSync-Setup.exe carries
+	// a Java runtime, a Node runtime, a PostgreSQL server, an embeddable Python, every library and
+	// the built web app; on that path there is nothing to detect, nothing to install and nothing to
+	// download.
+	step("Unpacking")
+	root, err := ensureRuntime()
+	if err != nil {
+		fail("could not unpack the runtime from this installer: %v", err)
+	}
+	rt := runtimeTree{root: root}
+	if rt.present() {
+		if gaps := rt.missing(); len(gaps) > 0 {
+			bad("This payload is incomplete:")
+			for _, gap := range gaps {
+				say("     - %s", gap)
+			}
+			fail("Download MedSync-Setup.exe again — this copy is truncated or was built wrong.")
 		}
-	}
-	if mode == "" {
-		fail("MedSync cannot run yet.\n\n" +
-			"Either install the prerequisites above, or install Docker Desktop and start it —\n" +
-			"with Docker running this installer needs nothing else at all:\n\n" +
-			"    winget install --id Docker.DockerDesktop")
+		ok("Everything MedSync needs is inside this file")
 	}
 
-	src := ensureSource()
+	src := ""
+	mode := "native"
+
+	if rt.present() {
+		s.AI = rt.hasAI()
+	} else {
+		// The developer path: a build with no payload, which is how this program's logic is
+		// exercised on a machine that cannot run a Windows binary. It is the old behaviour
+		// unchanged — detect, offer, download, build.
+		step("Prerequisites")
+		env := inspect()
+		missing := env.report()
+
+		mode = chooseMode(env)
+		if mode == "" {
+			// Nothing usable yet. Offer the install, then look again — refreshPath is what makes
+			// the second look able to see what the first one could not.
+			if offerInstall(missing) {
+				refreshPath()
+				step("Checking again")
+				env = inspect()
+				env.report()
+				mode = chooseMode(env)
+			}
+		}
+		if mode == "" {
+			fail("MedSync cannot run yet.\n\n" +
+				"Either install the prerequisites above, or install Docker Desktop and start it —\n" +
+				"with Docker running this installer needs nothing else at all:\n\n" +
+				"    winget install --id Docker.DockerDesktop")
+		}
+		src = ensureSource()
+		s.AI = false
+	}
+
 	s.Source = src
 	s.Mode = mode
 	s.save()
@@ -264,16 +311,17 @@ func cmdUp() {
 	if mode == "compose" {
 		s.composeUp(src)
 	} else {
-		s.database()
-		s.prepare()
+		s.database(rt)
+		s.prepare(rt)
 		say("")
 		dim("database  %s", s.dbURL())
 		dim("logs      %s", logDir())
-		if os.Getenv("MEDSYNC_SKIP_BUILD") != "1" {
+		if !rt.present() && os.Getenv("MEDSYNC_SKIP_BUILD") != "1" {
 			s.build(src)
 		}
-		s.startServices(src)
-		s.startWeb(src)
+		s.startAI(rt)
+		s.startServices(src, rt)
+		s.startWeb(src, rt)
 	}
 
 	if failures := smoke(); failures > 0 {
@@ -311,12 +359,15 @@ func cmdDown() {
 
 func cmdUninstall() {
 	banner()
+	_, _, _, err := payloadSummary()
+	bundled := err == nil
 	s := loadState()
 	if s.Mode == "compose" && s.Source != "" {
 		s.composeDown(s.Source)
 	} else {
 		s.stopAll()
-		s.stopDatabase()
+		root, _ := existingRuntime()
+		s.stopDatabase(runtimeTree{root: root})
 	}
 	say("")
 	say("   About to delete %s", homeDir())
@@ -331,7 +382,14 @@ func cmdUninstall() {
 		fail("could not delete %s: %v", homeDir(), err)
 	}
 	ok("Removed.")
-	dim("Anything installed with winget is still installed; `winget uninstall` removes those.")
+	if bundled {
+		// Nothing else to say on a bundled install, and saying it anyway would be worse than
+		// silence: pointing somebody at `winget uninstall` after an install that used no winget
+		// invites them to remove a JDK that was theirs to begin with.
+		dim("Nothing was installed outside that folder, so there is nothing else to remove.")
+	} else {
+		dim("Anything installed with winget is still installed; `winget uninstall` removes those.")
+	}
 	pause()
 }
 
@@ -379,4 +437,32 @@ func printAccounts() {
  Logs: %s
 --------------------------------------------------------------------------------`,
 		webPort, gatewayPort, webPort, seedPassword(), filepath.Clean(logDir()))
+}
+
+// cmdDoctorPorts reports which of MedSync's ports are free, which this installer is holding, and
+// which something else has.
+//
+// Ownership matters, not just occupancy. A port held by this installer's own previous run is fine
+// and a port held by something else is a problem, and reporting them the same way sends somebody
+// hunting for a conflict that is their own MedSync still running.
+func cmdDoctorPorts() (busy, mine int) {
+	step("Ports")
+	s := loadState()
+	ours := map[int]bool{}
+	for _, p := range s.Ports {
+		ours[p] = true
+	}
+	for _, p := range append([]int{webPort, aiPort}, portsOfServices()...) {
+		switch {
+		case !portBusy(p):
+			ok("%d free", p)
+		case ours[p]:
+			ok("%d this MedSync", p)
+			mine++
+		default:
+			warn("%d in use by something this installer did not start", p)
+			busy++
+		}
+	}
+	return busy, mine
 }

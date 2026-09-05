@@ -22,8 +22,18 @@ install: ## Install, start, smoke-test and open the whole platform (one file, no
 # Windows machine. What it cannot do is *run* the result - see the windows-installer workflow, which
 # does that on a real runner.
 .PHONY: installer-exe
-installer-exe: ## Cross-compile the Windows one-click installer into dist/
+installer-exe: ## Cross-compile the Windows installer (no payload) into dist/
 	installer/windows/build.sh
+
+# The self-contained installer: the same binary with a runtime appended to it. Fifteen to thirty
+# minutes and roughly a gigabyte of staging, which is why it is a separate target from the one
+# above rather than a flag on it. --os windows is what ships; --os linux is what makes the script
+# testable on a machine that cannot run the result.
+.PHONY: installer-payload
+installer-payload: ## Assemble the runtime and append it, producing a self-contained installer
+	installer/payload/build-payload.sh --os $(PAYLOAD_OS)
+	installer/windows/build.sh --payload installer/payload/build/$(PAYLOAD_OS)/payload.zip
+PAYLOAD_OS ?= windows
 
 .PHONY: build
 build: ## Build every Java module

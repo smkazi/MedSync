@@ -28,6 +28,7 @@ type state struct {
 	Pids    map[string]int `json:"pids"`    // service name -> process id
 	Ports   map[string]int `json:"ports"`   // service name -> port
 	Source  string         `json:"source"`  //
+	AI      bool           `json:"ai"`      // whether the AI service is part of this install
 	Written string         `json:"written"` //
 }
 
@@ -126,7 +127,26 @@ var services = []struct {
 const (
 	gatewayPort = 8080
 	webPort     = 3000
+	// The AI service. Kept out of the table above because it is a Python process rather than a
+	// service jar, and in the table's own terms — a name and a port to health-check — it is
+	// identical, which is why aiService below is a row and not a special case.
+	aiPort = 8000
 )
+
+// aiService is the clinical decision-support service: no-show risk, triage acuity, ICD-10 coding
+// suggestions and note summarisation.
+//
+// It has a row here because until this bundle it had none anywhere, and that was a real defect
+// rather than an omission of documentation. `hms.ai.enabled` defaults to **true**
+// (scheduling-service's application.yml, `enabled: ${HMS_AI_ENABLED:true}`) and no installer ever
+// set it or started anything on 8000 — so every appointment booked on a Windows install called a
+// port with nothing behind it and paid the circuit breaker's timeout before falling open. The
+// symptom was a booking that took a few seconds and no error anywhere, which is the hardest shape
+// of defect to notice and the easiest to fix once seen.
+var aiService = struct {
+	Name string
+	Port int
+}{"ai-service", aiPort}
 
 func portBusy(port int) bool {
 	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 700*time.Millisecond)
@@ -180,6 +200,11 @@ func (s *state) serviceEnv() []string {
 	set("HMS_EVENTS_TRANSPORT", "log")
 	set("HMS_ZONE", "Asia/Kolkata")
 	env = append(env, "HMS_PHI_KEY="+s.PHIKey)
+	// Stated rather than inherited. Both of these have defaults baked into scheduling-service that
+	// happen to be right when the AI service is running and are silently wrong when it is not, and
+	// "the default happens to match" is not a property anybody can check from here.
+	env = append(env, fmt.Sprintf("HMS_AI_ENABLED=%t", s.AI))
+	env = append(env, fmt.Sprintf("HMS_AI_URI=http://127.0.0.1:%d", aiPort))
 	return env
 }
 

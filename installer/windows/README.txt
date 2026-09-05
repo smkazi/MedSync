@@ -15,10 +15,14 @@
  Double-click              MedSync-Setup.exe
  On an ARM machine         MedSync-Setup-arm64.exe
 
- A black console window opens and stays open. That window is the log: the first
- install builds fourteen Java modules and a web application, so expect ten to
- twenty-five minutes, most of it silent while Maven and npm download. Leave it
- alone until it says "MedSync is running" and your browser opens.
+ A black console window opens and stays open. That window is the log. The first
+ run unpacks the runtime out of the executable - about a minute - and then starts
+ twelve services, the web application and the database. Expect three to five
+ minutes the first time and under a minute after that. Leave it alone until it
+ says "MedSync is running" and your browser opens.
+
+ It does not build anything, download anything, or install anything on this
+ machine. Everything it needs is inside the file you just double-clicked.
 
  WINDOWS WILL WARN YOU FIRST. "Windows protected your PC" appears because this
  file is not code-signed - a signing certificate has to be bought and held by a
@@ -28,23 +32,28 @@
 
 
 --------------------------------------------------------------------------------
- 2. WHAT IT NEEDS, AND WHAT IT WILL ASK
+ 2. WHAT IT NEEDS: NOTHING
 --------------------------------------------------------------------------------
 
- Required        Java 21 or newer, Node 22 or newer
- For a database  PostgreSQL, OR Docker Desktop, OR a server you already have
- Not required    Maven - a wrapper is included and used automatically
- Not required    git - the source is downloaded over HTTPS
+ Required        Windows 10 or 11, 64-bit. 8 GB of memory. 2 GB of free disk.
+ Not required    Java, Node, Maven, PostgreSQL, Python, Docker, git
+ Not required    a network connection, once you have the file
 
- Anything missing is listed by name with the exact command to install it, and
- then it ASKS before installing anything. Say no and nothing happens. Everything
- it installs comes from winget, which means the vendors' own packages, and every
- one of them can be removed later with "winget uninstall".
+ All of those are inside the executable:
 
- If Docker Desktop is installed AND running, that route is used instead and
- needs no Java, no Node and no PostgreSQL at all.
+     a Java runtime           Temurin 21, trimmed to what the services load
+     a Node runtime           Node 22
+     a PostgreSQL server      version 16
+     an embeddable Python     3.11, for the clinical decision-support service
+     every library            172 Java libraries, one copy of each
+     the whole application    twelve services, the web app, the AI service
+     every licence            in licenses\ beside the unpacked runtime
 
- Check the machine without installing anything:
+ Nothing is installed into Windows. No registry keys, no Program Files, no
+ services, no PATH changes. Everything lives in one folder that "uninstall"
+ deletes.
+
+ See what is inside the file, and whether the ports are free:
 
      MedSync-Setup.exe doctor
 
@@ -112,11 +121,10 @@
    MedSync-Setup.exe smoke      sign in and read one screen from every service
    MedSync-Setup.exe down       stop everything
    MedSync-Setup.exe uninstall  stop everything and delete what it created
-   MedSync-Setup.exe fetch      download the source only, without building
    MedSync-Setup.exe db         provision a database only, and print its URL
 
  After a restart of your computer, nothing is running: double-click the .exe
- again. The second start skips the build and takes about a minute.
+ again. The second start reuses the unpacked runtime and takes about a minute.
 
 
 --------------------------------------------------------------------------------
@@ -127,11 +135,11 @@
 
      %LOCALAPPDATA%\MedSync
 
- That holds the downloaded source, the database, the log files and one generated
+ That holds the unpacked runtime, the database, the log files and one generated
  encryption key. "MedSync-Setup.exe uninstall" stops the platform and deletes
- all of it, after asking. Anything installed through winget - Java, Node,
- PostgreSQL - stays installed, because it belongs to your machine rather than to
- MedSync; remove those with "winget uninstall" if you want them gone.
+ all of it, after asking. Nothing was installed outside that folder, so deleting
+ it leaves the machine exactly as it was before you double-clicked the file -
+ there is no second thing to uninstall afterwards.
 
  Nothing is written to the registry. No service is registered. No scheduled task
  is created. Nothing starts at boot.
@@ -145,7 +153,7 @@
 
      %LOCALAPPDATA%\MedSync\logs
 
- One file per service, plus web.log and the Maven and npm build output.
+ One file per service, plus web.log, ai-service.log and postgres.log.
 
  "N port(s) are occupied"
      Something else is on port 3000 or 8080-8091. Run
@@ -153,14 +161,14 @@
      is using them.
 
  "no way to get a PostgreSQL"
-     Install PostgreSQL (winget install PostgreSQL.PostgreSQL.16), or start
+     The bundled server would not start. Read postgres.log, or point this at
      Docker Desktop, or point it at a server you already have:
          set HMS_DB_URL=jdbc:postgresql://host:5432/hms
 
  "this Docker engine is in Windows-container mode"
      Right-click the Docker tray icon and choose "Switch to Linux containers".
 
- The build failed
+ Something did not start
      Read the end of web-build.log or the console output. A build that runs out
      of memory or loses its network connection mid-download usually succeeds on
      a second attempt, because both Maven and npm resume from what they have.

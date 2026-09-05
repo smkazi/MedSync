@@ -91,7 +91,12 @@ func get(url, token string) int {
 // smoke returns the number of failures, so the caller decides whether to stop. It never exits on
 // its own: somebody who has just waited ten minutes for a build deserves the whole list of what
 // answered and what did not, not the first failure.
-func smoke() int {
+func smoke() int { return smokeWith(loadState().AI) }
+
+// smokeWith takes whether the AI service is part of this install, because it is the one component
+// that legitimately may not be — `hms.ai.enabled` exists for exactly that — and a check that
+// reported its absence as a failure would make an optional service mandatory by the back door.
+func smokeWith(withAI bool) int {
 	step("Checking the platform, signed in as a real user")
 	token, err := signIn()
 	if err != nil {
@@ -126,6 +131,21 @@ func smoke() int {
 	} else {
 		bad("web sign-in page — HTTP %d", code)
 		failures++
+	}
+
+	// The AI service, checked directly rather than through the gateway, which does not route to it:
+	// scheduling-service calls it on 8000 in-process. Until this bundle nothing started it and
+	// nothing checked it, while every consumer had it enabled by default — so this check exists to
+	// make the difference between "running" and "silently timing out on every booking" visible.
+	if withAI {
+		if code := get(fmt.Sprintf("http://127.0.0.1:%d/actuator/health", aiPort), ""); code >= 200 && code < 300 {
+			ok("ai            decision support (%d)", code)
+		} else {
+			bad("ai            decision support — HTTP %d", code)
+			failures++
+		}
+	} else {
+		dim("ai            not part of this install; HMS_AI_ENABLED is false")
 	}
 	return failures
 }

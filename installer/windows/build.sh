@@ -30,8 +30,29 @@ LDFLAGS="-s -w"
 # somebody else should not tell them the directory layout of the box that produced it.
 BUILDFLAGS="-trimpath"
 
+# --payload <zip> appends a runtime to the executables, which is what makes a released
+# MedSync-Setup.exe self-contained. Without it the build produces the developer installer, which
+# carries no payload and falls back to building MedSync from source.
+PAYLOAD=""
+ARGS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --payload) PAYLOAD="$2"; shift 2 ;;
+    *) ARGS+=("$1"); shift ;;
+  esac
+done
+set -- "${ARGS[@]:-}"
+
+attach() {
+  [ -n "$PAYLOAD" ] || return 0
+  local exe="$1"
+  bash "$(dirname "$HERE")/payload/append-payload.sh" "$exe" "$PAYLOAD" "$exe.tmp"
+  mv "$exe.tmp" "$exe"
+}
+
 if [ "${1:-}" = "--linux" ]; then
   ( cd "$HERE" && CGO_ENABLED=0 go build $BUILDFLAGS -ldflags "$LDFLAGS" -o "$OUT/medsync-setup" . )
+  attach "$OUT/medsync-setup"
   echo "built $OUT/medsync-setup"
   exit 0
 fi
@@ -44,6 +65,9 @@ fi
 # The README travels with the executables, because "in the same folder as the .exe" is where
 # somebody who has just unzipped this will look for it, and a README in the repository is a README
 # they never see.
+attach "$OUT/MedSync-Setup.exe"
+attach "$OUT/MedSync-Setup-arm64.exe"
+
 cp "$HERE/README.txt" "$OUT/README.txt"
 
 ls -la "$OUT"/MedSync-Setup*.exe "$OUT/README.txt"

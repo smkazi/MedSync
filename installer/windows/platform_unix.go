@@ -5,7 +5,9 @@ package main
 import (
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"syscall"
 )
 
@@ -72,3 +74,53 @@ func openBrowser(url string) {
 
 // Always false off Windows: there is no console window to lose, so nothing should wait for Enter.
 func startedFromExplorer() bool { return false }
+
+// dropPrivileges makes a command run as an unprivileged user when this process is root.
+//
+// It exists for one program: initdb refuses outright to run as root, and so does the postgres
+// server behind pg_ctl. That refusal is correct — a database server running as root is a
+// vulnerability rather than a convenience — and it is not a Windows concern at all, which is why
+// this has no counterpart in platform_windows.go beyond a no-op.
+//
+// It matters here rather than being someone else's problem because a container is very often root,
+// and this program's whole verification story is that its platform-independent half is exercised on
+// Linux. Without this, the bundled PostgreSQL cannot be started here at all, and the one rung of
+// the database ladder that a bundled install actually uses would be the one rung never run outside
+// a Windows runner. scripts/local.sh already does the same thing by invoking `su postgres`.
+//
+// Reported rather than silent: the caller has to know, because the data directory and the log file
+// have to be owned by whoever is about to write to them.
+func dropPrivileges(cmd *exec.Cmd) (uid, gid int, dropped bool) {
+	if os.Geteuid() != 0 {
+		return 0, 0, false
+	}
+	for _, name := range []string{"postgres", "nobody"} {
+		u, err := user.Lookup(name)
+		if err != nil {
+			continue
+		}
+		uidN, err1 := strconv.Atoi(u.Uid)
+		gidN, err2 := strconv.Atoi(u.Gid)
+		if err1 != nil || err2 != nil {
+			continue
+		}
+		attr := cmd.SysProcAttr
+		if attr == nil {
+			attr = &syscall.SysProcAttr{}
+		}
+		attr.Credential = &syscall.Credential{Uid: uint32(uidN), Gid: uint32(gidN)}
+		cmd.SysProcAttr = attr
+		return uidN, gidN, true
+	}
+	return 0, 0, false
+}
+
+// ownedBy hands a directory tree to the user a dropped-privilege command will run as.
+func ownedBy(path string, uid, gid int) error {
+	return filepath.Walk(path, func(p string, _ os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		return os.Chown(p, uid, gid)
+	})
+}
