@@ -21,6 +21,13 @@ name: Release
 on:
   push:
     tags: ["v*"]
+    # A release branch as well as a tag, and this is a permissions fact rather than a preference.
+    # Pushing a tag needs a credential allowed to write refs/tags/*, and not every credential that
+    # can push a branch has it — a push of refs/tags/v1.0.0 from this repository's own automation
+    # answers 403 while refs/heads/* goes through. The workflow's own GITHUB_TOKEN has
+    # contents: write and creates the tag when it publishes, so `git push origin release/v1.0.0`
+    # produces exactly the same release as pushing the tag would have.
+    branches: ["release/**"]
   # Nightly, so the payload build is exercised rather than first attempted on the day somebody
   # wants a release. 04:30 UTC — after the security workflow at 02:30 and the installer's own
   # nightly at 03:30, because three long jobs competing for runners means all three report late.
@@ -209,7 +216,7 @@ jobs:
   publish:
     name: Publish the release
     needs: [payload, bundled]
-    if: startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/') || startsWith(github.ref, 'refs/heads/release/')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -219,11 +226,24 @@ jobs:
           name: MedSync-Setup-selfcontained
           path: dist
 
-      - name: What is being published
-        run: ls -la dist/
+      - name: What is being published, and under which tag
+        id: what
+        run: |
+          ls -la dist/
+          ref='${{ github.ref }}'
+          case "$ref" in
+            refs/tags/*)          tag="${ref#refs/tags/}" ;;
+            refs/heads/release/*) tag="${ref#refs/heads/release/}" ;;
+            *) echo "not a release ref: $ref" >&2; exit 1 ;;
+          esac
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "publishing as $tag"
 
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.what.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: MedSync ${{ steps.what.outputs.tag }}
           files: |
             dist/MedSync-Setup-bundled.exe
             dist/README.txt
