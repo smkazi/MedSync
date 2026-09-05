@@ -26,15 +26,34 @@ ZAP_FAIL_ON="${ZAP_FAIL_ON:-medium}"
 HOST_REPORT_DIR="${ZAP_REPORT_DIR:-$ROOT/build/zap}"
 mkdir -p "$HOST_REPORT_DIR"
 
-# ZAP needs a writable HOME, and under `-u $(id -u)` it does not get one by default.
-# The container image has no /etc/passwd entry for an arbitrary host uid, so the JVM cannot resolve
-# a user name and ZAP tries to create its config under a literal question mark:
+# ZAP needs a writable home directory, and under `-u $(id -u)` it does not get one.
+#
+# The container image has no /etc/passwd entry for an arbitrary host uid, so `getpwuid()` fails
+# inside the JVM and it sets the `user.home` property to a literal question mark. ZAP then tries to
+# create its configuration under that, resolved against its working directory:
 #
 #   Unable to create home directory: /zap/?/.ZAP/
 #
-# That is what killed every ZAP run on the CI runner (uid 1001). Giving it an explicit HOME on a
-# directory we own fixes it without running the container as root, which would leave root-owned
-# reports on the host.
+# Setting HOME does NOT fix this, which this script previously claimed it did. On Linux the JDK
+# reads `user.home` from the password database and never consults $HOME, so the variable is
+# ignored and the question mark survives - which is exactly what the CI runner (uid 1001) kept
+# reporting after that "fix" was in place. The comment was wrong for as long as the failure was.
+#
+# There are two independent fixes below and both are here on purpose, because neither can be tried
+# on the machine this was written on - it has no Docker daemon and no ZAP - and a second wasted
+# nightly run costs more than a belt and braces:
+#
+#   zap.sh -dir /zaphome    ZAP's own option for choosing its home directory. It needs no help
+#                           from the JVM to find one, so the question mark never arises.
+#   JAVA_TOOL_OPTIONS       read by every JVM before anything else runs, so `-Duser.home=/zaphome`
+#                           makes even ZAP's default path resolve somewhere writable. It costs one
+#                           "Picked up JAVA_TOOL_OPTIONS" line on stderr, which is a fair price.
+#
+# HOME is still exported because the container is a whole environment and other things in it
+# reasonably expect one; it is simply not what fixes ZAP.
+#
+# Running the container as root would also work and is rejected: it leaves root-owned reports on
+# the host that the next unprivileged run cannot overwrite.
 HOST_ZAP_HOME="${ZAP_HOME_DIR:-$HOST_REPORT_DIR/.zaphome}"
 mkdir -p "$HOST_ZAP_HOME"
 
@@ -65,12 +84,13 @@ run_plan() {
       -e "ZAP_PASSWORD=$ZAP_PASSWORD" \
       -e "ZAP_REPORT_DIR=/zap/reports" \
       -e "HOME=/zaphome" \
+      -e "JAVA_TOOL_OPTIONS=-Duser.home=/zaphome" \
       -v "$ROOT/security/zap:/zap/plans:ro" \
       -v "$HOST_REPORT_DIR:/zap/reports" \
       -v "$HOST_ZAP_HOME:/zaphome" \
       -u "$(id -u):$(id -g)" \
       ghcr.io/zaproxy/zaproxy:stable \
-      zap.sh -cmd -autorun "/zap/plans/$plan.yaml"
+      zap.sh -cmd -dir /zaphome -autorun "/zap/plans/$plan.yaml"
   else
     echo "!! neither zap.sh nor a working Docker daemon found." >&2
     echo "   Install ZAP (https://www.zaproxy.org/download/) or set ZAP_CMD." >&2

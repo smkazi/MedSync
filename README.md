@@ -2048,9 +2048,18 @@ The same first nightly run turned up two more failures, both worth naming rather
 the container and IaC scan had never run either, because `aquasecurity/trivy-action` was pinned to a
 tag that does not exist (`0.28.0` — the action's tags carry a `v` prefix), and the ZAP job died on
 startup with `Unable to create home directory: /zap/?/.ZAP/` — the ZAP image has no `/etc/passwd`
-entry for the runner's uid, so under `docker run -u $(id -u)` the JVM could not resolve a user name
-and `$HOME` interpolated as a literal `?`. Both are fixed: the action pin, and an explicit writable
-`HOME` mounted into the container.
+entry for the runner's uid, so under `docker run -u $(id -u)` `getpwuid()` fails inside the JVM and
+it sets `user.home` to a literal question mark.
+
+**The first fix for that one was wrong, and this paragraph said it worked for as long as it did
+not.** It mounted a writable directory and set `HOME` to it, on the belief that `$HOME` was what
+ZAP interpolated. On Linux the JDK reads `user.home` from the password database and never consults
+`$HOME`, so the variable was ignored and the next nightly failed with the identical message. The
+real fix is `zap.sh -dir /zaphome`, ZAP's own option for choosing its home directory, which needs
+nothing from the JVM; `JAVA_TOOL_OPTIONS=-Duser.home=/zaphome` is set alongside it as a second,
+independent lever, because this repository's development machine has neither Docker nor ZAP and a
+fix that cannot be run locally should not be a single guess. Running the container as root would
+also work and is refused: it leaves root-owned reports the next unprivileged run cannot overwrite.
 
 Chasing that turned up something worse in the same script, and it is the reason to state it here
 rather than in a changelog. `security/zap/run.sh` documents `0 clean, 1 findings, 2 could not run` —
