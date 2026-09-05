@@ -311,8 +311,19 @@ if [ "$SKIP_AI" != "1" ]; then
     # search path and comments out `import site`, which is exactly what stops pip-installed
     # packages being importable. Enabling it is the documented way to use the embeddable build as
     # an application runtime.
+    #
+    # `..\ai` is on that path for a reason found on the first Windows run of this script, and it
+    # is not a detail of the check that found it — the service could not have started either.
+    # When a `._pth` file is present, CPython stops adding the working directory to sys.path and
+    # ignores PYTHONPATH: the file IS the path. So `python -m uvicorn app.main:app` launched with
+    # its working directory set to the AI service's own folder still answered
+    # "ModuleNotFoundError: No module named 'app'". Entries here resolve against the directory
+    # holding python.exe, so `..\ai` is the service's folder wherever the runtime is unpacked.
+    #
+    # A Linux run of this script cannot catch it: a virtualenv has no `._pth` and puts the working
+    # directory on sys.path, so the identical code imports fine there.
     PTH="$(ls "$STAGE"/python/python*._pth | head -1)"
-    printf 'python311.zip\n.\nLib\\site-packages\nimport site\n' > "$PTH"
+    printf 'python311.zip\n.\nLib\\site-packages\n..\\ai\nimport site\n' > "$PTH"
     mkdir -p "$STAGE/python/Lib/site-packages"
     python -m pip download --quiet --dest "$BUILD/wheels" --only-binary=:all: \
       --platform win_amd64 --python-version 3.11 --implementation cp \
