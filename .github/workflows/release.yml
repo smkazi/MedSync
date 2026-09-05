@@ -122,29 +122,61 @@ jobs:
           name: MedSync-Setup-selfcontained
           path: dist
 
-      - name: Strip Java, Node, Maven and PostgreSQL from PATH
+      # Strip every toolchain the installer must not be allowed to borrow.
+      #
+      # By what a directory CONTAINS, not by what it is called. The first version matched directory
+      # names against 'jdk|java|node|maven|postgres|pgsql|python' and missed the one that matters
+      # most on Windows: python.exe also lives in
+      # %LOCALAPPDATA%\Microsoft\WindowsApps as a Store app-execution alias, a path with none of
+      # those words in it. The next step caught it - "python is still on PATH - this job would
+      # prove nothing" - which is exactly what that step is for, and the lesson is that a filter
+      # guessing from names cannot be trusted to empty a PATH.
+      - name: Strip every toolchain from PATH
         shell: pwsh
         run: |
+          $targets = @(
+            'java.exe', 'javaw.exe',
+            'node.exe', 'npm.cmd', 'npm.exe', 'npx.cmd',
+            'mvn.cmd', 'mvn.exe',
+            'psql.exe', 'initdb.exe', 'postgres.exe', 'pg_ctl.exe',
+            'python.exe', 'python3.exe', 'py.exe'
+          )
           $keep = @()
           foreach ($part in $env:PATH -split ';') {
-            if ($part -match 'jdk|java|node|maven|postgres|pgsql|python') {
-              Write-Host "removing from PATH: $part"
-              continue
+            if (-not $part) { continue }
+            $found = $null
+            foreach ($t in $targets) {
+              if (Test-Path -LiteralPath (Join-Path $part $t)) { $found = $t; break }
             }
-            if ($part) { $keep += $part }
+            if ($found) { Write-Host "removing from PATH (has $found): $part" }
+            else { $keep += $part }
           }
           $stripped = ($keep -join ';')
           "PATH=$stripped" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          # Cleared as well, because a JVM found through JAVA_HOME is a JVM found from the machine
+          # whether or not PATH mentions it.
           "JAVA_HOME=" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "PYTHONHOME=" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "PYTHONPATH=" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Nothing is on PATH any more
         shell: pwsh
         run: |
-          foreach ($tool in @('java','node','npm','mvn','psql','initdb','python')) {
-            if (Get-Command $tool -ErrorAction SilentlyContinue) {
-              throw "$tool is still on PATH - this job would prove nothing"
+          $stillThere = @()
+          foreach ($tool in @('java','node','npm','mvn','psql','initdb','postgres','python','py')) {
+            $found = Get-Command $tool -ErrorAction SilentlyContinue
+            if ($found) {
+              $stillThere += "$tool -> $($found.Source)"
+              Write-Host "STILL ON PATH: $tool -> $($found.Source)"
+            } else {
+              Write-Host "$tool : not on PATH, as intended"
             }
-            Write-Host "$tool : not on PATH, as intended"
+          }
+          # All of them at once rather than the first one, because "python is still there" and
+          # "python and java are still there" call for different fixes and one throw hides the
+          # difference.
+          if ($stillThere.Count -gt 0) {
+            throw "this job would prove nothing while these resolve: $($stillThere -join '; ')"
           }
 
       - name: doctor reports a complete payload
