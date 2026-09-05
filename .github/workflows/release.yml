@@ -1,0 +1,267 @@
+# Builds the self-contained MedSync-Setup.exe and publishes it where a person can actually get it.
+#
+# Its own workflow rather than two more jobs in windows-installer.yml, and the reason is a real
+# limitation rather than tidiness: that workflow's push trigger filters on `branches`, which a tag
+# push does not match, and adding `tags` beside a `paths` filter does not work either — on a tag
+# push GitHub evaluates `paths` against the commits included in the push, and a tag pointing at an
+# already-pushed commit includes none, so the filter matches nothing and the workflow never runs.
+# A separate file with a trigger that means what it says is the honest fix.
+#
+# What comes out of it: one .exe carrying a Java runtime, a Node runtime, a PostgreSQL server, an
+# embeddable Python, every library, the built web app and the AI service. It installs nothing,
+# downloads nothing and builds nothing on the machine it runs on.
+#
+# On windows-latest and not as a convenience. Two things in the payload are platform-specific and
+# cannot be produced anywhere else: the Next.js standalone output pulls @next/swc-win32-x64-msvc,
+# and the AI service's wheels are win_amd64. Assembling either on Linux means guessing, and the
+# guess is only found to be wrong on somebody's laptop.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  # Nightly, so the payload build is exercised rather than first attempted on the day somebody
+  # wants a release. 04:30 UTC — after the security workflow at 02:30 and the installer's own
+  # nightly at 03:30, because three long jobs competing for runners means all three report late.
+  schedule:
+    - cron: "30 4 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  payload:
+    name: Self-contained installer (payload)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    # Read only: this job builds the exe and nothing else. Writing the release is the publish job's
+    # business, and it only gets to do it after `bundled` has proved the exe is what it claims.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache: false
+
+      # A JDK rather than a JRE: jlink is a JDK tool, and jlink is how the 180 MB runtime becomes
+      # a 60 MB one carrying only the modules the services actually load.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build the installer binary
+        shell: bash
+        run: bash installer/windows/build.sh
+
+      # One bash script for both targets, and the Linux run of it is what makes this a re-run
+      # rather than a first run. windows-latest ships Git for Windows, so bash is here.
+      - name: Assemble the payload
+        shell: bash
+        run: bash installer/payload/build-payload.sh --os windows
+
+      - name: Append the payload to the executable
+        shell: bash
+        run: |
+          bash installer/payload/append-payload.sh \
+            dist/MedSync-Setup.exe installer/payload/build/windows/payload.zip \
+            dist/MedSync-Setup-bundled.exe
+          ls -la dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MedSync-Setup-selfcontained
+          path: |
+            dist/MedSync-Setup-bundled.exe
+            dist/README.txt
+          retention-days: 30
+
+
+  # ------------------------------------------------------------------------------------------
+  # The proof, and it is a different claim from "it started".
+  #
+  # Anything can start on a runner that already has Java, Node and PostgreSQL installed — that is
+  # exactly how a bundle with a missing component passes a green test and then fails on the first
+  # real machine. So this job removes all three from PATH first, and then asserts that the images
+  # actually running came out of the runtime the installer unpacked.
+  # ------------------------------------------------------------------------------------------
+  bundled:
+    name: Prove it uses nothing from the machine
+    needs: payload
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: MedSync-Setup-selfcontained
+          path: dist
+
+      - name: Strip Java, Node, Maven and PostgreSQL from PATH
+        shell: pwsh
+        run: |
+          $keep = @()
+          foreach ($part in $env:PATH -split ';') {
+            if ($part -match 'jdk|java|node|maven|postgres|pgsql|python') {
+              Write-Host "removing from PATH: $part"
+              continue
+            }
+            if ($part) { $keep += $part }
+          }
+          $stripped = ($keep -join ';')
+          "PATH=$stripped" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "JAVA_HOME=" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Nothing is on PATH any more
+        shell: pwsh
+        run: |
+          foreach ($tool in @('java','node','npm','mvn','psql','initdb','python')) {
+            if (Get-Command $tool -ErrorAction SilentlyContinue) {
+              throw "$tool is still on PATH - this job would prove nothing"
+            }
+            Write-Host "$tool : not on PATH, as intended"
+          }
+
+      - name: doctor reports a complete payload
+        shell: pwsh
+        run: |
+          $out = & dist\MedSync-Setup-bundled.exe doctor 2>&1 | Out-String
+          Write-Host $out
+          if ($out -notmatch 'Bundled') { throw "doctor did not report the bundled route" }
+          if ($out -match 'prerequisite\(s\) missing') { throw "doctor asked for something to be installed" }
+
+      - name: up — install, start and smoke-test, with nothing on the machine
+        shell: pwsh
+        env:
+          MEDSYNC_NO_BROWSER: "1"
+        run: |
+          & dist\MedSync-Setup-bundled.exe up
+          if ($LASTEXITCODE -ne 0) { throw "up failed with $LASTEXITCODE" }
+
+      # The assertion that separates self-contained from lucky. Every running image must live
+      # under the runtime this installer unpacked; one java.exe from Program Files means the
+      # payload was incomplete and the machine quietly filled the gap.
+      - name: Every running process came out of the payload
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:LOCALAPPDATA 'MedSync\runtime'
+          $names = @('java','node','postgres')
+          $bad = @()
+          foreach ($name in $names) {
+            $procs = Get-Process -Name $name -ErrorAction SilentlyContinue
+            if (-not $procs) { throw "no $name process is running - the platform is not up" }
+            foreach ($p in $procs) {
+              $path = $p.Path
+              Write-Host "$name -> $path"
+              if ($path -notlike "$root*") { $bad += "$name at $path" }
+            }
+          }
+          if ($bad.Count -gt 0) { throw "processes running from outside the payload: $($bad -join '; ')" }
+          Write-Host "every java.exe, node.exe and postgres.exe is running from $root"
+
+      - name: down, then uninstall, and nothing is left
+        shell: pwsh
+        run: |
+          & dist\MedSync-Setup-bundled.exe down
+          $env:MEDSYNC_ASSUME_YES = '1'
+          & dist\MedSync-Setup-bundled.exe uninstall
+          $home_dir = Join-Path $env:LOCALAPPDATA 'MedSync'
+          if (Test-Path $home_dir) { throw "$home_dir survived uninstall" }
+          Write-Host "nothing left behind"
+
+      - name: The logs, whatever happened
+        if: always()
+        shell: pwsh
+        run: |
+          $logs = Join-Path $env:LOCALAPPDATA 'MedSync\logs'
+          if (Test-Path $logs) { Get-ChildItem $logs | ForEach-Object { Write-Host "=== $($_.Name) ==="; Get-Content $_.FullName -Tail 40 } }
+
+  # ------------------------------------------------------------------------------------------
+  # The stable URL, and deliberately the LAST thing that happens.
+  #
+  # A CI artifact expires and needs a GitHub login; a release asset does neither, which is the
+  # whole point — "provide a link to download the exe" has been asked once in this project already
+  # and could not be answered. But publishing it from inside the build job, which is where this
+  # started, would put the download up before anything had checked it: `bundled` runs after, so a
+  # payload missing a runtime would be a published payload missing a runtime.
+  #
+  # So the release waits for the proof. If the exe turns out to use anything from the machine it
+  # runs on, there is no release at all rather than a bad one with a note attached.
+  # ------------------------------------------------------------------------------------------
+  publish:
+    name: Publish the release
+    needs: [payload, bundled]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: MedSync-Setup-selfcontained
+          path: dist
+
+      - name: What is being published
+        run: ls -la dist/
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/MedSync-Setup-bundled.exe
+            dist/README.txt
+          fail_on_unmatched_files: true
+          generate_release_notes: false
+          body: |
+            ## MedSync — one file, nothing to install
+
+            Download **MedSync-Setup-bundled.exe** and double-click it. It installs nothing on the
+            machine, downloads nothing, and builds nothing. There is no JDK to install, no Node, no
+            Maven, no PostgreSQL, no Python, no Docker, and no network connection needed after the
+            download itself.
+
+            Everything is inside the file:
+
+            | | |
+            | --- | --- |
+            | Java runtime | Temurin 21, jlinked to the modules the services load |
+            | Node runtime | Node 22 |
+            | PostgreSQL | 16, server and client |
+            | Python | 3.11 with the AI service's packages |
+            | The platform | twelve services, the web app, the AI service and its trained model |
+            | Libraries | every one, 185 distinct jars |
+            | Licences | each component's own text, plus THIRD-PARTY-NOTICES.txt |
+
+            Windows will warn you before it runs, because the file is not code-signed — a signing
+            certificate has to be bought and held by a company. Click **More info**, then
+            **Run anyway**. If you would rather not, that is a reasonable position; build it
+            yourself from source instead.
+
+            Everything it creates lives in `%LOCALAPPDATA%\MedSync`, and
+            `MedSync-Setup-bundled.exe uninstall` removes all of it. Nothing is written to the
+            registry, no service is registered, nothing starts at boot.
+
+            **How this build was checked.** Before this release was published, a job on a clean
+            Windows runner removed Java, Node, Maven, PostgreSQL and Python from `PATH`, confirmed
+            none of them resolved any more, ran a full install, and then asserted that every
+            running `java.exe`, `node.exe` and `postgres.exe` had its image inside the unpacked
+            payload. A single process from `Program Files` fails that job and there is no release.
+
+            `README.txt` beside the exe has the demo accounts and a walkthrough.

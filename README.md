@@ -1227,10 +1227,10 @@ produced it.
 
 ### One click, on Windows: `MedSync-Setup.exe`
 
-Download it from the [**Windows installer**](../../actions/workflows/windows-installer.yml)
-workflow — open the newest `Self-contained installer` run and take
-`MedSync-Setup-selfcontained` from its artifacts, or take it from a
-[release](../../releases) — then double-click it.
+Download **`MedSync-Setup-bundled.exe`** from the [**latest release**](../../releases/latest) and
+double-click it. (It is also a `MedSync-Setup-selfcontained` artifact on every
+[Release workflow](../../actions/workflows/release.yml) run, if you would rather have an untagged
+build — but a release asset needs no GitHub login and does not expire, which an artifact does.)
 
 **Everything MedSync needs is inside that one file.** It installs nothing on the machine, downloads
 nothing, and builds nothing. There is no JDK to install, no Node, no Maven, no PostgreSQL, no
@@ -1356,6 +1356,10 @@ PostgreSQL and Python out of `PATH`, asserts none of them resolves any more, run
 then asserts that **every running `java.exe`, `node.exe` and `postgres.exe` has its image under
 `%LOCALAPPDATA%\MedSync\runtime`**. A single process from `Program Files` fails the job. Then
 `down`, `uninstall`, and an assertion that nothing survives.
+
+**The release is published last, on purpose.** The `publish` job needs both the payload build and
+the proof above, so a payload missing a runtime never becomes a download — there is no release at
+all rather than a bad one with a note attached.
 
 The payload build itself runs on `windows-latest` and not as a convenience: the Next.js standalone
 output pulls `@next/swc-win32-x64-msvc` and the Python wheels are `win_amd64`, so assembling either
