@@ -2078,6 +2078,19 @@ independent lever, because this repository's development machine has neither Doc
 fix that cannot be run locally should not be a single guess. Running the container as root would
 also work and is refused: it leaves root-owned reports the next unprivileged run cannot overwrite.
 
+**That fix works — and it was hiding a second, unrelated failure that looks identical from the
+outside.** The next nightly logged `Picked up JAVA_TOOL_OPTIONS: -Duser.home=/zaphome` and then
+`Copying default configuration to /zaphome/config.xml`, so the home directory was settled; four
+lines later ZAP died with `Failed to start the main proxy: java.net.BindException Address already
+in use`. ZAP starts a local proxy even under `-cmd`, its default port is **8080**, and
+`docker run --network host` puts it in the runner's own network namespace — so the scanner was
+colliding with the gateway it exists to scan. It now runs on `ZAP_PROXY_PORT`, default 18080.
+Two things are worth carrying from this: a scan that never starts produces no report and no
+artifact, so the *only* record of why was the workflow step log — ZAP's console output is now teed
+into `build/zap/` so the reason travels with the run; and two consecutive failures of one job were
+two different bugs, which is why the second was read from the log rather than assumed to be the
+first one persisting.
+
 Chasing that turned up something worse in the same script, and it is the reason to state it here
 rather than in a changelog. `security/zap/run.sh` documents `0 clean, 1 findings, 2 could not run` —
 but a plan that produced no JSON report printed *"clean at or above 'medium'"* and **exited 0**. A

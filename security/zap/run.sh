@@ -12,6 +12,7 @@
 #   ZAP_PASSWORD    scan account password         (default the dev seed password)
 #   ZAP_REPORT_DIR  where reports land            (default build/zap)
 #   ZAP_FAIL_ON     highest tolerated risk        (default medium -> fail on High and Medium)
+#   ZAP_PROXY_PORT  port ZAP's own proxy listens on (default 18080 - must not be the target's)
 #   ZAP_CMD         override the ZAP invocation   (default: docker, else zap.sh on PATH)
 #
 # Exit status is the gate: 0 clean, 1 findings at or above ZAP_FAIL_ON, 2 could not run.
@@ -22,6 +23,18 @@ export ZAP_TARGET="${ZAP_TARGET:-http://localhost:8080}"
 export ZAP_USERNAME="${ZAP_USERNAME:-dr.rao}"
 export ZAP_PASSWORD="${ZAP_PASSWORD:-ChangeMe!Dev2026}"
 ZAP_FAIL_ON="${ZAP_FAIL_ON:-medium}"
+
+# ZAP always starts a local proxy, even under -cmd, and its default port is 8080 - which is the
+# gateway this script exists to scan. Under `docker run --network host` the container shares the
+# runner's network namespace, so the two collide and ZAP dies before it reads the plan:
+#
+#   Failed to start the main proxy: java.net.BindException Address already in use
+#   Terminating ZAP, unable to start the main proxy.
+#
+# That is what the nightly reported once the home-directory problem below was fixed, and it looks
+# nothing like a scan failure: nothing is written, so the gate then refuses on a missing report.
+# 18080 is clear of everything this platform binds (3000, 5432, 8000, 8080-8091, 2575).
+ZAP_PROXY_PORT="${ZAP_PROXY_PORT:-18080}"
 
 HOST_REPORT_DIR="${ZAP_REPORT_DIR:-$ROOT/build/zap}"
 mkdir -p "$HOST_REPORT_DIR"
@@ -39,9 +52,10 @@ mkdir -p "$HOST_REPORT_DIR"
 # ignored and the question mark survives - which is exactly what the CI runner (uid 1001) kept
 # reporting after that "fix" was in place. The comment was wrong for as long as the failure was.
 #
-# There are two independent fixes below and both are here on purpose, because neither can be tried
-# on the machine this was written on - it has no Docker daemon and no ZAP - and a second wasted
-# nightly run costs more than a belt and braces:
+# There are two independent fixes below and both are here on purpose. The nightly since confirmed
+# they work - it logged `Picked up JAVA_TOOL_OPTIONS: -Duser.home=/zaphome` and then
+# `Copying default configuration to /zaphome/config.xml` - and neither could be tried on the
+# machine this was written on, which has no Docker daemon and no ZAP:
 #
 #   zap.sh -dir /zaphome    ZAP's own option for choosing its home directory. It needs no help
 #                           from the JVM to find one, so the question mark never arises.
@@ -69,14 +83,20 @@ fi
 # ---- how do we run ZAP -------------------------------------------------------------------
 # The container needs the plan mounted and needs to reach the host's gateway. On Linux
 # --network host is the simplest way to make localhost mean the same thing in both places.
+#
+# ZAP's console output is teed into the report directory as well as the terminal. A failure that
+# stops it writing a report leaves nothing else behind, and CI uploads build/zap/** on failure, so
+# without this the only copy of the reason is the workflow step log. `set -o pipefail` is on, so
+# the tee does not swallow ZAP's exit status.
 run_plan() {
   local plan="$1" plan_path="$ROOT/security/zap/$plan.yaml"
   [[ -f "$plan_path" ]] || { echo "!! no such plan: $plan_path" >&2; exit 2; }
+  local log="$HOST_REPORT_DIR/zap-$plan.console.log"
 
   if [[ -n "${ZAP_CMD:-}" ]]; then
-    ZAP_REPORT_DIR="$HOST_REPORT_DIR" $ZAP_CMD -cmd -autorun "$plan_path"
+    ZAP_REPORT_DIR="$HOST_REPORT_DIR" $ZAP_CMD -cmd -port "$ZAP_PROXY_PORT" -autorun "$plan_path" 2>&1 | tee "$log"
   elif command -v zap.sh >/dev/null 2>&1; then
-    ZAP_REPORT_DIR="$HOST_REPORT_DIR" zap.sh -cmd -autorun "$plan_path"
+    ZAP_REPORT_DIR="$HOST_REPORT_DIR" zap.sh -cmd -port "$ZAP_PROXY_PORT" -autorun "$plan_path" 2>&1 | tee "$log"
   elif docker info >/dev/null 2>&1; then
     docker run --rm --network host \
       -e "ZAP_TARGET=$ZAP_TARGET" \
@@ -90,7 +110,7 @@ run_plan() {
       -v "$HOST_ZAP_HOME:/zaphome" \
       -u "$(id -u):$(id -g)" \
       ghcr.io/zaproxy/zaproxy:stable \
-      zap.sh -cmd -dir /zaphome -autorun "/zap/plans/$plan.yaml"
+      zap.sh -cmd -dir /zaphome -port "$ZAP_PROXY_PORT" -autorun "/zap/plans/$plan.yaml" 2>&1 | tee "$log"
   else
     echo "!! neither zap.sh nor a working Docker daemon found." >&2
     echo "   Install ZAP (https://www.zaproxy.org/download/) or set ZAP_CMD." >&2
