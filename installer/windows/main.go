@@ -23,7 +23,16 @@ import (
 // CGO off, so the result is one static file with no runtime, no Visual C++ redistributable and no
 // installer framework behind it.
 
-const version = "1.0.0"
+// The version this binary reports, stamped in at link time by installer/windows/build.sh:
+//
+//	-ldflags "-X main.version=v1.0.3"
+//
+// A var rather than a const because that is what -X can write to, and "dev" rather than a real
+// number because that is what an unstamped local build honestly is. Hard-coding a release number
+// here was fine while releases were occasional and hand-driven; now that every push to main
+// publishes one, a literal would be stale within a day and the installer would sit inside a
+// release announcing a different version than the one it came from.
+var version = "dev"
 
 func main() {
 	args := os.Args[1:]

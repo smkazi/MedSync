@@ -1227,10 +1227,16 @@ produced it.
 
 ### One click, on Windows: `MedSync-Setup.exe`
 
-Download **`MedSync-Setup-bundled.exe`** from the [**latest release**](../../releases/latest) and
-double-click it. (It is also a `MedSync-Setup-selfcontained` artifact on every
-[Release workflow](../../actions/workflows/release.yml) run, if you would rather have an untagged
-build — but a release asset needs no GitHub login and does not expire, which an artifact does.)
+**One link, permanently:**
+
+```
+https://github.com/smkazi/MedSync/releases/latest/download/MedSync-Setup-bundled.exe
+```
+
+Download it and double-click it. That URL never changes and never needs editing — GitHub resolves
+`releases/latest` to the newest published release and serves the asset of that name from it, so it
+is always the current installer. The [release page](../../releases/latest) has the same file plus
+`README.txt` and the notes.
 
 **Everything MedSync needs is inside that one file.** It installs nothing on the machine, downloads
 nothing, and builds nothing. There is no JDK to install, no Node, no Maven, no PostgreSQL, no
@@ -1356,6 +1362,17 @@ PostgreSQL and Python out of `PATH`, asserts none of them resolves any more, run
 then asserts that **every running `java.exe`, `node.exe` and `postgres.exe` has its image under
 `%LOCALAPPDATA%\MedSync\runtime`**. A single process from `Program Files` fails the job. Then
 `down`, `uninstall`, and an assertion that nothing survives.
+
+**Every push to `main` publishes a release.** The workflow works out the next version itself — the
+highest existing `vX.Y.Z` tag with the patch incremented — builds the payload, proves it, and tags
+and publishes under that number. So the download above is never more than one build behind the
+source, and there is no separate "cut a release" step to forget. A version is also stamped into the
+binary at link time (`-X main.version`), and the proof job refuses to continue if the installer
+reports a different version than the release it is about to be attached to.
+
+The nightly run at 04:30 UTC deliberately does **not** publish. It builds the payload and runs the
+proof — which is what it is for — but minting a new version every night for a tree nobody changed
+would make the version number a measure of elapsed time rather than of change.
 
 **The release is published last, on purpose.** The `publish` job needs both the payload build and
 the proof above, so a payload missing a runtime never becomes a download — there is no release at

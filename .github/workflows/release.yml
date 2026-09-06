@@ -20,14 +20,18 @@ name: Release
 
 on:
   push:
+    # Every push to main publishes a release, which is the whole point of this file: a tag and an
+    # installer are not two things here, they are one, so "tag it after each push" and "build the
+    # installer after each push" are the same instruction.
+    #
+    # A tag still works, and a release branch still works, for a reason that is a permissions fact
+    # rather than a preference. Pushing a tag needs a credential allowed to write refs/tags/*, and
+    # not every credential that can push a branch has it — a push of refs/tags/v1.0.0 from this
+    # repository's own automation answers 403 while refs/heads/* goes through. The workflow's own
+    # GITHUB_TOKEN has contents: write and creates the tag when it publishes, so all three routes
+    # produce the same release. main is simply the one that needs no extra ref at all.
+    branches: [main, "release/**"]
     tags: ["v*"]
-    # A release branch as well as a tag, and this is a permissions fact rather than a preference.
-    # Pushing a tag needs a credential allowed to write refs/tags/*, and not every credential that
-    # can push a branch has it — a push of refs/tags/v1.0.0 from this repository's own automation
-    # answers 403 while refs/heads/* goes through. The workflow's own GITHUB_TOKEN has
-    # contents: write and creates the tag when it publishes, so `git push origin release/v1.0.0`
-    # produces exactly the same release as pushing the tag would have.
-    branches: ["release/**"]
   # Nightly, so the payload build is exercised rather than first attempted on the day somebody
   # wants a release. 04:30 UTC — after the security workflow at 02:30 and the installer's own
   # nightly at 03:30, because three long jobs competing for runners means all three report late.
@@ -40,8 +44,53 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # ------------------------------------------------------------------------------------------
+  # What this release is called, worked out once and used by everything below.
+  #
+  # It runs first rather than inside `publish` because the version has to reach the compiler: the
+  # installer prints it, and a binary that says 1.0.0 while sitting in the v1.0.3 release is a
+  # binary that lies about itself. See the -X main.version ldflag in installer/windows/build.sh.
+  # ------------------------------------------------------------------------------------------
+  version:
+    name: Work out the version
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.pick.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: pick
+        run: |
+          ref='${{ github.ref }}'
+          case "$ref" in
+            refs/tags/*)
+              tag="${ref#refs/tags/}" ;;
+            refs/heads/release/*)
+              tag="${ref#refs/heads/release/}" ;;
+            refs/heads/main)
+              # The next patch after the highest version that exists. `git ls-remote` rather than a
+              # deep checkout: it asks the remote directly, so this needs no history at all.
+              #
+              # The grep is strict on purpose. This repository carries a malformed `v1.0.0.0` tag,
+              # and a looser match would sort it above v1.0.0 and then fail to parse it into three
+              # numbers - producing either a crash or, worse, a plausible wrong version.
+              latest="$(git ls-remote --tags --refs origin 'v*' \
+                        | sed 's|.*refs/tags/||' \
+                        | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+                        | sort -V | tail -1)"
+              latest="${latest:-v0.0.0}"
+              rest="${latest#v}"
+              tag="v$(cut -d. -f1 <<<"$rest").$(cut -d. -f2 <<<"$rest").$(( $(cut -d. -f3 <<<"$rest") + 1 ))"
+              echo "highest existing version tag: $latest" ;;
+            *)
+              echo "not a release ref: $ref" >&2; exit 1 ;;
+          esac
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "this run is $tag"
+
   payload:
     name: Self-contained installer (payload)
+    needs: version
     runs-on: windows-latest
     timeout-minutes: 90
     # Read only: this job builds the exe and nothing else. Writing the release is the publish job's
@@ -76,6 +125,11 @@ jobs:
 
       - name: Build the installer binary
         shell: bash
+        # The version reaches the binary here and nowhere else - build.sh turns it into an
+        # -X main.version ldflag. Without it the exe would report whatever string was last typed
+        # into main.go, which stops being true at the first release after that edit.
+        env:
+          MEDSYNC_VERSION: ${{ needs.version.outputs.tag }}
         run: bash installer/windows/build.sh
 
       # One bash script for both targets, and the Linux run of it is what makes this a re-run
@@ -111,7 +165,7 @@ jobs:
   # ------------------------------------------------------------------------------------------
   bundled:
     name: Prove it uses nothing from the machine
-    needs: payload
+    needs: [version, payload]
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
@@ -177,6 +231,19 @@ jobs:
           # difference.
           if ($stillThere.Count -gt 0) {
             throw "this job would prove nothing while these resolve: $($stillThere -join '; ')"
+          }
+
+      # The exe has to agree with the release it is about to be attached to. Cheap to check and
+      # the only place the ldflags injection can be caught failing before somebody downloads a
+      # 300 MB file that misreports itself.
+      - name: The binary knows which version it is
+        shell: pwsh
+        run: |
+          $expected = '${{ needs.version.outputs.tag }}'.TrimStart('v')
+          $out = & dist\MedSync-Setup-bundled.exe version 2>&1 | Out-String
+          Write-Host $out
+          if ($out -notmatch [regex]::Escape($expected)) {
+            throw "the installer reports a different version than this release: expected $expected"
           }
 
       - name: doctor reports a complete payload
@@ -247,8 +314,16 @@ jobs:
   # ------------------------------------------------------------------------------------------
   publish:
     name: Publish the release
-    needs: [payload, bundled]
-    if: startsWith(github.ref, 'refs/tags/') || startsWith(github.ref, 'refs/heads/release/')
+    needs: [version, payload, bundled]
+    # `github.event_name == 'push'` matters: on the nightly schedule github.ref is also
+    # refs/heads/main, and without this the 04:30 run would mint a new version every night for a
+    # tree nobody had changed. The nightly still builds the payload and still runs the proof -
+    # which is what it is for - it just does not publish.
+    if: >-
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main'
+        || startsWith(github.ref, 'refs/tags/')
+        || startsWith(github.ref, 'refs/heads/release/'))
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -258,24 +333,16 @@ jobs:
           name: MedSync-Setup-selfcontained
           path: dist
 
-      - name: What is being published, and under which tag
-        id: what
+      - name: What is being published
         run: |
           ls -la dist/
-          ref='${{ github.ref }}'
-          case "$ref" in
-            refs/tags/*)          tag="${ref#refs/tags/}" ;;
-            refs/heads/release/*) tag="${ref#refs/heads/release/}" ;;
-            *) echo "not a release ref: $ref" >&2; exit 1 ;;
-          esac
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "publishing as $tag"
+          echo "publishing as ${{ needs.version.outputs.tag }}"
 
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.what.outputs.tag }}
+          tag_name: ${{ needs.version.outputs.tag }}
           target_commitish: ${{ github.sha }}
-          name: MedSync ${{ steps.what.outputs.tag }}
+          name: MedSync ${{ needs.version.outputs.tag }}
           files: |
             dist/MedSync-Setup-bundled.exe
             dist/README.txt

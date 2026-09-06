@@ -16,7 +16,11 @@ mkdir -p "$OUT"
 
 # -s -w strips the symbol table and DWARF: a 12MB installer downloads slower than a 9MB one and
 # nobody is attaching a debugger to this.
-LDFLAGS="-s -w"
+#
+# -X stamps the version into main.version at link time. The release workflow passes the tag it is
+# about to publish under, so the binary and the release it is attached to cannot disagree; a plain
+# local build says "dev", which is what an unreleased build honestly is.
+LDFLAGS="-s -w -X main.version=${MEDSYNC_VERSION:-dev}"
 
 # -trimpath, for two reasons and the second is the real one.
 #

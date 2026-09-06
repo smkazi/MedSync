@@ -17,10 +17,12 @@
 #            is not on the push path — CI that people stop waiting for is CI that stops being read.
 #
 # The self-contained installer — the one that carries a Java runtime, a Node runtime, a PostgreSQL
-# server and every library inside the .exe — is built by release.yml instead. It lives there rather
-# than here because a tag push does not match this workflow's `branches` filter, and adding `tags`
-# beside the `paths` filter below does not help: on a tag push `paths` is evaluated against the
-# commits in the push, and a tag pointing at an already-pushed commit includes none.
+# server and every library inside the .exe — is built by release.yml instead, on every push to
+# main. It lives there rather than here because this workflow is deliberately cheap and filtered to
+# `installer/**`, while a release has to rebuild the whole platform whatever changed; and because a
+# tag push does not match this workflow's `branches` filter anyway, with `paths` beside `tags`
+# being no help either — on a tag push `paths` is evaluated against the commits in the push, and a
+# tag pointing at an already-pushed commit includes none.
 
 name: Windows installer
 
