@@ -522,6 +522,9 @@ jobs:
     parameters:
       context: medsync-api
       user: doctor
+      # A real URL rather than the context's bare gateway root, which is a 404 by design on a
+      # prefix-routing gateway - see the same note in baseline.yaml.
+      url: "${ZAP_TARGET}/actuator/health"
       maxDuration: 3
       maxDepth: 6
 
@@ -535,7 +538,9 @@ jobs:
       user: doctor
       maxRuleDurationInMins: 3
       maxScanDurationInMins: 45
-      policy: "medsync-api"
+      # No `policy:` here - see the long note in baseline.yaml. It named a stored policy that has
+      # never existed, and it shadowed the `policyDefinition` below, so none of the high-strength
+      # injection rules that are the entire point of this scan had ever been applied.
     policyDefinition:
       defaultStrength: medium
       defaultThreshold: medium

@@ -2091,6 +2091,29 @@ into `build/zap/` so the reason travels with the run; and two consecutive failur
 two different bugs, which is why the second was read from the log rather than assumed to be the
 first one persisting.
 
+**Behind the port collision was a third failure, and it is the one that had made the active scan
+inert since it was written.** With ZAP finally reaching the plan, the last job refused:
+`Unrecognised active scan policy name for job narrow active scan (no auth endpoints) :
+medsync-public`. Both plans carried `policy: "<name>"` — a lookup of a policy *stored* in ZAP's
+configuration directory — directly above a `policyDefinition` block defining one inline. This
+repository ships no policy file, and the container mounts an empty ZAP home every run, so the
+lookup could never resolve; the name was the plan's own **context** name, reused as though a
+context implied a policy. The named form also wins when both are present, so the definitions had
+never been applied. Deleting one line from each file makes them live for the first time — two
+muted rules in the baseline, and in the authenticated plan the thirteen that are its whole
+purpose, the SQL-injection and command-injection rules at high strength.
+
+The same discovery changed how `run.sh` reports. The defect was in *both* plan files — the plans
+are near-identical in structure, so a defect in one is usually a defect in both — and the loop left
+on the first plan that could not run, so the second copy would not have surfaced until the
+following night. Every plan is now attempted and the exit status is decided at the end: a
+could-not-run outranks findings, the plans that failed are named, and the count of plans actually
+scanned is printed, because "clean" reported by the only plan that ran is the same silent pass this
+script already exists to refuse. That loop is the one part of this that is logic rather than
+configuration, so it has a test — `security/zap/run-loop.test.sh` stubs `ZAP_CMD` to fail for one
+plan and succeed for the other and asserts both were attempted and the status is 2, with no ZAP and
+no Docker involved.
+
 Chasing that turned up something worse in the same script, and it is the reason to state it here
 rather than in a changelog. `security/zap/run.sh` documents `0 clean, 1 findings, 2 could not run` —
 but a plan that produced no JSON report printed *"clean at or above 'medium'"* and **exited 0**. A

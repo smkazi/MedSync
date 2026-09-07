@@ -136,8 +136,9 @@ MIN_CODE="$(threshold_code "$ZAP_FAIL_ON")"
 summarise() {
   local report="$1"
   # Not `return 0`. A missing report used to read as "clean at or above high", which is the same
-  # silent pass as a scan that never ran reporting success.
-  [[ -f "$report" ]] || { echo "!! no JSON report at $report - nothing was scanned." >&2; exit 2; }
+  # silent pass as a scan that never ran reporting success. `return 2` rather than `exit 2` so the
+  # caller can record it and carry on to the next plan.
+  [[ -f "$report" ]] || { echo "!! no JSON report at $report - nothing was scanned." >&2; return 2; }
   python3 - "$report" "$MIN_CODE" <<'PY'
 import json, sys
 report, min_code = sys.argv[1], int(sys.argv[2])
@@ -158,7 +159,15 @@ sys.exit(1 if blocking else 0)
 PY
 }
 
+# Every plan is attempted and the exit status is decided at the end, rather than leaving on the
+# first plan that cannot run - which is the shape this loop had, and it cost a night. The two plans
+# share their structure almost line for line, so a defect in one is usually a defect in both: an
+# undefined active scan policy was in `baseline.yaml` and in `authenticated.yaml`, the baseline
+# failed first, and the second copy could not be found until the run after. One run should say
+# everything that is wrong with it.
 status=0
+broken=()
+scanned=()
 for plan in "${PLANS[@]}"; do
   echo "== ZAP plan: $plan  ->  $ZAP_TARGET"
   # `set -e` would abort here on any non-zero exit from ZAP itself, and the script would then leave
@@ -168,20 +177,39 @@ for plan in "${PLANS[@]}"; do
   if ! run_plan "$plan"; then
     echo "!! ZAP could not complete the '$plan' plan - see the output above." >&2
     echo "   This is a run failure, not a finding. Nothing was scanned." >&2
-    exit 2
+    broken+=("$plan")
+    continue
   fi
-  echo "== findings ($plan), gate at $ZAP_FAIL_ON and above:"
   # A plan that produced no JSON report also did not scan, whatever its exit status said.
   if [[ ! -f "$HOST_REPORT_DIR/zap-$plan.json" ]]; then
     echo "!! no JSON report at $HOST_REPORT_DIR/zap-$plan.json - the plan did not produce one." >&2
     echo "   Treating as could-not-run rather than clean." >&2
-    exit 2
+    broken+=("$plan")
+    continue
   fi
-  summarise "$HOST_REPORT_DIR/zap-$plan.json" || status=1
+  echo "== findings ($plan), gate at $ZAP_FAIL_ON and above:"
+  if summarise "$HOST_REPORT_DIR/zap-$plan.json"; then
+    scanned+=("$plan")
+  else
+    case $? in
+      # 2 is summarise's own could-not-run - the report vanished between the check above and the
+      # read. Unreachable in practice, and it must not be filed as a finding if it ever happens.
+      2) broken+=("$plan") ;;
+      *) status=1; scanned+=("$plan") ;;
+    esac
+  fi
 done
 
 echo
 echo "== reports in $HOST_REPORT_DIR"
+# Could-not-run outranks findings: a plan that did not run is not a plan that passed, and saying
+# "clean" because the only plan that reported was the one that worked is the silent pass this
+# script exists to refuse.
+if (( ${#broken[@]} )); then
+  echo "!! could not run: ${broken[*]}" >&2
+  echo "   ${#scanned[@]} of ${#PLANS[@]} plan(s) scanned." >&2
+  exit 2
+fi
 if [[ $status -ne 0 ]]; then
   echo "!! ZAP found issues at or above '$ZAP_FAIL_ON'. Read the HTML report before dismissing any."
 else

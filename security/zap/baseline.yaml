@@ -98,6 +98,12 @@ jobs:
   - type: spider
     parameters:
       context: medsync-public
+      # Start somewhere that exists. Without this the spider defaults to the context's own
+      # `urls:` entry, the bare gateway root, and a prefix-routing REST gateway has no root
+      # document - so every run printed `error accessing URL http://localhost:8080 status code
+      # returned : 404 expected 200`. The 404 is correct behaviour, and a warning on every clean
+      # run is where a real warning goes to hide.
+      url: "${ZAP_TARGET}/actuator/health"
       maxDuration: 3
       maxDepth: 5
 
@@ -111,7 +117,14 @@ jobs:
       context: medsync-public
       maxRuleDurationInMins: 2
       maxScanDurationInMins: 15
-      policy: "medsync-public"
+      # No `policy:` here, deliberately, and it is not an omission - it was here and it is what
+      # broke this job. `policy` names a policy *stored* in ZAP's configuration directory
+      # (`$ZAP_HOME/policies/<name>.policy`); this repository ships no such file and the container
+      # mounts an empty home on every run, so the lookup answered `Unrecognised active scan policy
+      # name: medsync-public` and the plan failed. The name was the *context* name reused as
+      # though a context implied a policy. `policyDefinition` below is the inline form and is what
+      # this scan actually wants; when both are present the named lookup wins and the definition
+      # is never read.
     policyDefinition:
       defaultStrength: medium
       defaultThreshold: medium
