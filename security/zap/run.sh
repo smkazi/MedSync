@@ -170,23 +170,44 @@ broken=()
 scanned=()
 for plan in "${PLANS[@]}"; do
   echo "== ZAP plan: $plan  ->  $ZAP_TARGET"
-  # `set -e` would abort here on any non-zero exit from ZAP itself, and the script would then leave
-  # with status 1 - which this script documents as "findings at or above ZAP_FAIL_ON". It is not:
-  # ZAP failing to start is "could not run", which is 2. Conflating them is how a container that
-  # never scanned anything reported itself as a High-severity finding.
-  if ! run_plan "$plan"; then
-    echo "!! ZAP could not complete the '$plan' plan - see the output above." >&2
-    echo "   This is a run failure, not a finding. Nothing was scanned." >&2
-    broken+=("$plan")
-    continue
-  fi
-  # A plan that produced no JSON report also did not scan, whatever its exit status said.
+
+  # `set -e` would abort on a non-zero exit from ZAP, and the script would leave with status 1 -
+  # which this script documents as "findings at or above ZAP_FAIL_ON". It is not. So the status is
+  # captured rather than inherited.
+  rc=0
+  run_plan "$plan" || rc=$?
+
+  # THE REPORT DECIDES, NOT THE EXIT CODE, and getting that the wrong way round cost a run.
+  #
+  # ZAP exits non-zero when a plan records `Automation plan warnings:` - even with
+  # `failOnWarning: false`, which governs the plan's own pass/fail state and not the process exit
+  # status. Both plans have warnings that are not failures: the baseline's spider reports 404 on the
+  # gateway root because a prefix-routing REST gateway has no root document, and the authenticated
+  # plan's requestor rows report response codes that differ from what they expected. Neither means
+  # nothing was scanned.
+  #
+  # Checking the exit status first is therefore how a plan that scanned for four and a half minutes
+  # and wrote an HTML, a SARIF and a JSON report got filed as "0 of 2 plan(s) scanned" while the CI
+  # artifact carried those very reports. `summarise` already states half of the rule - a missing
+  # report is not "clean" whatever the exit status said - and this is the other half: a report that
+  # exists is a scan that happened, whatever the exit status said.
   if [[ ! -f "$HOST_REPORT_DIR/zap-$plan.json" ]]; then
     echo "!! no JSON report at $HOST_REPORT_DIR/zap-$plan.json - the plan did not produce one." >&2
-    echo "   Treating as could-not-run rather than clean." >&2
+    if (( rc != 0 )); then
+      echo "   ZAP also exited $rc. Nothing was scanned; this is a run failure, not a finding." >&2
+    else
+      echo "   ZAP exited 0 and still wrote no report. Treating as could-not-run rather than clean." >&2
+    fi
     broken+=("$plan")
     continue
   fi
+  if (( rc != 0 )); then
+    echo "!! ZAP exited $rc on the '$plan' plan, but it produced a report, so it did scan." >&2
+    echo "   Usually 'Automation plan warnings' - a requestor row whose expected response code did" >&2
+    echo "   not match, or the spider's 404 on the gateway root. Gating on the findings below;" >&2
+    echo "   read zap-$plan.console.log in the artifact for the warnings themselves." >&2
+  fi
+
   echo "== findings ($plan), gate at $ZAP_FAIL_ON and above:"
   if summarise "$HOST_REPORT_DIR/zap-$plan.json"; then
     scanned+=("$plan")

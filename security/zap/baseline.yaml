@@ -98,11 +98,18 @@ jobs:
   - type: spider
     parameters:
       context: medsync-public
-      # Start somewhere that exists. Without this the spider defaults to the context's own
-      # `urls:` entry, the bare gateway root, and a prefix-routing REST gateway has no root
-      # document - so every run printed `error accessing URL http://localhost:8080 status code
-      # returned : 404 expected 200`. The 404 is correct behaviour, and a warning on every clean
-      # run is where a real warning goes to hide.
+      # A start URL that exists. This did NOT silence the warning it was added for, and saying so
+      # here is the point: the run after it still printed
+      #
+      #   Job spider error accessing URL http://localhost:8080 status code returned : 404 expected 200
+      #
+      # naming the bare root rather than this URL, so ZAP is reporting the *context's* `urls:` seed
+      # and not the spider's start point. The 404 is correct behaviour - a prefix-routing REST
+      # gateway has no root document - and it is a warning, not an error: `failOnWarning: false`,
+      # and the gate now reads the report rather than ZAP's exit status, so it no longer fails the
+      # job. The context's `urls:` is left alone on purpose: it is what ZAP derives context scope
+      # from when it is the only seed, and narrowing the scan to silence a cosmetic warning would
+      # be a bad trade. Setting this is still right, and it is not the whole fix.
       url: "${ZAP_TARGET}/actuator/health"
       maxDuration: 3
       maxDepth: 5

@@ -2114,6 +2114,67 @@ configuration, so it has a test — `security/zap/run-loop.test.sh` stubs `ZAP_C
 plan and succeed for the other and asserts both were attempted and the status is 2, with no ZAP and
 no Docker involved.
 
+**Then both scans ran to completion, and the gate called them failures.** The next nightly ran ten
+minutes rather than three and a half, `Job activeScan started` … `finished` on both plans, and six
+reports were written — `zap-baseline` and `zap-authenticated` as HTML, SARIF and JSON. The
+PostgreSQL service log is the proof the rules reached the application:
+
+```
+ERROR:  invalid byte sequence for encoding "UTF8": 0x00
+CONTEXT:  unnamed portal parameter $1
+STATEMENT:  select ... from scheduling.appointments a1_0 where (a1_0.patient_mrn like $1 ...
+```
+
+— ZAP firing null bytes at the appointment, lab-order, patient and staff search parameters, which
+is what rules 40018-40022 are for; the database refusing malformed input is the correct outcome,
+not a defect. And the gate reported **`0 of 2 plan(s) scanned`** while the artifact carried all six
+reports, because it checked ZAP's exit status before looking for a report. **ZAP exits non-zero
+whenever a plan records `Automation plan warnings`, `failOnWarning: false` notwithstanding** — that
+parameter governs the plan's pass/fail state, not the process exit code — so the exit code cannot
+be the discriminator. `summarise` had always stated half the rule, that a missing report is not
+"clean" whatever the exit status said; the other half was missing, and it is that a report which
+exists is a scan that happened whatever the exit status said. The order is inverted now, the
+non-zero exit is reported as a plan warning pointing at the console log, and the new test case
+covers exactly it: a stub that warns, exits non-zero and writes a complete report must be gated on
+its findings.
+
+**The warnings themselves turned out to be a third finding, and the largest.** Every one of the
+**31** non-GET requestor rows in `authenticated.yaml` was answering **415**, not the 403 or 404 it
+asserted:
+
+```
+PATCH /departments/CARD                          Expected : 403  Received : 415
+PATCH /lab/morphology-thresholds/MCV_MICROCYTIC  Expected : 403  Received : 415
+POST  /pharmacy/dispenses                        Expected : 403  Received : 415
+POST  /invoices                                  Expected : 403  Received : 415
+PUT   /imaging/studies/{id}/report               Expected : 403  Received : 415
+```
+
+No row in either plan set a `Content-Type`, and Spring rejects on media type in the handler adapter
+before method security runs — so the authorization check never executed on any of them, and the
+standing rule that *every new admin write must be 403 as a doctor* had never once been exercised
+through ZAP. The platform was not at risk: `tests/api`'s authorization table is the real gate for
+these and does exercise them properly. What was wrong is that a check proving nothing sat in the
+suite reading as though it proved something, which is the exact thing "a skipped check is not a
+passed check" exists to refuse. **This is the third time this one lesson has come round here** — the
+audit CSV and the wristband both needed the right media type before their refusal could be asserted
+at all — so the invariant is now asserted by `run-loop.test.sh` rather than trusted to the eye,
+across 31 rows in 600 lines. Three of those rows keep the header and no body deliberately: the
+interop export, the imaging report signature and the portal-account creation take no request body,
+and inventing one would trade a 415 for a 400 and still not reach the role check.
+
+One further row was stale rather than mis-typed: `GET /care-plans/encounters/{id}` asserted 404 and
+receives 403, because S10e's care-team narrowing runs before the encounter is looked up. 403 is the
+documented decision there — deliberately the opposite of the portal's 404 rule, since a clinician
+can already list patients and has nothing to enumerate — so the row moved to 403.
+
+And one correction to the paragraph above this one: the spider's `url` parameter **did not** silence
+the root-404 warning. The run after it reported the same message naming the bare root, so ZAP is
+reporting the context's `urls:` seed rather than the spider's start point. The context seed is left
+alone on purpose — it is what ZAP derives scope from when it is the only seed, and narrowing the
+scan to quiet a cosmetic warning would be a bad trade — and the warning is now genuinely non-fatal
+rather than merely declared so.
+
 Chasing that turned up something worse in the same script, and it is the reason to state it here
 rather than in a changelog. `security/zap/run.sh` documents `0 clean, 1 findings, 2 could not run` —
 but a plan that produced no JSON report printed *"clean at or above 'medium'"* and **exited 0**. A

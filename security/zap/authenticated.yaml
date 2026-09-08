@@ -53,6 +53,26 @@ jobs:
       maxAlertsPerRule: 10
       scanOnlyInScope: true
 
+  # EVERY ROW THAT IS NOT A GET CARRIES `Content-Type: application/json`, AND IT IS NOT OPTIONAL.
+  #
+  # Without it Spring answers 415 from the handler adapter, before method security runs - so a row
+  # asserting 403 is answered 415, the authorization check never executes, and the row proves
+  # nothing while reading as though it proved something. That was the state of all 31 non-GET rows
+  # here until the first nightly that got far enough to report it:
+  #
+  #   PATCH /departments/CARD                          Expected : 403  Received : 415
+  #   POST  /pharmacy/dispenses                        Expected : 403  Received : 415
+  #   POST  /invoices                                  Expected : 403  Received : 415
+  #
+  # The platform was never at risk - tests/api's authorization table is the real gate for these and
+  # exercises them properly - but "every new admin write must be 403 as a doctor" had never once
+  # been checked here. This is the third time one lesson has come round in this repository: the
+  # audit CSV and the wristband both needed the right media type before their refusal could be
+  # asserted at all. So: a new row that writes gets the header, or it tests content negotiation.
+  #
+  # Three POST rows deliberately carry the header and no `data:` - the interop export, the imaging
+  # report signature and the portal-account creation take no request body. Inventing one for them
+  # would trade a 415 for a 400 and still not reach the role check.
   - type: requestor
     name: "seed the authenticated surface"
     parameters:
@@ -170,10 +190,16 @@ jobs:
       # administrator. A 200 on either of these writes is a finding.
       - url: "${ZAP_TARGET}/departments/CARD"
         method: PATCH
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
         data: '{"active":false}'
         responseCode: 403
       - url: "${ZAP_TARGET}/beds/00000000-0000-0000-0000-000000000000"
         method: PATCH
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
         data: '{"active":false}'
         responseCode: 403
       # Laboratory configuration: the three tiers of threshold that decide what a signed report
@@ -184,14 +210,23 @@ jobs:
         method: GET
       - url: "${ZAP_TARGET}/lab/morphology-thresholds/MCV_MICROCYTIC"
         method: PATCH
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
         data: '{"threshold":1}'
         responseCode: 403
       - url: "${ZAP_TARGET}/lab/reference-ranges/00000000-0000-0000-0000-000000000000"
         method: PATCH
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
         data: '{"normalLow":0,"normalHigh":1}'
         responseCode: 403
       - url: "${ZAP_TARGET}/lab/interpretive-rules/ANISOCYTOSIS"
         method: PATCH
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
         data: '{"active":false}'
         responseCode: 403
       # Outbound messaging. A clinician originates a message and reads the delivery log; the
@@ -205,6 +240,9 @@ jobs:
         method: GET
       - url: "${ZAP_TARGET}/notifications/templates/00000000-0000-0000-0000-000000000000"
         method: PATCH
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
         data: '{"body":"x {portalUrl}"}'
         responseCode: 403
       # The narrow contact endpoint exists so a service need not hold CLINICAL_READ. A doctor
@@ -237,6 +275,9 @@ jobs:
       # would mean an unvalidated path parameter reached the allocator.
       - url: "${ZAP_TARGET}/casualty/00000000-0000-4000-8000-000000000000/triage"
         method: PATCH
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
         data: '{"triageAcuity":1}'
         responseCode: 404
       - url: "${ZAP_TARGET}/admissions/00000000-0000-4000-8000-000000000000"
@@ -256,18 +297,30 @@ jobs:
         method: GET
       - url: "${ZAP_TARGET}/pharmacy/formulary"
         method: POST
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
         data: '{"code":"ZAP1","name":"Zap","form":"TABLET","strength":"1 mg","unit":"tablet","ingredients":["ZAPIUM"]}'
         responseCode: 403
       - url: "${ZAP_TARGET}/pharmacy/interactions"
         method: POST
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
         data: '{"ingredientA":"A","ingredientB":"B","severity":"MINOR","effect":"x","management":"y"}'
         responseCode: 403
       - url: "${ZAP_TARGET}/pharmacy/stock"
         method: POST
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
         data: '{"drugCode":"PARA500","batchNo":"ZAP","expiresOn":"2030-01-01","quantity":1}'
         responseCode: 403
       - url: "${ZAP_TARGET}/pharmacy/dispenses"
         method: POST
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
         data: '{"prescriptionItemId":"00000000-0000-4000-8000-000000000000","quantity":1}'
         responseCode: 403
       # The safety check itself, with a body the scan can mutate: it takes a patient id and a list
@@ -275,6 +328,9 @@ jobs:
       # injection surface the pharmacy has.
       - url: "${ZAP_TARGET}/pharmacy/check"
         method: POST
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
         data: '{"patientId":"00000000-0000-4000-8000-000000000000","drugCodes":["PARA500"]}'
         responseCode: 404
       # The narrow allergy endpoint. Held by the pharmacy and by clinicians, so a doctor reads it -
@@ -291,6 +347,9 @@ jobs:
         method: GET
       - url: "${ZAP_TARGET}/order-sets"
         method: POST
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
         data: '{"code":"ZAPSET","name":"Zap","items":[{"kind":"LAB","code":"CBC"}]}'
         responseCode: 403
       # Applying a set fans out to two other services with the caller's own token. Aimed at an
@@ -298,11 +357,19 @@ jobs:
       # body: a 200 or a 500 here would mean an unvalidated path reached the fan-out.
       - url: "${ZAP_TARGET}/order-sets/FEVER1/apply"
         method: POST
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
         data: '{"encounterId":"00000000-0000-4000-8000-000000000000"}'
         responseCode: 404
+      # 403 rather than 404, and the change is S10e rather than a regression. The care-team
+      # narrowing runs before the encounter is looked up, so a clinician on no care team is told
+      # so - deliberately the opposite of the portal's 404 rule, because here the caller can
+      # already list patients and there is nothing to enumerate. This row asserted 404 from before
+      # the narrowing existed and reported `Expected : 404 Received : 403` on every run.
       - url: "${ZAP_TARGET}/care-plans/encounters/00000000-0000-4000-8000-000000000000"
         method: GET
-        responseCode: 404
+        responseCode: 403
       # The money. A doctor reads what a patient was billed - asked at the bedside, and a platform
       # that sent them to the billing desk for a number would be routed around - and may not raise
       # an invoice, post a charge or take a payment. Those three 403s are the oldest financial
@@ -322,18 +389,30 @@ jobs:
         method: GET
       - url: "${ZAP_TARGET}/invoices"
         method: POST
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
         data: '{"patientId":"00000000-0000-4000-8000-000000000000","patientMrn":"ZAP"}'
         responseCode: 403
       - url: "${ZAP_TARGET}/charges"
         method: POST
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
         data: '{"sourceType":"MANUAL","sourceId":"00000000-0000-4000-8000-000000000000","patientId":"00000000-0000-4000-8000-000000000000","patientMrn":"ZAP","chargeItemCode":"CONSULT_OP","qty":1}'
         responseCode: 403
       - url: "${ZAP_TARGET}/invoices/00000000-0000-4000-8000-000000000000/payments"
         method: POST
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
         data: '{"amount":1.00,"method":"CASH"}'
         responseCode: 403
       - url: "${ZAP_TARGET}/claims"
         method: POST
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
         data: '{"invoiceId":"00000000-0000-4000-8000-000000000000"}'
         responseCode: 403
       # Setting prices is an administrator's, not a clinician's and not a cashier's. Who else is
@@ -341,10 +420,16 @@ jobs:
       # cashier".
       - url: "${ZAP_TARGET}/charge-items"
         method: POST
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
         data: '{"code":"ZAPITEM","name":"Zap","unitPrice":1.00}'
         responseCode: 403
       - url: "${ZAP_TARGET}/tax-rates"
         method: POST
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
         data: '{"code":"ZAPGST","name":"Zap","percent":1.00,"effectiveFrom":"2030-01-01"}'
         responseCode: 403
       # Reading an invoice that does not exist: 404 from the lookup, not a 500 from an unvalidated
@@ -368,10 +453,16 @@ jobs:
         method: GET
       - url: "${ZAP_TARGET}/consents"
         method: POST
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
         data: '{"patientId":"00000000-0000-4000-8000-000000000000","patientMrn":"ZAP","requester":"Zap","purposeCode":"CARE_MANAGEMENT","hiTypes":["OP_CONSULTATION"],"coversFrom":"2026-01-01","coversTo":"2026-12-31","expiresAt":"2030-01-01T00:00:00Z"}'
         responseCode: 403
       - url: "${ZAP_TARGET}/interop/export/00000000-0000-4000-8000-000000000000"
         method: POST
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
         responseCode: 403
       # Registering a public-health disclosure. A write with a row, unlike the historical dose --
       # safe here precisely because the gate is ADMIN-only and refuses this requestor before the
@@ -380,6 +471,9 @@ jobs:
       # notification against any patient id they typed.
       - url: "${ZAP_TARGET}/interop/disclosures"
         method: POST
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
         data: '{"recipient":"Zap","subjects":[{"patientId":"00000000-0000-4000-8000-000000000000","patientMrn":"ZAP","rowCount":1}]}'
         responseCode: 403
       # The share path, aimed at a consent that does not exist: the refusal must come from the
@@ -387,6 +481,9 @@ jobs:
       # unvalidated artefact id reaching a query is what this row would catch.
       - url: "${ZAP_TARGET}/interop/share"
         method: POST
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
         data: '{"artefactId":"ZAP-NOT-A-CONSENT","hiType":"OP_CONSULTATION","recordId":"00000000-0000-4000-8000-000000000000"}'
         responseCode: 404
       # Writing a national health identifier. A doctor reads one a referral quotes and does not
@@ -394,6 +491,9 @@ jobs:
       # only the role can be what refuses it.
       - url: "${ZAP_TARGET}/patients/00000000-0000-4000-8000-000000000000/abha"
         method: PUT
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
         data: '{"abhaNumber":"12345678901234","abhaAddress":"zap@sbx"}'
         responseCode: 403
       # The audited identifier release, aimed at a patient who does not exist: 404 from the
@@ -430,10 +530,16 @@ jobs:
       # would answer 400 and the row would pass whatever the role rules said.
       - url: "${ZAP_TARGET}/imaging/studies/00000000-0000-4000-8000-000000000000/report"
         method: PUT
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
         data: '{"findings":"ZAP","impression":"ZAP"}'
         responseCode: 403
       - url: "${ZAP_TARGET}/imaging/studies/00000000-0000-4000-8000-000000000000/report/sign"
         method: POST
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
         responseCode: 403
       #
       # POST /imaging/orders has no row either, and this one was written before it was removed. The
@@ -495,10 +601,16 @@ jobs:
       # A write, with a well-formed body, so only the role can be what refuses it.
       - url: "${ZAP_TARGET}/portal/appointments"
         method: POST
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
         data: '{"clinicianId":"00000000-0000-4000-8000-000000000000","departmentCode":"GEN","startsAt":"2030-01-01T09:00:00Z","durationMinutes":15}'
         responseCode: 403
       - url: "${ZAP_TARGET}/portal/messages"
         method: POST
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
         data: '{"subject":"zap","body":"zap"}'
         responseCode: 403
       # Handing out portal credentials. The front desk's, because enrolment is an identity check
@@ -507,10 +619,16 @@ jobs:
       # naming a routine enrolment.
       - url: "${ZAP_TARGET}/admin/portal-accounts"
         method: POST
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
         data: '{"patientId":"00000000-0000-4000-8000-000000000000","mrn":"MRN-ZAP","email":"zap@example.invalid","fullName":"Zap"}'
         responseCode: 403
       - url: "${ZAP_TARGET}/patients/00000000-0000-4000-8000-000000000000/portal-account"
         method: POST
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
         responseCode: 403
       # The hospital's side of secure messaging is a clinician's, so this one is 200: the row is
       # here to put the queue in front of the active scan rather than to assert a refusal. It is
@@ -523,7 +641,8 @@ jobs:
       context: medsync-api
       user: doctor
       # A real URL rather than the context's bare gateway root, which is a 404 by design on a
-      # prefix-routing gateway - see the same note in baseline.yaml.
+      # prefix-routing gateway. See baseline.yaml for why this does not on its own silence the
+      # warning, and why that is now tolerable rather than fatal.
       url: "${ZAP_TARGET}/actuator/health"
       maxDuration: 3
       maxDepth: 6
