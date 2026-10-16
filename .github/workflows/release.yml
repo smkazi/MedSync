@@ -35,8 +35,8 @@ on:
   # Nightly, so the payload build is exercised rather than first attempted on the day somebody
   # wants a release. 04:30 UTC — after the security workflow at 02:30 and the installer's own
   # nightly at 03:30, because three long jobs competing for runners means all three report late.
-  schedule:
-    - cron: "30 4 * * *"
+  #schedule:
+    #- cron: "30 4 * * *"
   workflow_dispatch:
 
 concurrency:
